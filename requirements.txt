@@ -1,0 +1,21 @@
+# Argus — dependências Python
+#
+# Instalação (no Kali/Debian, o install.sh já cuida disso):
+#   pip install -r requirements.txt
+# ou, em ambientes geridos (PEP 668):
+#   pip install --break-system-packages -r requirements.txt
+#
+# Versões com TETO de major (>=floor,<próximo major): reprodutível e seguro contra
+# breaking changes, sem travar numa versão exata que possa não estar disponível.
+# Para travar exatamente, gere um lock após uma instalação validada: pip freeze.
+
+python-nmap>=0.7.1,<0.8   # monitor.py — varredura de portas (wrapper do nmap)
+requests>=2.28,<3         # monitor.py / threatintel — HTTP síncrono (AbuseIPDB, ASN)
+aiohttp>=3.8,<4           # submonitor.py — HTTP assíncrono (probe de subdomínios)
+aiodns>=3.0,<4            # submonitor.py — resolução DNS assíncrona
+dnspython>=2.3,<3         # submonitor.py — checagem de DNSSEC (DNSKEY)
+python-whois>=0.8,<0.10   # threatintel — idade/expiração de domínios (WHOIS)
+flask>=2.3,<4             # webapp.py — API de gestão de achados (ações na Web, atrás do Apache)
+
+# Observação: o binário do `nmap` é uma dependência de SISTEMA (apt install nmap),
+# não um pacote pip. O python-nmap apenas o controla.

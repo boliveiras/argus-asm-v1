@@ -1,0 +1,80 @@
+# ── Artefatos gerados em runtime ─────────────────────────────
+# Bancos SQLite criados pelos scanners e pela base de Threat Intel
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+
+# Relatórios HTML gerados a cada execução
+*.html
+*.htm
+monitor_report.html
+submonitor_report.html
+
+# Documentos em .pdf
+*.pdf
+
+# Cache local do crt.sh (Certificate Transparency)
+threatintel/crtsh_cache/
+
+# Cache do bootstrap RDAP da IANA (TLD → servidor)
+threatintel/rdap_bootstrap.json
+
+# Cache do urlscan.io (descoberta + intel por host + cota)
+threatintel/urlscan_cache/
+
+# Cache do Hudson Rock (exposição por domínio + cota)
+threatintel/hudsonrock_cache/
+
+# Logs
+*.log
+logs/
+threatintel/logs/
+
+# ── Targets / wordlists (dados de campanha, não versionar) ───
+# Contêm IPs/domínios de clientes — mantenha fora do repositório.
+# Versione apenas exemplos (ex.: targets/EXEMPLO.txt.sample).
+monitor/targets/*.txt
+submonitor/targets/*.txt
+credentials/targets/*.txt
+submonitor/subs.txt
+!**/*.sample
+
+# ── Segredos ─────────────────────────────────────────────────
+# A API key do AbuseIPDB fica no config.json — não comitar com a chave real.
+# Se versionar o template, mantenha "SUA_API_KEY_AQUI".
+.env
+*.key
+*.pem
+
+# ── Python ───────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.installed.cfg
+
+# Ambientes virtuais
+.venv/
+venv/
+env/
+ENV/
+
+# ── Ferramentas / testes ─────────────────────────────────────
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+
+# ── IDEs / SO ────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
