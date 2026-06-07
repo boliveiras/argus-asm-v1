@@ -91,7 +91,7 @@ done
 if [ "$UNINSTALL" = true ]; then
   echo -e "\n${RED}${BOLD}Desinstalando Argus...${NC}\n"
   rm -f /etc/cron.d/argus-monitor /etc/cron.d/argus-monitor-udp /etc/cron.d/argus-submonitor /etc/cron.d/argus-credentials /etc/cron.d/argus-email /etc/cron.d/argus-typosquat
-  rm -f /usr/local/bin/argus-monitor /usr/local/bin/argus-submonitor /usr/local/bin/argus-credentials /usr/local/bin/argus-email /usr/local/bin/argus-typosquat /usr/local/bin/argus-ack /usr/local/bin/argus-finding
+  rm -f /usr/local/bin/argus-monitor /usr/local/bin/argus-submonitor /usr/local/bin/argus-credentials /usr/local/bin/argus-email /usr/local/bin/argus-typosquat /usr/local/bin/argus-ack /usr/local/bin/argus-finding /usr/local/bin/argus-reset
   systemctl disable --now argus-web 2>/dev/null || true
   rm -f /etc/systemd/system/argus-web.service
   systemctl daemon-reload 2>/dev/null || true
@@ -189,6 +189,7 @@ copy_if_exists "reporter.py"                          "$BASE_DIR/reporter.py"
 copy_if_exists "ack.py"                               "$BASE_DIR/ack.py"
 copy_if_exists "findings.py"                          "$BASE_DIR/findings.py"
 copy_if_exists "webapp.py"                            "$BASE_DIR/webapp.py"
+copy_if_exists "argus-reset.sh"                       "$BASE_DIR/argus-reset.sh"
 copy_if_exists "monitor.py"                           "$MONITOR_DIR/monitor.py"
 copy_if_exists "submonitor.py"                        "$SUBMONITOR_DIR/submonitor.py"
 copy_if_exists "credentials.py"              "$CREDENTIALS_DIR/credentials.py"
@@ -434,6 +435,15 @@ exec sudo PYTHONPATH="$BASE_DIR" "$PYTHON_BIN" "$BASE_DIR/findings.py" "\$@"
 CMDEOF
 chmod 755 /usr/local/bin/argus-finding
 ok "argus-finding → $BASE_DIR/findings.py"
+
+cat > /usr/local/bin/argus-reset << CMDEOF
+#!/usr/bin/env bash
+# Comando global: argus-reset — zera os bancos de achados (recomeça do zero),
+# preservando targets, config.json e (por padrão) o cache de Threat Intel.
+exec sudo bash "$BASE_DIR/argus-reset.sh" "\$@"
+CMDEOF
+chmod 755 /usr/local/bin/argus-reset
+ok "argus-reset → $BASE_DIR/argus-reset.sh"
 
 # ── 11. LOGROTATE ─────────────────────────────────────────────
 step "11. Configurando logrotate"
@@ -756,6 +766,7 @@ check "argus-email instalado"        "[ -x /usr/local/bin/argus-email ]"
 check "argus-typosquat instalado"    "[ -x /usr/local/bin/argus-typosquat ]"
 check "argus-ack instalado"          "[ -x /usr/local/bin/argus-ack ]"
 check "argus-finding instalado"      "[ -x /usr/local/bin/argus-finding ]"
+check "argus-reset instalado"        "[ -x /usr/local/bin/argus-reset ]"
 check "ack.py importável"            "PYTHONPATH=$BASE_DIR $PYTHON_BIN -c 'import ack'"
 check "findings.py importável"       "PYTHONPATH=$BASE_DIR $PYTHON_BIN -c 'import findings'"
 check "store de achados (argus.db)"  "[ -f $BASE_DIR/store/argus.db ]"
@@ -790,6 +801,7 @@ echo -e "  ${CYAN}argus-credentials${NC}   — exposição de credenciais (infos
 echo -e "  ${CYAN}argus-email${NC}         — postura de e-mail (SPF/DMARC/DKIM)"
 echo -e "  ${CYAN}argus-typosquat${NC}     — domínios sósia / typosquatting (dnstwist, semanal)"
 echo -e "  ${CYAN}argus-ack${NC}           — reconhece achado (RECONHECIDO → INFO) com motivo"
+echo -e "  ${CYAN}argus-reset${NC}         — zera os bancos de achados (preserva enriquecimento, targets e config)"
 echo -e "  ${CYAN}argus-finding${NC}       — gestão de achados: list/show/set/note/evidence (status, FP, evidências)"
 echo -e "                          ex.: ${CYAN}argus-ack add 1.2.3.4:179/tcp \"firewall, esperado\"${NC}"
 echo ""

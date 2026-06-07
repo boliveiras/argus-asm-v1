@@ -11,8 +11,10 @@
 monitor_report.html
 submonitor_report.html
 
-# Documentos em .pdf
+# Documentos em .pdf (relatórios exportados em runtime), MAS versiona os
+# entregáveis em docs/ (documentação técnica + diagrama de arquitetura).
 *.pdf
+!docs/*.pdf
 
 # Cache local do crt.sh (Certificate Transparency)
 threatintel/crtsh_cache/
@@ -26,6 +28,9 @@ threatintel/urlscan_cache/
 # Cache do Hudson Rock (exposição por domínio + cota)
 threatintel/hudsonrock_cache/
 
+# Cache do Shodan InternetDB (CVE/portas/tags por IP + cota)
+threatintel/internetdb_cache/
+
 # Logs
 *.log
 logs/
@@ -37,6 +42,8 @@ threatintel/logs/
 monitor/targets/*.txt
 submonitor/targets/*.txt
 credentials/targets/*.txt
+email/targets/*.txt
+typosquat/targets/*.txt
 submonitor/subs.txt
 !**/*.sample
 

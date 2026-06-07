@@ -1,13 +1,25 @@
-# Argus — Attack Surface Monitor
+# Argus — Attack Surface Management
+
+<p align="center">
+  <img src="argus-logo.svg" alt="Argus — Attack Surface Management" width="220">
+</p>
 
 > *O que tudo vê na sua superfície de ataque.* Nome inspirado em **Argos Panoptes**,
 > o gigante de cem olhos da mitologia grega.
 
-Plataforma de **monitoramento de superfície de ataque** para Linux (Debian/Ubuntu/Kali).
-Faz varredura de portas, descoberta de subdomínios e checagem de **credenciais
-vazadas** (infostealer), enriquece os achados com inteligência de ameaças (AbuseIPDB,
-Certificate Transparency, urlscan.io, Hudson Rock e RDAP/WHOIS) e publica relatórios
-HTML em um portal Apache com TLS e autenticação.
+Plataforma de **gestão de superfície de ataque (ASM)** para Linux (Debian/Ubuntu/Kali).
+Cobre cinco frentes de descoberta — **portas TCP/UDP**, **subdomínios**, **credenciais
+vazadas** (infostealer), **postura de e-mail** (SPF/DMARC/DKIM) e **domínios sósia**
+(typosquatting) — enriquece os achados com inteligência de ameaças (AbuseIPDB,
+Certificate Transparency, urlscan.io, Hudson Rock, Shodan InternetDB e RDAP/WHOIS) e
+publica relatórios HTML em um portal Apache com TLS e autenticação.
+
+Acima dos scanners há um **domínio de Achados (Findings)** unificado (`argus.db`): cada
+achado tem **ID persistente**, **ciclo de status** (triagem) **ortogonal à detecção**,
+**histórico auditável**, notas e evidências — então um achado já tratado **não reaparece
+como novo** a cada execução. A triagem é feita por **CLI** (`argus-finding`) ou pela
+**Web** (backend Flask atrás do Apache), com mapeamento de conformidade
+**ISO 27002:2022 · CIS Controls v8 · PCI-DSS v4.0**.
 
 > **Nota:** o nome de produto é **Argus**. Por compatibilidade, os identificadores
 > técnicos seguem como `argus-monitor` (comando, `/etc/argus`, etc.).
@@ -21,12 +33,13 @@ HTML em um portal Apache com TLS e autenticação.
 - [Instalação](#instalação)
 - [Configuração](#configuração)
 - [Uso](#uso)
+- [Gestão de achados (Findings)](#gestão-de-achados-findings)
 - [Modelo de risco](#modelo-de-risco)
 - [Relatórios e portal web](#relatórios-e-portal-web)
 - [Logs (RFC 5424)](#logs-rfc-5424)
 - [Layout no sistema e permissões](#layout-no-sistema-e-permissões)
 - [Segurança](#segurança)
-- [Desinstalação](#desinstalação)
+- [Reset e desinstalação](#reset-e-desinstalação)
 - [Solução de problemas](#solução-de-problemas)
 - [Licença](#licença)
 
@@ -36,11 +49,17 @@ HTML em um portal Apache com TLS e autenticação.
 
 | Arquivo | Papel |
 |---|---|
-| `install.sh` | Instalador completo (14 etapas). Suporta `--no-apache` e `--uninstall`. |
-| `monitor.py` | Scan de **portas TCP** com Nmap (top 1000), classificação de risco, resolução de ASN e geração de relatório. |
-| `submonitor.py` | Scan de **subdomínios** (assíncrono) — wordlist + crt.sh + urlscan.io, detecção de ambiente/WAF/DNSSEC/SSL/RDAP. |
+| `install.sh` | Instalador completo. Suporta `--no-apache` e `--uninstall`. |
+| `monitor.py` | Scan de **portas TCP/UDP** com Nmap, classificação de risco, resolução de ASN, CVEs por IP e geração de relatório. |
+| `submonitor.py` | Scan de **subdomínios** (assíncrono) — wordlist + crt.sh + urlscan.io, detecção de ambiente/WAF/DNSSEC/SSL/RDAP/CVEs. |
 | `credentials.py` | **Exposição de credenciais** — consulta logs de infostealer por domínio (Hudson Rock, grátis), metadata-only. |
+| `emailauth.py` | **Postura de e-mail** (`argus-email`) — autenticação anti-spoofing SPF/DMARC/DKIM, só por DNS. |
+| `typosquat.py` | **Domínios sósia / typosquatting** (`argus-typosquat`) — varredura com `dnstwist`, semanal. |
+| `findings.py` | **Domínio de Achados** + CLI `argus-finding`. ID persistente, ciclo de status, histórico/notas/evidências, mapeamento de conformidade, migração segura para `argus.db`. |
+| `ack.py` | **Reconhecimento** de achados (`argus-ack`) — camada de triagem na apresentação. |
+| `webapp.py` | **Backend Flask mínimo** (serviço `argus-web`) para as ações de gestão na Web (status/nota/evidência), atrás do Apache. |
 | `reporter.py` | Gerador de relatórios HTML **e do portal** (design system único; `write_portal()` cria index/dashboard/guia + `assets/app.css`). |
+| `argus-reset.sh` | **Reset operacional** (`argus-reset`) — zera os bancos de achados preservando, por padrão, o enriquecimento de Threat Intel. |
 | `threatintel/` | Biblioteca reutilizável de Threat Intelligence. |
 
 ### Pacote `threatintel/`
@@ -53,6 +72,7 @@ threatintel/
 │   ├── crtsh.py                 # Certificate Transparency (descoberta passiva)
 │   ├── urlscan.py               # urlscan.io Search API (descoberta passiva + contexto web)
 │   ├── hudsonrock.py            # Hudson Rock Cavalier (infostealer por domínio, grátis)
+│   ├── internetdb.py            # Shodan InternetDB (CVEs/portas/tags por IP, grátis, sem key)
 │   └── whois_lookup.py          # idade/expiração do domínio via RDAP (cache em intel.db)
 └── core/
     ├── database.py              # conexão + schema SQLite (threatintel.db)
@@ -67,27 +87,37 @@ threatintel/
 ## Arquitetura e fluxo
 
 ```
-   targets (IPs) ──────▶┌─────────────────────────────────────┐
-                        │  monitor.py  (Nmap -sV --top-ports) │
-                        │  • risco por porta × tipo de IP     │
-                        │  • ASN + AbuseIPDB → monitor.db     │
-                        └─────────────────────────────────────┘
-   targets (domínios) ─▶┌─────────────────────────────────────┐
-   subs.txt ───────────▶│  submonitor.py  (DNS + HTTP async)  │   ┌──────────────────────┐
-                        │  • wordlist + crt.sh + urlscan.io   │──▶│  Apache2 (:8443)     │
-                        │  • WAF/CDN · DNSSEC · SSL · RDAP    │   │  TLS + Basic Auth    │
-                        │  • AbuseIPDB → submonitor.db        │   │                      │
-                        └─────────────────────────────────────┘   │  index · dashboard   │
-   (reusa domínios) ───▶┌─────────────────────────────────────┐   │  risk-guide          │
-                        │  credentials.py            │   │  monitor / submonitor│
-                        │  • Hudson Rock (infostealer)        │──▶│  credentials reports │
-                        │  • metadata-only → credentials.db   │   └──────────────────────┘
-                        └─────────────────────────────────────┘
+   targets (IPs) ─────▶┌──────────────────────────────────────────┐
+                       │  monitor.py     Nmap TCP/UDP · ASN        │
+                       │                 AbuseIPDB · InternetDB    │─┐
+                       └──────────────────────────────────────────┘ │
+   targets (domínios) ▶┌──────────────────────────────────────────┐ │
+   subs.txt ──────────▶│  submonitor.py  DNS+HTTP async · crt.sh   │ │
+                       │                 urlscan · WAF/SSL/RDAP    │─┤
+                       └──────────────────────────────────────────┘ │   sync_findings()
+   (reusa domínios) ──▶┌──────────────────────────────────────────┐ │   ┌──────────────────┐
+                       │  credentials.py Hudson Rock (infostealer) │─┤──▶│  store/argus.db   │
+                       └──────────────────────────────────────────┘ │   │  Achados unificados│
+   (reusa domínios) ──▶┌──────────────────────────────────────────┐ │   │  • ID persistente │
+                       │  emailauth.py   SPF · DMARC · DKIM (DNS)  │─┤   │  • status (triagem)│
+                       └──────────────────────────────────────────┘ │   │  • histórico/notas │
+   (reusa domínios) ──▶┌──────────────────────────────────────────┐ │   │  • evidências      │
+                       │  typosquat.py   dnstwist (domínios sósia) │─┘   └─────────┬─────────┘
+                       └──────────────────────────────────────────┘               │
+                                                                          ┌────────┴─────────┐
+   ┌──────────────────────────────┐        ┌─────────────────────────┐    │  argus-finding   │
+   │  Apache2 (:8443) TLS + Auth  │◀──/api/─│  webapp.py (Flask)      │◀──▶│  (CLI de triagem)│
+   │  portal · dashboard · risco  │  proxy  │  serviço argus-web      │    └──────────────────┘
+   │  achados · 5 relatórios      │────────▶│  127.0.0.1:8099         │
+   └──────────────────────────────┘         └─────────────────────────┘
 ```
 
-Os três scanners são **independentes** (campanhas por arquivo `.txt`) e publicam
-seus relatórios no mesmo portal. O `argus-credentials` **reaproveita os domínios
-do submonitor** por padrão.
+Os **cinco scanners** são **independentes** (campanhas por arquivo `.txt`), gravam
+cada um no seu próprio banco **e** alimentam o store unificado `argus.db` via
+`findings.sync_findings()` (aditivo, best-effort). O `argus-credentials`,
+`argus-email` e `argus-typosquat` **reaproveitam os domínios do submonitor** por
+padrão. A triagem dos achados é feita por **CLI** (`argus-finding`) ou pela **Web**
+(página "Gestão de Achados" → `webapp.py` atrás do Apache).
 
 ---
 
@@ -105,18 +135,24 @@ O instalador executa, em ordem:
 
 1. Verifica privilégios (root) e sistema operacional.
 2. Instala dependências de sistema: `nmap`, `python3`, `pip`, `openssl`,
-   e (se aplicável) `apache2` + `apache2-utils`.
+   `dnstwist`, e (se aplicável) `apache2` + `apache2-utils`.
 3. Instala dependências Python: `python-nmap`, `requests`, `aiodns`, `aiohttp`,
-   `dnspython`, `python-whois`.
-4. Cria a estrutura de diretórios em `/etc/argus`.
+   `dnspython`, `python-whois`, `flask`.
+4. Cria a estrutura de diretórios em `/etc/argus` (inclui `store/` e os módulos
+   `email/` e `typosquat/`).
 5. Copia os scripts e aplica permissões seguras.
 6. Configura `PYTHONPATH` nos rcfiles de root e do app user.
-7. Ajusta `config.json` (caminhos) e solicita a **API key do AbuseIPDB**.
-8. Cria os comandos globais `argus-monitor` e `argus-submonitor`.
-9. Configura `logrotate` (rotação semanal, 12 semanas).
-10. Configura o Apache2 (TLS self-signed, Basic Auth, headers de segurança).
-11. Instala os crons diários.
-12. Valida a instalação (imports, binários, diretórios, serviços).
+7. Ajusta `config.json` (caminhos) e solicita as **API keys** (AbuseIPDB, urlscan).
+8. Cria os comandos globais `argus-monitor`, `argus-submonitor`, `argus-credentials`,
+   `argus-email`, `argus-typosquat`, `argus-finding`, `argus-ack` e `argus-reset`.
+9. Inicializa o store `store/argus.db` e roda a **migração segura** dos bancos legados
+   (backup automático + idempotente + não-destrutiva).
+10. Configura `logrotate` (rotação semanal, 12 semanas).
+11. Configura o Apache2 (TLS self-signed, Basic Auth, headers de segurança) **e** o
+    reverse-proxy `<Location /api/>` para o backend de gestão.
+12. Sobe o serviço `systemd` **`argus-web`** (Flask em `127.0.0.1:8099`, com hardening).
+13. Instala os crons (diários + semanais de UDP e typosquat).
+14. Valida a instalação (imports, binários, diretórios, serviços).
 
 > **Variáveis editáveis** no topo do `install.sh`: `BASE_DIR`, `APACHE_PORT`
 > (padrão `8443`), `APACHE_USER` (padrão `monitor`) e `APP_USER` (padrão `kali`).
@@ -229,6 +265,76 @@ apenas uma **camada de triagem na apresentação**: o banco de cada scanner
 continua registrando o risco e o status reais de detecção, preservando o diff
 `NOVO`/`REINCIDENTE` e a detecção de `FECHADO`/`REMOVIDO`. O store fica em
 `/etc/argus/acknowledged.db`.
+
+---
+
+## Gestão de achados (Findings)
+
+Acima dos scanners existe um **domínio de Achados** unificado no store
+`store/argus.db`. Cada achado tem um **ID determinístico e persistente**
+(`sha1(fonte:chave_natural)`), de modo que o **mesmo** problema mantém o **mesmo
+ID** entre execuções — e um achado já tratado **não reaparece como novo**.
+
+A premissa central é separar **duas dimensões ortogonais**:
+
+- **Detecção** (`active` / `last_seen`) — o scanner ainda observa o achado? É
+  atualizada automaticamente a cada scan.
+- **Triagem** (`status`) — o que a equipe decidiu sobre ele. É controlada pelo
+  analista e **sobrevive ao re-scan**.
+
+### Ciclo de status
+
+```
+NOVO ─▶ EM_ANALISE ─▶ CONFIRMADO ─▶ MITIGADO
+                   └▶ ACEITO (risco aceito)
+                   └▶ FALSO_POSITIVO
+```
+
+Cada mudança de status, nota e evidência é registrada em uma **trilha de auditoria**
+(`finding_events`) com **autor** e **timestamp** — visível na timeline do achado.
+
+### Debounce de fechamento (anti-flapping)
+
+Misses transitórios (timeout de DNS, rate-limit, host momentaneamente offline) **não**
+fecham um achado imediatamente. Um achado só é marcado como `FECHADO`/`REMOVIDO`
+(detecção) após **N dias** sem ser observado (`ARGUS_CLOSE_GRACE_DAYS`, padrão **3**).
+Vale para todos os scanners e para o store.
+
+### Triagem por CLI (`argus-finding`)
+
+```bash
+argus-finding list                         # backlog (achados não tratados)
+argus-finding list --status CONFIRMADO     # filtra por status
+argus-finding show <id>                    # detalhe + notas + evidências + histórico
+argus-finding set <id> em-analise          # muda o status (aceita aliases: fp, aceito…)
+argus-finding note <id> "investigando com o time de infra"
+argus-finding evidence <id> "https://portal/scan/123"
+argus-finding counts                       # contagem por status/severidade
+argus-finding migrate                      # migra bancos legados → argus.db (seguro)
+```
+
+O autor da ação é capturado de `SUDO_USER` (auditoria). O `id` pode ser informado
+por **prefixo**.
+
+### Triagem pela Web
+
+A página **"Gestão de Achados"** (`findings_report.html`) traz o backlog com filtros
+(fonte/severidade/status/observação/campanha), **painel de estatísticas e tendências**
+(MTTT, aging, novos × tratados em 8 semanas) e uma coluna **"Ações"**: o analista muda
+status e adiciona nota/evidência direto na interface. Clicar no ID abre um **modal**
+com o detalhe e a **timeline auditável**.
+
+As ações chamam o backend **Flask** (`webapp.py`, serviço `argus-web`) atrás do Apache
+(`/api/`), com **CSRF** (`X-Requested-With: argus`), autor via `X-Remote-User` (Basic
+Auth do Apache) e validação de entrada. Se o serviço estiver indisponível, a página
+**degrada graciosamente** (mostra a dica equivalente do `argus-finding`).
+
+### Mapeamento de conformidade
+
+Cada achado é associado, por categoria de fonte, a controles pertinentes de
+**ISO/IEC 27002:2022**, **CIS Controls v8** e **PCI-DSS v4.0** (`CONTROLS_BY_SOURCE`).
+O mapeamento aparece no modal do achado e em um painel no **Guia de Risco** — com foco
+em valor real (controles aplicáveis), não em "compliance de vitrine".
 
 ---
 
@@ -412,11 +518,14 @@ severidade). Com Apache habilitado, o portal fica em `https://<IP>:8443/`
 - **index** — hub de navegação do produto.
 - **dashboard.html** — KPIs consolidados, distribuição de risco, painéis por
   scanner, campanhas e agenda dos scans (lê os números dos relatórios em tempo real).
-- **risk-guide.html** — guia de classificação de risco.
-- **monitor_report.html** — superfície exposta (IPs e portas abertas).
+- **findings_report.html** — **Gestão de Achados** (backlog, estatísticas/tendências,
+  triagem por status/nota/evidência, timeline auditável).
+- **risk-guide.html** — guia de classificação de risco + mapeamento de conformidade.
+- **monitor_report.html** — superfície exposta (IPs e portas TCP/UDP abertas).
 - **submonitor_report.html** — subdomínios ativos e seus riscos.
 - **credentials_report.html** — exposição de credenciais por domínio (infostealer).
 - **email_report.html** — postura de e-mail por domínio (SPF/DMARC/DKIM).
+- **typosquat_report.html** — domínios sósia / typosquatting registrados.
 
 **Design system de fonte única:** todo o CSS vive em `reporter.py`
 (`_common_css`). Os relatórios o **inlinam** (ficam portáteis); o portal estático
@@ -471,19 +580,23 @@ sudo certbot --apache -d seu.dominio.com
 
 ## Logs (RFC 5424)
 
-Os três scanners emitem syslog estruturado (RFC 5424) com SD-PARAMS sob
+Todos os scanners emitem syslog estruturado (RFC 5424) com SD-PARAMS sob
 `[origin@32473 ...]`, prontos para SIEM. Campos-chave:
 
 - **`run_id`** — correlation ID único por execução (correlaciona todas as linhas)
-- **`module`** + **APP-NAME** (`monitor`/`submonitor`/`credentials`) e **`version`**
+- **`module`** + **APP-NAME** (`monitor`/`submonitor`/`credentials`/`email`/`typosquat`)
+  e **`version`**
 - **`status`** (`success`/`error`) + **`duration_s`** no `SCAN_END`
 - **estatísticas** (`novos`, `reincidentes`, `criticos`, …) e **erros detalhados**
   (`context`, `error_type`) no `SCAN_ERR`
+- no monitor, **`transport=tcp|udp`** separa os dois protocolos na mesma stream
 
 ```
 /var/log/argus/monitor/monitor.log
 /var/log/argus/submonitor/submonitor.log
 /var/log/argus/credentials/credentials.log
+/var/log/argus/email/email.log
+/var/log/argus/typosquat/typosquat.log
 ```
 
 Exemplo de `SCAN_END`:
@@ -501,18 +614,24 @@ diretórios. A rotação é semanal (12 semanas) via `logrotate`.
 
 ```
 /etc/argus/                 # BASE_DIR
-├── reporter.py
+├── reporter.py · findings.py · ack.py · webapp.py
+├── store/          argus.db          (achados unificados; setgid 2775 root:<app>)
 ├── monitor/        monitor.py · targets/ · monitor.db · monitor_report.html
 ├── submonitor/     submonitor.py · subs.txt · targets/ · submonitor.db · ...
+├── credentials/    credentials.py · targets/ · credentials.db
+├── email/          emailauth.py · targets/ · email.db
+├── typosquat/      typosquat.py · targets/ · typosquat.db
+├── acknowledged.db  (reconhecimentos do argus-ack)
 └── threatintel/    (setgid, grupo do app user)
-    ├── config.json          640 root:<app>   (API key — root rw, app ro)
+    ├── config.json          640 root:<app>   (API keys — root rw, app ro)
     ├── threatintel.db        664 root:<app>   (cache AbuseIPDB — escrita compartilhada)
-    ├── intel.db              664 root:<app>   (cache WHOIS)
-    └── crtsh_cache/          2775 (cache crt.sh)
+    ├── intel.db              664 root:<app>   (cache WHOIS/RDAP)
+    └── {crtsh,urlscan,hudsonrock,internetdb}_cache/   2775 (caches de TI)
 
-/var/log/argus/monitor      · /var/log/argus/submonitor       (750 root:adm)
+/var/log/argus/{monitor,submonitor,credentials,email,typosquat}   (750 root:adm)
 /var/www/argus                         (docroot do Apache)
 /etc/ssl/argus                         (certificado TLS)
+systemd: argus-web                     (Flask 127.0.0.1:8099, User=<app>, hardening)
 ```
 
 **Modelo de execução:** o `monitor` roda como **root** (necessário para o SYN
@@ -540,18 +659,43 @@ Práticas aplicadas (referências: OWASP Top 10 / ASVS, CIS, NIST CSF):
 - **Apache** — TLS, Basic Auth, `Options -Indexes`, bloqueio de `.db/.log/.json/.py/.sh`,
   cabeçalhos de segurança (CSP, Permissions-Policy, X-Frame-Options, …). **HSTS**
   fica comentado por padrão (só habilitar com certificado válido / Let's Encrypt).
+- **Backend de gestão** — `argus-web` faz bind apenas em `127.0.0.1` (exposto só via
+  reverse-proxy do Apache, com Basic Auth); proteção **CSRF** (`X-Requested-With`),
+  **autor** das ações vindo do `X-Remote-User` (auditável), validação de status/tamanhos,
+  e hardening `systemd` (`NoNewPrivileges`, `ProtectSystem=full`, `ReadWritePaths` mínimo).
+- **Triagem auditável** — toda mudança de status/nota/evidência registra autor e
+  timestamp em `finding_events` (não-repúdio operacional).
 - **Degradação graciosa** — providers nunca derrubam o scan; erros vão para o syslog.
 
 ---
 
-## Desinstalação
+## Reset e desinstalação
+
+### Reset operacional (`argus-reset`)
+
+Para **recomeçar do zero** sem reinstalar — zera os bancos de **achados** (store
+`argus.db` + os `*.db` de cada scanner + `acknowledged.db`, incluindo `-wal`/`-shm`/
+`.bak`), mas **preserva sempre** os `targets/` e o `config.json` (chaves de API) **e,
+por padrão, o cache de Threat Intel (enriquecimento)** — então o primeiro scan já
+reaproveita o que foi enriquecido.
+
+```bash
+sudo argus-reset            # pede confirmação; PRESERVA o enriquecimento
+sudo argus-reset -y         # sem confirmação
+sudo argus-reset --caches   # TAMBÉM limpa o cache de Threat Intel
+sudo argus-reset --reports  # TAMBÉM remove os HTML de relatório do portal
+```
+
+O reset para/religa o `argus-web` e regenera os placeholders do portal.
+
+### Desinstalação
 
 ```bash
 sudo bash install.sh --uninstall
 ```
 
-Remove crons, comandos globais, o vhost do Apache e a config do logrotate.
-**Os dados em `/etc/argus` são preservados.** Para removê-los:
+Remove crons, comandos globais, o serviço `argus-web`, o vhost do Apache e a config
+do logrotate. **Os dados em `/etc/argus` são preservados.** Para removê-los:
 
 ```bash
 sudo rm -rf /etc/argus
@@ -569,6 +713,8 @@ sudo rm -rf /etc/argus
 | `Cota esgotada` | limite diário (`daily_request_limit`) atingido; reseta no dia seguinte. |
 | Host "inacessível ou filtrado" no Nmap | firewall/filtragem ou host realmente offline. |
 | Portal não abre | `apache2ctl configtest`; verifique se a porta 8443 está liberada. |
+| Ações da página de Achados não funcionam | serviço de gestão fora do ar: `systemctl status argus-web`; a página degrada para a dica do `argus-finding`. |
+| Achado tratado reaparece como "novo" | não deve ocorrer (ID persistente); confirme que `store/argus.db` existe e que `sync_findings` rodou (veja o syslog do scanner). |
 | Aviso de certificado no browser | certificado self-signed — aceite o aviso ou use Let's Encrypt. |
 
 Validação rápida dos imports (como o instalador faz):
