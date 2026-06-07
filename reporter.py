@@ -387,8 +387,9 @@ def _common_css() -> str:
   .risk-table th { background:#0e1727; color:var(--muted); padding:9px 12px; text-align:left; font-size:11px;
                    text-transform:uppercase; letter-spacing:.5px; border-bottom:1px solid var(--border-2); position:static; cursor:default; }
   .risk-table td { padding:9px 12px; border-bottom:1px solid rgba(35,49,76,.6); vertical-align:top; }
-  .risk-table td, .risk-table th { word-break:break-word; overflow-wrap:anywhere; }
+  .risk-table td, .risk-table th { white-space:normal; word-break:break-word; overflow-wrap:anywhere; }
   .risk-table.rt-fixed { table-layout:fixed; }
+  .risk-table.rt-fixed td, .risk-table.rt-fixed th { word-break:normal; }
   .risk-table tr:hover td { background:transparent; }
   .r-critico{color:var(--red);font-weight:700} .r-alto{color:var(--orange);font-weight:700}
   .r-medio{color:var(--yellow);font-weight:600} .r-baixo{color:var(--green)}
@@ -399,6 +400,49 @@ def _common_css() -> str:
   .sect p { color:#cbd5e1; font-size:13px; line-height:1.7; margin-bottom:10px; }
   .sbar { display:flex; height:10px; border-radius:6px; overflow:hidden; margin:10px 0 4px; }
   .sbar i { flex:1; display:block; }
+
+  /* ── Botão de tema (dark/light) ──────────────────────── */
+  .theme-toggle { flex:none; width:34px; height:34px; display:inline-flex; align-items:center; justify-content:center;
+       border:1px solid var(--border); background:var(--surface); color:var(--muted); border-radius:var(--radius-sm);
+       cursor:pointer; transition:.15s; }
+  .theme-toggle:hover { color:var(--accent); border-color:var(--accent); }
+  .theme-toggle svg { width:16px; height:16px; }
+  .theme-toggle .ic-sun { display:none; }
+  body.light .theme-toggle .ic-moon { display:none; }
+  body.light .theme-toggle .ic-sun { display:inline; }
+
+  /* ── Tema claro (suave, sem ofuscar a vista) ─────────── */
+  body.light {
+    --bg:#dfe6f0; --bg-grad:radial-gradient(1150px 580px at 78% -12%, #eef3fa 0%, #dfe6f0 60%);
+    --surface:#f4f7fb; --surface-2:#e9eef6; --border:#c3cfe0; --border-2:#a8b7cd;
+    --text:#16243d; --muted:#4d5f7c; --faint:#76859e; --accent:#1769c0; --accent-2:#5b62e0;
+    --steel:#3a4f6e; --steel-2:#5b708f;
+    --red:#dc2626; --orange:#d9620a; --yellow:#b45309; --green:#0f9d6b; --pink:#db2777;
+    --shadow:0 10px 28px -18px rgba(20,40,80,.35);
+  }
+  body.light .topbar { background:rgba(244,247,251,.86); }
+  body.light th { background:#e6ecf5; }
+  body.light .risk-table th { background:#e6ecf5; }
+  body.light td { border-bottom-color:rgba(120,140,170,.32); }
+  body.light .risk-table td { border-bottom-color:rgba(120,140,170,.32); }
+  body.light tbody tr:nth-child(even) td { background:rgba(20,40,80,.022); }
+  body.light td code, body.light code { color:#0b5cab; }
+  body.light .wordmark { background:linear-gradient(180deg,#2b3e5b 34%,#5b708f);
+       -webkit-background-clip:text; background-clip:text; color:transparent; }
+  body.light .sect p, body.light .exec-lead, body.light .exec-recs li { color:#41506a; }
+  body.light .pg-btn.active { color:#fff; }
+  /* pílulas: texto mais escuro para contraste no claro */
+  body.light .waf-NAO, body.light .cve-badge, body.light .dnssec-off, body.light .ssl-bad,
+  body.light .whois-novo, body.light .whois-expd, body.light .b-crit { color:#be123c; }
+  body.light .ip-PRIVADO, body.light .waf-SIM, body.light .dnssec-on, body.light .ssl-ok,
+  body.light .whois-estab, body.light .pill-ok, body.light .b-bai, body.light .btn-csv { color:#047857; }
+  body.light .ssl-warn, body.light .whois-recente, body.light .whois-exp, body.light .b-med { color:#a15c07; }
+  body.light .b-alto { color:#c2570a; }
+  body.light .ip-PUBLICO, body.light .origem-crtsh, body.light .us-link { color:#0369a1; }
+  body.light .actions select { color:#0b5e96; }
+  body.light .camp-badge, body.light .btn-pdf, body.light .tor-badge { color:#4338ca; }
+  body.light .origem-urlscan, body.light .us-seen { color:#7e22ce; }
+  body.light .status-RECONHECIDO { color:#6d28d9; }
 
   @media print {
     body { background:#fff !important; color:#000 !important; font-size:11px; }
@@ -546,10 +590,24 @@ def _topbar(active: str) -> str:
         for key, href, label in items
     )
     return (
+        '<script>'
+        "(function(){try{if(localStorage.getItem('argus-theme')==='light')document.body.classList.add('light');}catch(e){}})();"
+        "function argusToggleTheme(){var l=document.body.classList.toggle('light');"
+        "try{localStorage.setItem('argus-theme',l?'light':'dark');}catch(e){}}"
+        '</script>'
         '<div class="topbar">'
         f'<div class="brand">{_logo_svg()}<span class="bwrap"><span class="bn">ARGUS</span>'
         f'<span class="sub">Attack Surface Management</span></span></div>'
         f'<nav class="nav">{links}</nav>'
+        '<button class="theme-toggle" type="button" onclick="argusToggleTheme()"'
+        ' title="Tema claro/escuro" aria-label="Alternar tema claro ou escuro">'
+        '<svg class="ic-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"'
+        ' stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>'
+        '<svg class="ic-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"'
+        ' stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/>'
+        '<path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41'
+        'M19.07 4.93l-1.41 1.41M6.34 17.66l-1.41 1.41"/></svg>'
+        '</button>'
         '</div>'
     )
 
