@@ -119,7 +119,7 @@ def _syslog_open():
     global _syslog_fd
     Path(SYSLOG_FILE).parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(SYSLOG_FILE, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o640)
-    _syslog_fd = os.fdopen(fd, "a", encoding="ascii", errors="replace")
+    _syslog_fd = os.fdopen(fd, "a", encoding="utf-8", errors="replace")
 
 def _syslog_close():
     global _syslog_fd
