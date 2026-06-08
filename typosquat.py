@@ -65,6 +65,13 @@ try:
 except ImportError:
     _findings = None
 
+# WHOIS/RDAP — idade/registro do domínio sósia (mesmo provider do submonitor).
+# Um sósia recém-registrado é mais suspeito (provável campanha em preparação).
+try:
+    from threatintel.providers import whois_lookup
+except Exception:
+    whois_lookup = None
+
 # ============================================================
 # CONFIG
 # ============================================================
@@ -199,9 +206,19 @@ def init_database():
             risk        TEXT,
             first_seen  TEXT,
             last_seen   TEXT,
-            status      TEXT
+            status      TEXT,
+            whois_status   TEXT DEFAULT '',
+            whois_creation TEXT DEFAULT '',
+            whois_age_days INTEGER DEFAULT -1
         )
     """)
+    # Migração não-destrutiva: adiciona as colunas WHOIS em bancos antigos.
+    existing = {row[1] for row in cursor.execute("PRAGMA table_info(lookalikes)")}
+    for col, ddl in (("whois_status", "TEXT DEFAULT ''"),
+                     ("whois_creation", "TEXT DEFAULT ''"),
+                     ("whois_age_days", "INTEGER DEFAULT -1")):
+        if col not in existing:
+            cursor.execute(f"ALTER TABLE lookalikes ADD COLUMN {col} {ddl}")
     conn.commit(); conn.close()
 
 # ============================================================
@@ -307,6 +324,30 @@ def run_dnstwist(base_domain: str, campanha: str) -> list[dict]:
     return results
 
 # ============================================================
+# WHOIS / RDAP — idade do registro do sósia
+# ============================================================
+
+def enrich_whois(results: list[dict]) -> None:
+    """Anexa idade/registro (RDAP, com cache) a cada sósia. Best-effort: nunca
+    quebra o scan. Adiciona whois_status / whois_creation / whois_age_days.
+    Um sósia recém-registrado (NOVO/RECENTE) é um sinal forte para o analista."""
+    if whois_lookup is None or not results:
+        return
+    cache: dict[str, dict] = {}
+    for r in results:
+        dom = (r.get("domain") or "").strip().lower()
+        if not dom:
+            continue
+        if dom not in cache:
+            cache[dom] = whois_lookup.get_domain_intel_safe(dom) or {}
+        w = cache[dom]
+        age = w.get("age_days")
+        r["whois_status"]   = w.get("status", "DESCONHECIDO")
+        r["whois_creation"] = w.get("creation_date", "") or ""
+        r["whois_age_days"] = age if age is not None else -1
+
+
+# ============================================================
 # PROCESS RESULTS
 # ============================================================
 
@@ -321,18 +362,20 @@ def process_results(results: list[dict]):
         dom = r["domain"]; current.add(dom)
         cursor.execute("SELECT id FROM lookalikes WHERE domain=? ORDER BY id DESC LIMIT 1", (dom,))
         existing = cursor.fetchone()
+        _wst = r.get("whois_status", ""); _wcr = r.get("whois_creation", "")
+        _wage = r.get("whois_age_days"); _wage = _wage if isinstance(_wage, int) else -1
         if existing:
             r["status"] = "REINCIDENTE"; reincidentes.append(r); syslog_look(r)
             cursor.execute(
-                "UPDATE lookalikes SET campanha=?,base_domain=?,fuzzer=?,ip=?,mx=?,risk=?,last_seen=?,status=? WHERE id=?",
+                "UPDATE lookalikes SET campanha=?,base_domain=?,fuzzer=?,ip=?,mx=?,risk=?,last_seen=?,status=?,whois_status=?,whois_creation=?,whois_age_days=? WHERE id=?",
                 (r["campanha"], r["base_domain"], r["fuzzer"], r["ip"], int(r["mx"]),
-                 r["risk"], now, "REINCIDENTE", existing[0]))
+                 r["risk"], now, "REINCIDENTE", _wst, _wcr, _wage, existing[0]))
         else:
             r["status"] = "NOVO"; novos.append(r); syslog_look(r)
             cursor.execute(
-                "INSERT INTO lookalikes (campanha,base_domain,domain,fuzzer,ip,mx,risk,first_seen,last_seen,status) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO lookalikes (campanha,base_domain,domain,fuzzer,ip,mx,risk,first_seen,last_seen,status,whois_status,whois_creation,whois_age_days) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (r["campanha"], r["base_domain"], dom, r["fuzzer"], r["ip"], int(r["mx"]),
-                 r["risk"], now, now, "NOVO"))
+                 r["risk"], now, now, "NOVO", _wst, _wcr, _wage))
 
     grace_cutoff = (datetime.datetime.now() - datetime.timedelta(days=CLOSE_GRACE_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
     cursor.execute("SELECT id,domain,base_domain,campanha FROM lookalikes WHERE status IN ('NOVO','REINCIDENTE') AND last_seen < ?", (grace_cutoff,))
@@ -412,6 +455,8 @@ def main():
             for d in domains:
                 results.extend(run_dnstwist(d, campanha))
 
+        # Idade/registro de cada sósia (RDAP, cacheado) — apoia a triagem.
+        enrich_whois(results)
         novos, reincidentes, removidos = process_results(results)
 
         # ── Reconhecimento (RECONHECIDO -> INFO) ──────────────────

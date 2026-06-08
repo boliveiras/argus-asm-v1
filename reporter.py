@@ -2432,6 +2432,9 @@ def _typosquat_rows_to_js(rows: list[dict]) -> str:
             "risk":        str(r.get("risk", "MEDIO")),
             "status":      str(r.get("status", "")),
             "ack_reason":  str(r.get("ack_reason", "")),
+            "whois_status":   str(r.get("whois_status", "") or "DESCONHECIDO"),
+            "whois_creation": str(r.get("whois_creation", "") or ""),
+            "whois_age_days": int(r.get("whois_age_days")) if isinstance(r.get("whois_age_days"), int) and r.get("whois_age_days") >= 0 else -1,
         })
     return json.dumps(safe, ensure_ascii=False).replace("<", "\\u003c")
 
@@ -2455,8 +2458,10 @@ def _exec_typosquat(all_results: list) -> str:
     recs = []
     def add(c):
         if c not in recs: recs.append(c)
+    nr = sum(1 for r in cur if str(r.get("whois_status", "")) in ("NOVO", "RECENTE"))
     if tc: add("Sósia com MX ativo = capaz de receber e-mail — risco direto de phishing/BEC. Acione takedown e monitore.")
     if ta: add("Sósia resolvendo a um IP pode hospedar página clonada — verifique conteúdo e considere takedown.")
+    if nr: add(f"{nr} sósia(s) registrado(s) recentemente (coluna Registro = NOVO/RECENTE) — domínio sósia novo costuma indicar campanha em preparação; priorize a verificação.")
     add("Registre o tratamento de cada sósia (confirmar/mitigar/falso-positivo) em Gestão de Achados.")
     add("Avalie registrar defensivamente as permutações mais críticas da sua marca.")
     return _exec_panel(lead, risks, recs)
@@ -2478,6 +2483,7 @@ def generate_typosquat_report(
     total_alto = sum(1 for r in all_results if r.get("risk") == "ALTO")
     com_mx     = sum(1 for r in all_results if r.get("mx"))
     com_ip     = sum(1 for r in all_results if r.get("ip"))
+    recent_reg = sum(1 for r in all_results if str(r.get("whois_status", "")) in ("NOVO", "RECENTE"))
     sev_counts = {s: sum(1 for r in all_results if r.get("risk") == s)
                   for s in ("CRITICO", "ALTO", "MEDIO", "BAIXO", "INFO")}
     campanhas_js = json.dumps(
@@ -2492,7 +2498,7 @@ def generate_typosquat_report(
         (com_mx,            "Com MX",             ""),
         (com_ip,            "Com IP",             ""),
         (len(all_results),  "Sósia",              ""),
-        (total_crit,        "Críticos",           "sev-crit"),
+        (recent_reg,        "Recém-registr.",     "sev-alto"),
     ])
     donut = _donut(sev_counts, "Sósia por risco")
     exec_panel = _exec_typosquat(all_results)
@@ -2565,6 +2571,14 @@ def generate_typosquat_report(
     <option value="sim">Com MX</option>
     <option value="nao">Sem MX</option>
   </select>
+  <select id="f-whois" onchange="applyFilters()">
+    <option value="">Registro (todos)</option>
+    <option value="NOVO">Novo (&lt;30d)</option>
+    <option value="RECENTE">Recente (&lt;1 ano)</option>
+    <option value="ESTABELECIDO">Estabelecido</option>
+    <option value="EXPIRANDO">Expirando</option>
+    <option value="EXPIRADO">Expirado</option>
+  </select>
   <select id="pgsize" onchange="changePageSize()">
     <option value="50">50 por pagina</option><option value="100">100 por pagina</option>
     <option value="250">250 por pagina</option><option value="0">Todos</option>
@@ -2582,6 +2596,7 @@ def generate_typosquat_report(
     <th onclick="doSort('fuzzer')"      >Técnica      <span class="si" id="si-fuzzer"      >&#x21C5;</span></th>
     <th onclick="doSort('ip')"          >IP           <span class="si" id="si-ip"          >&#x21C5;</span></th>
     <th onclick="doSort('mx')"          >MX           <span class="si" id="si-mx"          >&#x21C5;</span></th>
+    <th onclick="doSort('whois_age_days')">Registro   <span class="si" id="si-whois_age_days">&#x21C5;</span></th>
     <th onclick="doSort('risk')"        >Risco        <span class="si" id="si-risk"        >&#x21C5;</span></th>
     <th onclick="doSort('status')"      >Status       <span class="si" id="si-status"      >&#x21C5;</span></th>
     <th onclick="doSort('ack_reason')"  >Motivo       <span class="si" id="si-ack_reason"  >&#x21C5;</span></th>
@@ -2616,18 +2631,20 @@ function applyFilters(){{
   const risk=document.getElementById('f-risk').value;
   const st=document.getElementById('f-status').value;
   const mx=document.getElementById('f-mx').value;
+  const fw=document.getElementById('f-whois').value;
   filtered=DATA[tab].filter(x=>{{
     if(camp&&x.campanha!==camp)return false;
     if(risk&&x.risk!==risk)return false;
     if(st&&x.status!==st)return false;
     if(mx==='sim'&&!x.mx)return false;
     if(mx==='nao'&&x.mx)return false;
+    if(fw&&(x.whois_status||'DESCONHECIDO')!==fw)return false;
     if(q){{const hay=(x.campanha+x.base_domain+x.domain+x.fuzzer+x.ip).toLowerCase();if(!hay.includes(q))return false;}}
     return true;
   }});
   page=1; applySort();
 }}
-function clearFilters(){{['q','f-camp','f-risk','f-status','f-mx'].forEach(id=>{{const e=document.getElementById(id);if(e)e.value='';}});applyFilters();}}
+function clearFilters(){{['q','f-camp','f-risk','f-status','f-mx','f-whois'].forEach(id=>{{const e=document.getElementById(id);if(e)e.value='';}});applyFilters();}}
 function doSort(k){{
   if(sortKey===k)sortAsc=!sortAsc;else{{sortKey=k;sortAsc=true;}}
   document.querySelectorAll('.si').forEach(e=>e.textContent='\\u21C5');
@@ -2639,6 +2656,7 @@ function applySort(){{
     let va=_sortVal(a,sortKey),vb=_sortVal(b,sortKey);
     if(sortKey==='risk'){{va=RISK_ORDER[va]??9;vb=RISK_ORDER[vb]??9;return sortAsc?va-vb:vb-va;}}
     if(sortKey==='mx'){{return sortAsc?(a.mx?1:0)-(b.mx?1:0):(b.mx?1:0)-(a.mx?1:0);}}
+    if(sortKey==='whois_age_days'){{const na=(a.whois_age_days<0?1e9:a.whois_age_days),nb=(b.whois_age_days<0?1e9:b.whois_age_days);return sortAsc?na-nb:nb-na;}}
     return sortAsc?String(va).localeCompare(String(vb)):String(vb).localeCompare(String(va));
   }});
   render();
@@ -2661,6 +2679,16 @@ function render(){{
   slice.forEach(r=>{{
     const ackR=r.ack_reason||'';
     const mxc=r.mx?'<span class="ssl-bad">SIM</span>':'<span class="ssl-none">&#8212;</span>';
+    const ws=r.whois_status||'DESCONHECIDO';
+    const wage=(r.whois_age_days!=null&&r.whois_age_days>=0)?r.whois_age_days:null;
+    const wtip=esc((r.whois_creation?('registrado em '+r.whois_creation):'data de registro desconhecida')+(wage!=null?(' · ~'+wage+' dia(s)'):''));
+    let whoisCell;
+    if(ws==='NOVO') whoisCell='<span class="whois-novo" title="'+wtip+'">NOVO</span>';
+    else if(ws==='RECENTE') whoisCell='<span class="whois-recente" title="'+wtip+'">RECENTE</span>';
+    else if(ws==='ESTABELECIDO') whoisCell='<span class="whois-estab" title="'+wtip+'">ESTABELECIDO</span>';
+    else if(ws==='EXPIRANDO') whoisCell='<span class="whois-exp" title="'+wtip+'">EXPIRANDO</span>';
+    else if(ws==='EXPIRADO') whoisCell='<span class="whois-expd" title="'+wtip+'">EXPIRADO</span>';
+    else whoisCell='<span class="whois-unk">&#8212;</span>';
     html+=`<tr class="r-${{esc(r.risk)}}${{r.status==='RECONHECIDO'?' ack':''}}">
       <td><span class="camp-badge">${{esc(r.campanha)}}</span></td>
       <td><code>${{esc(r.base_domain)}}</code></td>
@@ -2668,6 +2696,7 @@ function render(){{
       <td>${{esc(r.fuzzer)}}</td>
       <td>${{esc(r.ip||'')}}</td>
       <td>${{mxc}}</td>
+      <td>${{whoisCell}}</td>
       <td class="risk-${{esc(r.risk)}}">${{esc(r.risk)}}</td>
       <td><span class="status-${{esc(r.status)}}" title="${{esc(ackR)}}">${{esc(r.status)}}</span></td>
       <td>${{ackR?`<span class="ack-reason" title="${{esc(ackR)}}">${{esc(ackR)}}</span>`:''}}</td>
@@ -2677,7 +2706,7 @@ function render(){{
   renderPagination(pgDiv,page,pages,total,start,slice.length,'gotoPage');
 }}
 function exportCSV(){{
-  const cols=['campanha','base_domain','domain','fuzzer','ip','mx','risk','status','ack_reason'];
+  const cols=['campanha','base_domain','domain','fuzzer','ip','mx','whois_status','whois_creation','whois_age_days','risk','status','ack_reason'];
   const rows=filtered.map(r=>cols.map(c=>'"'+String(r[c]!==undefined?r[c]:'').replace(/"/g,'""')+'"').join(','));
   const blob=new Blob([[cols.join(','),...rows].join('\\n')],{{type:'text/csv;charset=utf-8;'}});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);

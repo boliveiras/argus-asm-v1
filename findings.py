@@ -390,16 +390,23 @@ class FindingRepository:
 
     _SEV_RANK = {"CRITICO": 0, "ALTO": 1, "MEDIO": 2, "BAIXO": 3, "INFO": 4}
 
-    def list_findings(self, *, source=None, status=None, severity=None,
-                      active=None, limit: int = 200) -> list[dict]:
+    def _where(self, source, status, severity, active):
         where, args = [], []
         if source:   where.append("source=?");   args.append(source)
         if status:   where.append("status=?");   args.append(status)
         if severity: where.append("severity=?"); args.append(severity)
         if active is not None: where.append("active=?"); args.append(1 if active else 0)
+        return (" WHERE " + " AND ".join(where)) if where else "", args
+
+    def count_findings(self, *, source=None, status=None, severity=None, active=None) -> int:
+        w, args = self._where(source, status, severity, active)
+        return self._conn.execute("SELECT COUNT(*) FROM findings" + w, args).fetchone()[0]
+
+    def list_findings(self, *, source=None, status=None, severity=None,
+                      active=None, limit: int = 200, offset: int = 0) -> list[dict]:
+        w, args = self._where(source, status, severity, active)
         sql = ("SELECT id,source,natural_key,title,category,severity,status,active,"
-               "campanha,first_seen,last_seen FROM findings")
-        if where: sql += " WHERE " + " AND ".join(where)
+               "campanha,first_seen,last_seen FROM findings") + w
         rows = self._conn.execute(sql, args).fetchall()
         cols = ("id","source","natural_key","title","category","severity","status",
                 "active","campanha","first_seen","last_seen")
@@ -408,7 +415,8 @@ class FindingRepository:
         out.sort(key=lambda d: (0 if d["active"] else 1,
                                 self._SEV_RANK.get(d["severity"], 9),
                                 d["last_seen"] or ""), )
-        return out[:limit] if limit else out
+        offset = max(0, offset)
+        return out[offset:offset + limit] if limit else out[offset:]
 
     def resolve_id(self, id_or_prefix: str) -> str | None:
         """Resolve um id completo ou prefixo. Levanta ValueError se ambíguo."""
@@ -704,9 +712,12 @@ def migrate_legacy_dbs(base_dir: str, *, db_path: str | None = None) -> dict:
 
 _USAGE = """argus-finding — gestão operacional de achados (Findings)
 
-  argus-finding list [--source monitor|submonitor|credentials|email]
+  argus-finding list [--source monitor|submonitor|credentials|email|typosquat]
                      [--status novo|em-analise|confirmado|mitigado|aceito|fp]
-                     [--severity CRITICO|ALTO|MEDIO|BAIXO|INFO] [--active] [--limit N]
+                     [--severity CRITICO|ALTO|MEDIO|BAIXO|INFO] [--active]
+                     [--limit N] [--page P]
+                     (paginado: --limit = tamanho da pagina, padrao 50; --page = numero
+                      da pagina; --limit 0 lista TODAS de uma vez, sem paginar)
   argus-finding show <id|prefixo>
   argus-finding set  <id|prefixo> <status> [--note "..."]
   argus-finding note <id|prefixo> "<texto>"
@@ -772,11 +783,30 @@ def _main(argv=None):
             src = _pop_opt(rest, "--source")
             stt = normalize_status(_pop_opt(rest, "--status") or "") or None
             sev = (_pop_opt(rest, "--severity") or "").upper() or None
-            lim = int(_pop_opt(rest, "--limit") or 200)
+            lim = int(_pop_opt(rest, "--limit") or 50)        # tamanho da página
+            page = max(1, int(_pop_opt(rest, "--page") or 1))
             active = True if _pop_flag(rest, "--active") else None
-            rows = repo.list_findings(source=src, status=stt, severity=sev, active=active, limit=lim)
+            total = repo.count_findings(source=src, status=stt, severity=sev, active=active)
+            if lim <= 0:                                       # --limit 0 = tudo, sem paginar
+                rows = repo.list_findings(source=src, status=stt, severity=sev, active=active, limit=0)
+                print(_fmt_table(rows))
+                print(f"\n  {len(rows)} achado(s) (todas) | store: {repo.db_path}")
+                return 0
+            pages = max(1, (total + lim - 1) // lim)
+            page = min(page, pages)
+            offset = (page - 1) * lim
+            rows = repo.list_findings(source=src, status=stt, severity=sev,
+                                      active=active, limit=lim, offset=offset)
             print(_fmt_table(rows))
-            print(f"\n  {len(rows)} achado(s) | store: {repo.db_path}")
+            lo = offset + 1 if rows else 0
+            hi = offset + len(rows)
+            print(f"\n  pagina {page}/{pages}  ·  achados {lo}-{hi} de {total}  "
+                  f"(ordenado por severidade: CRITICO->INFO)  ·  store: {repo.db_path}")
+            nav = []
+            if page < pages: nav.append(f"proxima: --page {page + 1}")
+            if page > 1:     nav.append(f"anterior: --page {page - 1}")
+            nav.append("tudo: --limit 0")
+            print("  " + "   |   ".join(nav))
             return 0
 
         # comandos que exigem <id>
