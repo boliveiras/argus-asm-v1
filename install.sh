@@ -97,6 +97,7 @@ if [ "$UNINSTALL" = true ]; then
   systemctl daemon-reload 2>/dev/null || true
   a2dissite argus-monitor 2>/dev/null || true
   rm -f "$APACHE_CONF" /etc/apache2/sites-enabled/argus-monitor.conf
+  rm -f /etc/apache2/argus-session.key
   systemctl reload apache2 2>/dev/null || true
   rm -f /etc/logrotate.d/argus-monitor
   echo -e "${GREEN}Desinstalação concluída.${NC}"
@@ -469,7 +470,10 @@ ok "Logrotate configurado (rotação semanal, 12 semanas)"
 if [ "$INSTALL_APACHE" = true ]; then
   step "12. Configurando Apache2"
 
-  for mod in ssl rewrite headers auth_basic authn_file proxy proxy_http; do
+  # auth_form/session/session_cookie/session_crypto/request → login form-based
+  # (mod_auth_form) com sessão criptografada, no lugar do pop-up de Basic Auth.
+  for mod in ssl rewrite headers auth_basic authn_file authn_core authz_core authz_user \
+             proxy proxy_http auth_form session session_cookie session_crypto request; do
     a2enmod "$mod" -q 2>/dev/null && ok "mod_$mod habilitado" || warn "mod_$mod não pôde ser habilitado"
   done
 
@@ -533,6 +537,18 @@ if [ "$INSTALL_APACHE" = true ]; then
   chown root:www-data "$HTPASSWD_FILE"
   ok "Autenticação HTTP configurada (usuário: $APACHE_USER)"
 
+  # Passphrase para criptografar o cookie de sessão (mod_session_crypto).
+  # Arquivo 640 root:www-data — fora do vhost (que é world-readable).
+  SESSION_KEY_FILE="/etc/apache2/argus-session.key"
+  if [ ! -f "$SESSION_KEY_FILE" ]; then
+    openssl rand -base64 32 > "$SESSION_KEY_FILE"
+    chmod 640 "$SESSION_KEY_FILE"
+    chown root:www-data "$SESSION_KEY_FILE"
+    ok "Passphrase de sessão gerada ($SESSION_KEY_FILE)"
+  else
+    ok "Passphrase de sessão já existe"
+  fi
+
   # Virtual host — sem symlinks, Apache serve o APACHE_DOCROOT diretamente
   # Os scripts gravam os relatórios diretamente no APACHE_DOCROOT
   cat > "$APACHE_CONF" << APACHECONF
@@ -571,29 +587,68 @@ if [ "$INSTALL_APACHE" = true ]; then
     # Header always set Strict-Transport-Security "max-age=63072000; includeSubDomains"
     Header unset Server
 
+    # ── Sessão (mod_session) para o login form-based (mod_auth_form) ──
+    # O cookie de sessão é criptografado com a passphrase do arquivo 640.
+    Session On
+    SessionCookieName argus_session path=/;HttpOnly;Secure
+    SessionCryptoPassphraseFile ${SESSION_KEY_FILE}
+    SessionMaxAge 28800
+
     <Directory "${APACHE_DOCROOT}">
         Options -Indexes
         AllowOverride None
-        AuthType Basic
-        AuthName "Argus — Acesso Restrito"
+        AuthType form
+        AuthName "Argus"
+        AuthFormProvider file
         AuthUserFile ${HTPASSWD_FILE}
+        AuthFormLoginRequiredLocation "/login.html"
         Require valid-user
     </Directory>
+
+    # A página de login é PÚBLICA (precisa ser alcançável sem sessão).
+    <Files "login.html">
+        Require all granted
+    </Files>
 
     <FilesMatch "\.(db|log|json|py|sh)$">
         Require all denied
     </FilesMatch>
 
+    # Handler do formulário de login — valida a credencial NO APACHE (mod_auth_form);
+    # a aplicação não recebe nem guarda a senha. Sucesso → portal; falha → erro.
+    <Location "/dologin">
+        SetHandler form-login-handler
+        AuthType form
+        AuthName "Argus"
+        AuthFormProvider file
+        AuthUserFile ${HTPASSWD_FILE}
+        AuthFormLoginSuccessLocation "/index.html"
+        AuthFormLoginRequiredLocation "/login.html?error=1"
+        Session On
+        Require all granted
+    </Location>
+
+    # Logout — encerra a sessão e volta para a tela de login.
+    <Location "/logout">
+        SetHandler form-logout-handler
+        AuthFormLogoutLocation "/login.html?logout=1"
+        Session On
+        Require all granted
+    </Location>
+
     # ── API de Gestão de Achados (Fase 2.1) — reverse-proxy aditivo ──
     # Só o caminho /api/ é proxied para o serviço Flask (127.0.0.1:8099);
-    # o restante do site continua estático, inalterado. Mesma Basic Auth.
+    # o restante do site continua estático, inalterado. Mesma sessão/auth.
     # O usuário autenticado é repassado em X-Remote-User (vira o autor da
     # auditoria); o header é REESCRITO no servidor para o cliente não forjá-lo.
     ProxyPreserveHost On
     <Location "/api/">
-        AuthType Basic
-        AuthName "Argus — Acesso Restrito"
+        AuthType form
+        AuthName "Argus"
+        AuthFormProvider file
         AuthUserFile ${HTPASSWD_FILE}
+        AuthFormLoginRequiredLocation "/login.html"
+        Session On
         Require valid-user
         RequestHeader unset X-Remote-User
         RequestHeader set X-Remote-User "expr=%{REMOTE_USER}"

@@ -608,6 +608,13 @@ def _topbar(active: str) -> str:
         '<path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41'
         'M19.07 4.93l-1.41 1.41M6.34 17.66l-1.41 1.41"/></svg>'
         '</button>'
+        '<a class="theme-toggle" href="/logout" title="Sair" aria-label="Sair"'
+        ' style="margin-left:6px;text-decoration:none">'
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"'
+        ' stroke-linecap="round" stroke-linejoin="round">'
+        '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>'
+        '<polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>'
+        '</a>'
         '</div>'
     )
 
@@ -3635,12 +3642,90 @@ def build_risk_guide() -> str:
                          "Como o Risk Engine calcula o risco de cada ativo", body)
 
 
+def build_login_page() -> str:
+    """Página de login com a identidade Argus (form-based, para o Apache
+    `mod_auth_form`). É **self-contained** (CSS inline) e PÚBLICA — precisa ser
+    alcançável sem sessão. O formulário posta `httpd_username`/`httpd_password`
+    para o handler `/dologin`: a credencial é validada **no Apache**, o app NÃO
+    guarda nem recebe a senha. Mensagens de erro/logout vêm por query param."""
+    css = _common_css()
+    login_css = (
+        " body.login-body{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}"
+        " .login-card{width:100%;max-width:380px;background:linear-gradient(180deg,var(--surface),var(--surface-2));"
+        "border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);padding:30px 28px 26px}"
+        " .login-head{text-align:center;margin-bottom:6px}"
+        " .login-head .logo{width:64px;height:64px;filter:drop-shadow(0 0 18px rgba(51,163,239,.34))}"
+        " .login-head .wordmark{font-size:30px;letter-spacing:6px;margin-top:10px}"
+        " .login-head .sub{color:var(--accent);font-size:10px;font-weight:700;letter-spacing:3px;"
+        "text-transform:uppercase;margin-top:5px}"
+        " .login-form label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.6px;"
+        "color:var(--muted);margin:14px 0 5px}"
+        " .login-form input{width:100%;background:var(--surface);border:1px solid var(--border);"
+        "border-radius:var(--radius-sm);color:var(--text);padding:11px 12px;font-size:14px;outline:none}"
+        " .login-form input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(51,163,239,.12)}"
+        " .login-btn{width:100%;margin-top:20px;padding:12px;border:none;border-radius:var(--radius-sm);"
+        "background:linear-gradient(180deg,var(--accent),#2b85db);color:#04121f;font-size:14px;font-weight:800;"
+        "letter-spacing:.4px;cursor:pointer;transition:.15s}"
+        " .login-btn:hover{filter:brightness(1.07);transform:translateY(-1px)}"
+        " .login-msg{margin-top:14px;font-size:12.5px;text-align:center;display:none;padding:8px 10px;"
+        "border-radius:var(--radius-sm)}"
+        " .login-msg.err{display:block;color:#fda4af;background:rgba(244,63,94,.16);border:1px solid rgba(244,63,94,.4)}"
+        " .login-msg.ok{display:block;color:#6ee7b7;background:rgba(52,211,153,.12);border:1px solid rgba(52,211,153,.3)}"
+        " body.light .login-msg.err{color:#be123c} body.light .login-msg.ok{color:#047857}"
+        " .login-foot{margin-top:18px;text-align:center;color:var(--faint);font-size:11px}"
+        " .login-theme{position:fixed;top:16px;right:16px}"
+    )
+    moon = ('<svg class="ic-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+            'stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>')
+    sun = ('<svg class="ic-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+           'stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/>'
+           '<path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41'
+           'M19.07 4.93l-1.41 1.41M6.34 17.66l-1.41 1.41"/></svg>')
+    init_js = ("(function(){try{if(localStorage.getItem('argus-theme')==='light')"
+               "document.body.classList.add('light');}catch(e){}})();"
+               "function argusToggleTheme(){var l=document.body.classList.toggle('light');"
+               "try{localStorage.setItem('argus-theme',l?'light':'dark');}catch(e){}}")
+    msg_js = ("(function(){var q=new URLSearchParams(location.search),m=document.getElementById('msg');"
+              "if(q.has('error')){m.textContent='Usuário ou senha inválidos.';m.className='login-msg err';}"
+              "else if(q.has('logout')){m.textContent='Sessão encerrada com segurança.';m.className='login-msg ok';}})();")
+    return (
+        '<!DOCTYPE html>\n<html lang="pt-BR">\n<head>\n'
+        '<meta charset="utf-8">\n'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">\n'
+        '<title>Entrar — Argus</title>\n'
+        f'<link rel="icon" type="image/svg+xml" href="{_FAVICON}">\n'
+        f'<style>{css}{login_css}</style>\n'
+        '</head>\n<body class="login-body">\n'
+        f'<script>{init_js}</script>\n'
+        '<button class="theme-toggle login-theme" type="button" onclick="argusToggleTheme()" '
+        'title="Tema claro/escuro" aria-label="Alternar tema">' + moon + sun + '</button>\n'
+        '<div class="login-card">\n'
+        '  <div class="login-head">\n    ' + _logo_svg(64) + '\n'
+        '    <div class="wordmark">ARGUS</div>\n'
+        '    <div class="sub">Attack Surface Management</div>\n'
+        '  </div>\n'
+        '  <form class="login-form" method="POST" action="/dologin" autocomplete="on">\n'
+        '    <label for="u">Usuário</label>\n'
+        '    <input id="u" name="httpd_username" type="text" autocomplete="username" autofocus required>\n'
+        '    <label for="p">Senha</label>\n'
+        '    <input id="p" name="httpd_password" type="password" autocomplete="current-password" required>\n'
+        '    <button class="login-btn" type="submit">Entrar</button>\n'
+        '  </form>\n'
+        '  <div id="msg" class="login-msg"></div>\n'
+        '  <div class="login-foot">Acesso restrito · sessão protegida (TLS)</div>\n'
+        '</div>\n'
+        f'<script>{msg_js}</script>\n'
+        '</body>\n</html>\n'
+    )
+
+
 def write_portal(docroot: str) -> None:
-    """Grava app.css + index/dashboard/risk-guide e placeholders dos relatórios."""
+    """Grava app.css + login + index/dashboard/risk-guide e placeholders dos relatórios."""
     d = Path(docroot)
     assets = d / "assets"
     assets.mkdir(parents=True, exist_ok=True)
     (assets / "app.css").write_text(app_css(), encoding="utf-8")
+    (d / "login.html").write_text(build_login_page(), encoding="utf-8")
     (d / "index.html").write_text(build_index(), encoding="utf-8")
     (d / "dashboard.html").write_text(build_dashboard(), encoding="utf-8")
     (d / "risk-guide.html").write_text(build_risk_guide(), encoding="utf-8")
