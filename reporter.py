@@ -682,11 +682,14 @@ def _donut(counts: dict, title: str = "Distribuição de Risco") -> str:
 
 
 def _kpi_tiles(tiles: list) -> str:
-    """tiles: lista de (valor, rótulo, classe_sev). Retorna a grade de KPIs."""
-    cells = "".join(
-        f'<div class="kpi {cls}"><div class="v">{val}</div><div class="l">{lbl}</div></div>'
-        for val, lbl, cls in tiles
-    )
+    """tiles: lista de (valor, rótulo, classe_sev[, id_opcional]). O 4º item
+    (opcional) é o id do número, p/ atualização via JS. Retorna a grade de KPIs."""
+    cells = ""
+    for t in tiles:
+        val, lbl, cls = t[0], t[1], t[2]
+        vid = t[3] if len(t) > 3 else ""
+        idattr = f' id="{vid}"' if vid else ""
+        cells += f'<div class="kpi {cls}"><div class="v"{idattr}>{val}</div><div class="l">{lbl}</div></div>'
     return f'<div class="kpi-grid">{cells}</div>'
 
 
@@ -2903,12 +2906,12 @@ def generate_findings_report(snapshot: dict, output_path: str = "findings_report
     css = _common_css(); js_utils = _common_js_utils()
     topbar = _topbar("findings"); footer = _footer()
     kpis = _kpi_tiles([
-        (len(items),   "Achados",        ""),
-        (len(active),  "Ativos",         ""),
-        (len(backlog), "Backlog",        "sev-alto" if backlog else ""),
-        (total_crit,   "Críticos (bl)",  "sev-crit"),
-        (aceito,       "Aceitos",        ""),
-        (fp,           "Falso Positivo", ""),
+        (len(items),   "Achados",        "",                            "k-total"),
+        (len(active),  "Ativos",         "",                            "k-active"),
+        (len(backlog), "Backlog",        "sev-alto" if backlog else "", "k-backlog"),
+        (total_crit,   "Críticos (bl)",  "sev-crit",                    "k-crit"),
+        (aceito,       "Aceitos",        "",                            "k-aceito"),
+        (fp,           "Falso Positivo", "",                            "k-fp"),
     ])
     donut = _donut(sev_counts, "Ativos por severidade")
     exec_panel = _exec_findings(items)
@@ -3168,7 +3171,25 @@ async function apiPost(path,body){{
     return {{ok:r.ok&&j.ok, code:r.status, j}};
   }}catch(e){{ return {{ok:false, code:0, j:{{error:'serviço indisponível'}}}}; }}
 }}
-function _patch(id,fn){{ for(const k in DATA){{ DATA[k].forEach(x=>{{ if(x.id===id) fn(x); }}); }} applyFilters(); }}
+function _rebucket(){{
+  // Reconstrói backlog/tratados a partir de DATA.all (fonte da verdade), para um
+  // item tratado sair do backlog e entrar em "Tratados" sem precisar recarregar.
+  DATA.backlog=DATA.all.filter(x=>x.active&&!x.treated);
+  DATA.treated=DATA.all.filter(x=>x.treated);
+}}
+function updateTabCounts(){{
+  const set=(id,n)=>{{const e=document.getElementById(id); if(e)e.textContent=n;}};
+  // badges das abas
+  set('b-backlog',DATA.backlog.length); set('b-treated',DATA.treated.length); set('b-all',DATA.all.length);
+  // KPIs do topo (mesma fonte: DATA) — mantêm consistência ao tratar/hidratar
+  set('k-total',DATA.all.length);
+  set('k-active',DATA.all.filter(x=>x.active).length);
+  set('k-backlog',DATA.backlog.length);
+  set('k-crit',DATA.backlog.filter(x=>x.severity==='CRITICO').length);
+  set('k-aceito',DATA.all.filter(x=>x.status==='ACEITO').length);
+  set('k-fp',DATA.all.filter(x=>x.status==='FALSO_POSITIVO').length);
+}}
+function _patch(id,fn){{ DATA.all.forEach(x=>{{ if(x.id===id) fn(x); }}); _rebucket(); updateTabCounts(); applyFilters(); }}
 async function setStatus(id,status){{
   if(!status) return;
   const res=await apiPost('/api/findings/'+id+'/status',{{status}});
@@ -3238,13 +3259,10 @@ async function hydrate(){{
     const r=await fetch('/api/findings',{{headers:{{'X-Requested-With':'argus'}}}});
     if(!r.ok) return; const j=await r.json();
     if(!j||!Array.isArray(j.findings)) return;
-    DATA.all=j.findings;
-    DATA.backlog=j.findings.filter(x=>x.active&&!x.treated);
-    DATA.treated=j.findings.filter(x=>x.treated);
-    applyFilters();
+    DATA.all=j.findings; _rebucket(); updateTabCounts(); applyFilters();
   }}catch(e){{}}
 }}
-function init(){{initFilters();applyFilters();hydrate();}}
+function init(){{initFilters();updateTabCounts();applyFilters();hydrate();}}
 init();
 </script>
 </body>

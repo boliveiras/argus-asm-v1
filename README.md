@@ -27,20 +27,12 @@ Ele responde, de forma contínua, a três perguntas:
 
 ```mermaid
 flowchart LR
-    A["Seus alvos<br/>(IPs e domínios)"] --> B
-    subgraph B["Descoberta — 5 scanners"]
-      direction TB
-      B1["Portas TCP/UDP"]
-      B2["Subdomínios"]
-      B3["Credenciais vazadas"]
-      B4["Postura de e-mail"]
-      B5["Domínios sósia"]
-    end
-    TI["Inteligência de ameaças<br/>AbuseIPDB · Shodan · crt.sh · RDAP"] --> B
-    B -->|vira achado| C[("Achados<br/>argus.db")]
-    C --> D["Portal web<br/>dashboard + gestão de achados"]
-    C --> E["Relatórios + logs (SIEM)"]
-    U(("Analista")) --> D
+    A["Seus alvos<br/>(IPs e domínios)"] --> SC
+    TI["Inteligência de ameaças<br/>AbuseIPDB · Shodan · crt.sh · RDAP"] --> SC
+    SC["5 scanners<br/>Portas · Subdomínios · Credenciais<br/>E-mail · Typosquat"] --> DB[("Achados<br/>argus.db")]
+    DB --> P["Portal web<br/>dashboard + gestão de achados"]
+    DB --> R["Relatórios + logs (SIEM)"]
+    U(("Analista")) --> P
 ```
 
 A cada execução, os scanners **descobrem** os ativos expostos, a inteligência de
@@ -123,9 +115,10 @@ equipe decidiu) — então um achado tratado **não reaparece como novo** a cada
 
 ```mermaid
 flowchart LR
-    NOVO --> EM_ANALISE["Em análise"] --> CONFIRMADO --> MITIGADO
-    EM_ANALISE --> ACEITO["Aceito (risco aceito)"]
-    EM_ANALISE --> FP["Falso positivo"]
+    A["Novo"] --> B["Em análise"]
+    B --> C["Confirmado"] --> D["Mitigado"]
+    B --> E["Aceito"]
+    B --> F["Falso positivo"]
 ```
 
 A triagem é feita pelo **portal web** (página *Gestão de Achados*) ou pela **CLI**:
