@@ -3230,7 +3230,21 @@ function exportCSV(){{
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);
   a.download='findings_'+new Date().toISOString().slice(0,10)+'.csv';a.click();
 }}
-function init(){{initFilters();applyFilters();}}
+async function hydrate(){{
+  // Ao carregar, busca os achados frescos do banco via API (se o serviço estiver
+  // no ar) — assim a página SEMPRE reflete o estado real, mesmo que a regeneração
+  // do HTML estático tenha falhado. Se o serviço estiver off, mantém o estático.
+  try{{
+    const r=await fetch('/api/findings',{{headers:{{'X-Requested-With':'argus'}}}});
+    if(!r.ok) return; const j=await r.json();
+    if(!j||!Array.isArray(j.findings)) return;
+    DATA.all=j.findings;
+    DATA.backlog=j.findings.filter(x=>x.active&&!x.treated);
+    DATA.treated=j.findings.filter(x=>x.treated);
+    applyFilters();
+  }}catch(e){{}}
+}}
+function init(){{initFilters();applyFilters();hydrate();}}
 init();
 </script>
 </body>

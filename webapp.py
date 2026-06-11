@@ -58,6 +58,11 @@ except ImportError:                       # degrada com mensagem clara
 
 import findings as F
 
+try:
+    import logs as _audit_log          # trilha de auditoria (RFC 5424, audit.log)
+except Exception:                       # nunca impede a API de subir
+    _audit_log = None
+
 DOCROOT = os.environ.get("ARGUS_DOCROOT", "/var/www/argus")
 BIND_HOST = os.environ.get("ARGUS_WEB_HOST", "127.0.0.1")
 BIND_PORT = int(os.environ.get("ARGUS_WEB_PORT", "8099"))
@@ -75,13 +80,42 @@ def _actor(request) -> str:
             or "web")
 
 
-def _regen_page():
-    """Regenera a página estática de achados após uma ação (best-effort)."""
+def _client_ip(request) -> str:
+    """IP real do cliente (a aplicação fica atrás do Apache → X-Forwarded-For)."""
+    xff = request.headers.get("X-Forwarded-For", "")
+    if xff:
+        return xff.split(",")[0].strip()
+    return request.remote_addr or ""
+
+
+def _audit(request, msgid, message="", *, outcome, action,
+           obj="", object_type="", **extra) -> None:
+    """Registra um evento na trilha de auditoria (best-effort, nunca levanta)."""
+    if _audit_log is None:
+        return
+    try:
+        _audit_log.audit(msgid, message, actor=_actor(request), src_ip=_client_ip(request),
+                         action=action, object=obj, object_type=object_type, outcome=outcome,
+                         user_agent=(request.headers.get("User-Agent", "") or "")[:200], **extra)
+    except Exception:
+        pass
+
+
+def _regen_page() -> bool:
+    """Regenera a página estática de achados após uma ação. Retorna True se
+    conseguiu. Em caso de falha (ex.: sem permissão de escrita no docroot), LOGA
+    (visível em journalctl -u argus-web) e retorna False — o dado já está no
+    argus.db e a página é re-hidratada pela API no próximo carregamento."""
     try:
         import reporter
         reporter.write_findings_page(DOCROOT)
-    except Exception:
-        pass
+        return True
+    except Exception as exc:
+        import sys
+        print(f"[argus-web] WARN: não foi possível regenerar {DOCROOT}/findings_report.html "
+              f"({exc}). Verifique a permissão de escrita do docroot (pacote 'acl' + setfacl).",
+              file=sys.stderr, flush=True)
+        return False
 
 
 def create_app():
@@ -136,6 +170,8 @@ def create_app():
     @app.post("/api/findings/<fid>/status")
     def set_status(fid):
         if not _csrf_ok():
+            _audit(request, "AUTHZ_DENY", "ação negada: header CSRF ausente",
+                   outcome="deny", action="set_status")
             return jsonify(ok=False, error="CSRF: header ausente"), 403
         data = request.get_json(silent=True) or {}
         to = F.normalize_status(str(data.get("status", "")))
@@ -145,19 +181,27 @@ def create_app():
         repo, rid = _resolve(fid)
         if rid == "ambiguous":
             return jsonify(ok=False, error="prefixo ambíguo"), 400
+        from_status = ""
         try:
             if not rid:
                 return jsonify(ok=False, error="não encontrado"), 404
+            from_status = (repo.get(rid) or {}).get("status", "")
             repo.set_status(rid, to, actor=_actor(request), note=note)
             f = repo.get(rid)
         finally:
             if repo: repo.close()
-        _regen_page()
-        return jsonify(ok=True, id=rid, status=to, status_label=F.STATUS_LABEL.get(to, to))
+        regen = _regen_page()
+        _audit(request, "FINDING_STATUS", f"status {from_status or '?'} -> {to}",
+               outcome="success", action="set_status", obj=rid, object_type="finding",
+               from_status=from_status, to_status=to)
+        return jsonify(ok=True, id=rid, status=to, status_label=F.STATUS_LABEL.get(to, to),
+                       regenerated=regen)
 
     @app.post("/api/findings/<fid>/note")
     def add_note(fid):
         if not _csrf_ok():
+            _audit(request, "AUTHZ_DENY", "ação negada: header CSRF ausente",
+                   outcome="deny", action="add_note")
             return jsonify(ok=False, error="CSRF: header ausente"), 403
         data = request.get_json(silent=True) or {}
         note = (str(data.get("note", "")).strip())[:_MAX_NOTE]
@@ -172,12 +216,16 @@ def create_app():
             repo.add_note(rid, note, actor=_actor(request))
         finally:
             if repo: repo.close()
-        _regen_page()
-        return jsonify(ok=True, id=rid)
+        regen = _regen_page()
+        _audit(request, "FINDING_NOTE", "nota/tratativa adicionada", outcome="success",
+               action="add_note", obj=rid, object_type="finding")
+        return jsonify(ok=True, id=rid, regenerated=regen)
 
     @app.post("/api/findings/<fid>/evidence")
     def add_evidence(fid):
         if not _csrf_ok():
+            _audit(request, "AUTHZ_DENY", "ação negada: header CSRF ausente",
+                   outcome="deny", action="add_evidence")
             return jsonify(ok=False, error="CSRF: header ausente"), 403
         data = request.get_json(silent=True) or {}
         label = (str(data.get("label", "")).strip())[:_MAX_LBL]
@@ -193,8 +241,10 @@ def create_app():
             repo.add_evidence(rid, label, ref, actor=_actor(request))
         finally:
             if repo: repo.close()
-        _regen_page()
-        return jsonify(ok=True, id=rid)
+        regen = _regen_page()
+        _audit(request, "FINDING_EVIDENCE", "evidência anexada", outcome="success",
+               action="add_evidence", obj=rid, object_type="finding", detail=label)
+        return jsonify(ok=True, id=rid, regenerated=regen)
 
     return app
 

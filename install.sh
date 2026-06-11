@@ -65,6 +65,7 @@ LOG_DIR_SUBMONITOR="/var/log/argus/submonitor"
 LOG_DIR_CREDENTIALS="/var/log/argus/credentials"
 LOG_DIR_EMAIL="/var/log/argus/email"
 LOG_DIR_TYPOSQUAT="/var/log/argus/typosquat"
+LOG_DIR_AUDIT="/var/log/argus/audit"
 
 APACHE_DOCROOT="/var/www/argus"
 APACHE_CONF="/etc/apache2/sites-available/argus-monitor.conf"
@@ -134,7 +135,9 @@ fi
 step "3. Instalando dependências de sistema"
 apt-get update -qq
 PKGS="nmap python3 python3-pip python3-venv openssl"
-[ "$INSTALL_APACHE" = true ] && PKGS="$PKGS apache2 apache2-utils"
+# 'acl' (setfacl) deixa o serviço argus-web (app user) regenerar a página de
+# achados no docroot após cada ação — sem ele, a página só atualiza nos scans.
+[ "$INSTALL_APACHE" = true ] && PKGS="$PKGS apache2 apache2-utils acl"
 for pkg in $PKGS; do
   if dpkg -s "$pkg" &>/dev/null; then ok "$pkg já instalado"
   else
@@ -175,6 +178,7 @@ dirs=(
   "$LOG_DIR_CREDENTIALS"
   "$LOG_DIR_EMAIL"
   "$LOG_DIR_TYPOSQUAT"
+  "$LOG_DIR_AUDIT"
 )
 for d in "${dirs[@]}"; do mkdir -p "$d" && ok "$d"; done
 
@@ -190,6 +194,7 @@ copy_if_exists "reporter.py"                          "$BASE_DIR/reporter.py"
 copy_if_exists "ack.py"                               "$BASE_DIR/ack.py"
 copy_if_exists "findings.py"                          "$BASE_DIR/findings.py"
 copy_if_exists "webapp.py"                            "$BASE_DIR/webapp.py"
+copy_if_exists "logs.py"                              "$BASE_DIR/logs.py"
 copy_if_exists "argus-reset.sh"                       "$BASE_DIR/argus-reset.sh"
 copy_if_exists "monitor.py"                           "$MONITOR_DIR/monitor.py"
 copy_if_exists "submonitor.py"                        "$SUBMONITOR_DIR/submonitor.py"
@@ -225,6 +230,10 @@ chmod 750 "$MONITOR_DIR" "$SUBMONITOR_DIR" "$CREDENTIALS_DIR" "$EMAIL_DIR" "$TYP
 ok "Scripts: 644, diretórios: 755"
 chown root:adm "$LOG_DIR_MONITOR" "$LOG_DIR_SUBMONITOR" "$LOG_DIR_CREDENTIALS" "$LOG_DIR_EMAIL" "$LOG_DIR_TYPOSQUAT"
 chmod 750 "$LOG_DIR_MONITOR" "$LOG_DIR_SUBMONITOR" "$LOG_DIR_CREDENTIALS" "$LOG_DIR_EMAIL" "$LOG_DIR_TYPOSQUAT"
+# Auditoria: o serviço argus-web (usuário $APP_USER) ESCREVE o audit.log; o grupo
+# adm LÊ. setgid (2750) faz os logs herdarem o grupo adm — proteção do log (PCI 10.3).
+chown "$APP_USER:adm" "$LOG_DIR_AUDIT" && chmod 2750 "$LOG_DIR_AUDIT"
+ok "Diretório de auditoria: $LOG_DIR_AUDIT ($APP_USER:adm 2750)"
 ok "Logs: 750, dono root:adm"
 # config.json contém a API key (AbuseIPDB). O submonitor roda como $APP_USER
 # pelo comando global, então precisa LER o config. 640 root:$APP_USER mantém o
@@ -466,6 +475,28 @@ $LOG_DIR_TYPOSQUAT/*.log {
 LOGROTATE
 ok "Logrotate configurado (rotação semanal, 12 semanas)"
 
+# Auditoria: retenção LONGA (~1 ano) e dono $APP_USER (quem escreve é o argus-web).
+cat > /etc/logrotate.d/argus-audit << AUDITROTATE
+$LOG_DIR_AUDIT/*.log {
+    weekly
+    rotate 53
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 $APP_USER adm
+    su $APP_USER adm
+}
+AUDITROTATE
+ok "Logrotate de auditoria (retenção ~12 meses — PCI 10.5.1)"
+
+# Sincronização de tempo — timestamps de auditoria confiáveis (PCI 10.6 / NIST AU-8).
+if timedatectl show -p NTPSynchronized --value 2>/dev/null | grep -qi yes; then
+  ok "Relógio sincronizado por NTP"
+else
+  warn "NTP não sincronizado — habilite com: sudo timedatectl set-ntp true (auditoria exige hora correta)"
+fi
+
 # ── 12. APACHE2 ───────────────────────────────────────────────
 if [ "$INSTALL_APACHE" = true ]; then
   step "12. Configurando Apache2"
@@ -658,6 +689,12 @@ if [ "$INSTALL_APACHE" = true ]; then
 
     ErrorLog  \${APACHE_LOG_DIR}/argus-monitor-error.log
     CustomLog \${APACHE_LOG_DIR}/argus-monitor-access.log combined
+
+    # Trilha de AUTENTICAÇÃO (login/logout) — auditoria ISO A.8.15 / PCI 10.2.1.
+    # status 302 + user=<nome> em /dologin = login OK; user=- = login falho.
+    SetEnvIf Request_URI "^/(dologin|logout)" argus_auth
+    LogFormat "%{%Y-%m-%dT%H:%M:%S%z}t src=%a user=%u %m %U%q -> %s" argusauth
+    CustomLog \${APACHE_LOG_DIR}/argus-auth.log argusauth env=argus_auth
 </VirtualHost>
 APACHECONF
 
@@ -695,6 +732,7 @@ Environment=ARGUS_DOCROOT=$APACHE_DOCROOT
 Environment=ARGUS_DB=$BASE_DIR/store/argus.db
 Environment=ARGUS_WEB_HOST=127.0.0.1
 Environment=ARGUS_WEB_PORT=8099
+Environment=ARGUS_AUDIT_LOG=$LOG_DIR_AUDIT/audit.log
 ExecStart=$PYTHON_BIN $BASE_DIR/webapp.py
 Restart=on-failure
 RestartSec=3
@@ -703,7 +741,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=true
-ReadWritePaths=$BASE_DIR/store $APACHE_DOCROOT
+ReadWritePaths=$BASE_DIR/store $APACHE_DOCROOT $LOG_DIR_AUDIT
 
 [Install]
 WantedBy=multi-user.target
