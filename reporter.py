@@ -126,7 +126,8 @@ def _common_css() -> str:
   .topbar { position:sticky; top:0; z-index:20; display:flex; align-items:center; gap:22px;
             padding:0 26px; height:58px; background:rgba(8,12,22,.85); backdrop-filter:blur(10px);
             border-bottom:1px solid var(--border); }
-  .brand { display:flex; align-items:center; gap:11px; white-space:nowrap; }
+  .brand { display:flex; align-items:center; gap:11px; white-space:nowrap; text-decoration:none; color:inherit; cursor:pointer; }
+  .brand:hover .logo { filter:drop-shadow(0 0 12px rgba(51,163,239,.5)); }
   .brand .logo { width:32px; height:32px; display:block; filter:drop-shadow(0 0 10px rgba(51,163,239,.28)); }
   .brand .bwrap { display:flex; flex-direction:column; line-height:1.08; }
   .brand .bn { font-weight:800; font-size:16px; letter-spacing:2.4px;
@@ -596,8 +597,8 @@ def _topbar(active: str) -> str:
         "try{localStorage.setItem('argus-theme',l?'light':'dark');}catch(e){}}"
         '</script>'
         '<div class="topbar">'
-        f'<div class="brand">{_logo_svg()}<span class="bwrap"><span class="bn">ARGUS</span>'
-        f'<span class="sub">Attack Surface Management</span></span></div>'
+        f'<a class="brand" href="/index.html" title="Início">{_logo_svg()}<span class="bwrap"><span class="bn">ARGUS</span>'
+        f'<span class="sub">Attack Surface Management</span></span></a>'
         f'<nav class="nav">{links}</nav>'
         '<button class="theme-toggle" type="button" onclick="argusToggleTheme()"'
         ' title="Tema claro/escuro" aria-label="Alternar tema claro ou escuro">'
