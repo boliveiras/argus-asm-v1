@@ -72,7 +72,7 @@ if [ "$WIPE_CACHES" -eq 1 ]; then
   for base in "$BASE_DIR/threatintel/threatintel.db" "$BASE_DIR/threatintel/intel.db"; do
     for f in "$base" "$base"-wal "$base"-shm "$base"-journal; do [ -e "$f" ] && cache_remove+=("$f"); done
   done
-  for d in crtsh urlscan hudsonrock internetdb; do
+  for d in crtsh urlscan hudsonrock internetdb cisa_kev; do
     for f in "$BASE_DIR/threatintel/${d}_cache/"*; do [ -e "$f" ] && cache_remove+=("$f"); done
   done
 fi
@@ -92,7 +92,7 @@ if [ ${#to_remove[@]} -eq 0 ]; then echo "  (nenhum banco de achados encontrado)
 else printf '  %s\n' "${to_remove[@]}"; fi
 if [ "$WIPE_CACHES" -eq 1 ]; then
   echo; echo "${Y}+ Cache de Threat Intel (${#cache_remove[@]} item[s]):${N}"
-  echo "  threatintel.db · intel.db · {crtsh,urlscan,hudsonrock,internetdb}_cache/*"
+  echo "  threatintel.db · intel.db · {crtsh,urlscan,hudsonrock,internetdb,cisa_kev}_cache/*"
 else
   echo; echo "${G}PRESERVADO:${N} enriquecimento (cache de Threat Intel intacto)."
 fi

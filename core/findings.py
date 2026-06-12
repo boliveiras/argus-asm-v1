@@ -30,9 +30,9 @@ histórico, notas e evidências.
 Conceitos (orthogonais, de propósito):
   • detecção  → `active` (1 = observado na última varredura; 0 = não observado)
                 + `first_seen`/`last_seen`. É o ciclo de OBSERVAÇÃO.
-  • triagem   → `status` (Novo → Em análise → Confirmado → Mitigado/Aceito,
-                ou Falso Positivo). É o ciclo OPERACIONAL/humano e PERSISTE
-                mesmo quando o ativo é reobservado.
+  • triagem   → `status` (Novo → Em tratamento → Mitigado, ou Falso Positivo).
+                É o ciclo OPERACIONAL/humano e PERSISTE mesmo quando o ativo é
+                reobservado. O scanner marcar CORRIGIDO promove o achado a Mitigado.
 
 Banco: `argus.db` (store central). Os bancos de scan atuais NÃO são apagados —
 a migração faz backup e importa de forma idempotente e não-destrutiva.
@@ -60,35 +60,40 @@ from pathlib import Path
 # ── Severidade (mantém a nomenclatura atual do Argus) ────────────────────────
 SEVERITIES = ("CRITICO", "ALTO", "MEDIO", "BAIXO", "INFO")
 
-# ── Ciclo de triagem (status operacional do achado) ──────────────────────────
+# ── Ciclo de triagem (ESTADO operacional do achado) — 4 estados ──────────────
 ST_NOVO            = "NOVO"
-ST_EM_ANALISE      = "EM_ANALISE"
-ST_CONFIRMADO      = "CONFIRMADO"
+ST_EM_TRATAMENTO   = "EM_TRATAMENTO"
 ST_MITIGADO        = "MITIGADO"
-ST_ACEITO          = "ACEITO"
 ST_FALSO_POSITIVO  = "FALSO_POSITIVO"
 
-STATUSES = (ST_NOVO, ST_EM_ANALISE, ST_CONFIRMADO, ST_MITIGADO, ST_ACEITO, ST_FALSO_POSITIVO)
+STATUSES = (ST_NOVO, ST_EM_TRATAMENTO, ST_MITIGADO, ST_FALSO_POSITIVO)
 
 # Rótulos legíveis (UI/relatórios)
 STATUS_LABEL = {
-    ST_NOVO: "Novo", ST_EM_ANALISE: "Em análise", ST_CONFIRMADO: "Confirmado",
-    ST_MITIGADO: "Mitigado", ST_ACEITO: "Aceito", ST_FALSO_POSITIVO: "Falso Positivo",
+    ST_NOVO: "Novo", ST_EM_TRATAMENTO: "Em tratamento",
+    ST_MITIGADO: "Mitigado", ST_FALSO_POSITIVO: "Falso Positivo",
 }
-# Status considerados "tratados" (não exigem ação nova / saem do backlog ativo)
-TREATED_STATUSES = (ST_MITIGADO, ST_ACEITO, ST_FALSO_POSITIVO)
+# "Tratados" = saem do backlog e vão para a aba Tratado (tudo que não é Novo).
+TREATED_STATUSES = (ST_EM_TRATAMENTO, ST_MITIGADO, ST_FALSO_POSITIVO)
+# "Resolvidos" = somem dos relatórios de scan (Em tratamento NÃO some).
+SCAN_HIDDEN_STATUSES = (ST_MITIGADO, ST_FALSO_POSITIVO)
 
-# Aliases amigáveis (CLI/Web) -> status canônico
+# Aliases amigáveis (CLI/Web) -> estado canônico. Inclui compat com os antigos.
 STATUS_ALIASES = {
     "novo": ST_NOVO, "new": ST_NOVO,
-    "em-analise": ST_EM_ANALISE, "em_analise": ST_EM_ANALISE, "analise": ST_EM_ANALISE,
-    "analysing": ST_EM_ANALISE, "wip": ST_EM_ANALISE,
-    "confirmado": ST_CONFIRMADO, "confirmed": ST_CONFIRMADO,
+    "em-tratamento": ST_EM_TRATAMENTO, "em_tratamento": ST_EM_TRATAMENTO,
+    "tratamento": ST_EM_TRATAMENTO, "wip": ST_EM_TRATAMENTO,
     "mitigado": ST_MITIGADO, "mitigated": ST_MITIGADO,
-    "aceito": ST_ACEITO, "accepted": ST_ACEITO, "risk-accepted": ST_ACEITO,
     "falso-positivo": ST_FALSO_POSITIVO, "falso_positivo": ST_FALSO_POSITIVO,
     "fp": ST_FALSO_POSITIVO, "false-positive": ST_FALSO_POSITIVO,
+    # compatibilidade com os estados antigos (6 -> 4)
+    "em-analise": ST_EM_TRATAMENTO, "em_analise": ST_EM_TRATAMENTO, "analise": ST_EM_TRATAMENTO,
+    "confirmado": ST_EM_TRATAMENTO, "confirmed": ST_EM_TRATAMENTO,
+    "aceito": ST_MITIGADO, "accepted": ST_MITIGADO,
 }
+
+# Remapeamento de estados ANTIGOS (no banco) -> novos (migração idempotente).
+_STATUS_REMAP = {"EM_ANALISE": ST_EM_TRATAMENTO, "CONFIRMADO": ST_EM_TRATAMENTO, "ACEITO": ST_MITIGADO}
 
 def normalize_status(s: str) -> str:
     """Aceita o canônico (NOVO...) ou um alias amigável (em-analise, fp...)."""
@@ -240,6 +245,10 @@ class FindingRepository:
         CREATE INDEX IF NOT EXISTS ix_events_finding   ON finding_events(finding_id);
         """)
         c.commit()
+        # Migração de ESTADOS antigos (6) -> novos (4), idempotente e não-destrutiva.
+        for _old, _new in _STATUS_REMAP.items():
+            c.execute("UPDATE findings SET status=? WHERE status=?", (_new, _old))
+        c.commit()
 
     def close(self) -> None:
         try: self._conn.commit(); self._conn.close()
@@ -340,6 +349,55 @@ class FindingRepository:
         self._event(fid, "status_change", actor, from_status, to_status, note, ts=ts)
         self._conn.commit()
         return True
+
+    def mark_corrected(self, source: str, keys, *, actor: str = "scan",
+                       note: str | None = None) -> int:
+        """ACOPLAMENTO scan→achado: quando o scanner marca um item como CORRIGIDO,
+        o achado correspondente vira MITIGADO automaticamente. NÃO mexe em quem já
+        é Falso Positivo ou Mitigado (decisão final do analista preservada).
+        `keys` = chaves naturais corrigidas nesta varredura. Retorna quantos mudaram."""
+        ts = _now()
+        n = 0
+        for k in keys:
+            fid = finding_id(source, k)
+            row = self._conn.execute("SELECT status FROM findings WHERE id=?", (fid,)).fetchone()
+            if row is None or row[0] in (ST_MITIGADO, ST_FALSO_POSITIVO):
+                continue
+            self._conn.execute("UPDATE findings SET status=?, updated_at=? WHERE id=?",
+                               (ST_MITIGADO, ts, fid))
+            self._event(fid, "status_change", actor, row[0], ST_MITIGADO,
+                        note or "Corrigido na varredura (auto-mitigado)", ts=ts)
+            n += 1
+        self._conn.commit()
+        return n
+
+    def mark_resurged(self, source: str, keys, *, actor: str = "scan") -> int:
+        """Achado auto-mitigado que VOLTOU a ser detectado (scan Ressurgido) é
+        reaberto para NOVO — senão ficaria 'escondido' do scan por estar Mitigado.
+        NÃO mexe em Falso Positivo (decisão do analista). Retorna quantos reabriram."""
+        ts = _now()
+        n = 0
+        for k in keys:
+            fid = finding_id(source, k)
+            row = self._conn.execute("SELECT status FROM findings WHERE id=?", (fid,)).fetchone()
+            if row is None or row[0] != ST_MITIGADO:
+                continue
+            self._conn.execute("UPDATE findings SET status=?, updated_at=? WHERE id=?",
+                               (ST_NOVO, ts, fid))
+            self._event(fid, "status_change", actor, row[0], ST_NOVO,
+                        "Ressurgido na varredura (reaberto)", ts=ts)
+            n += 1
+        self._conn.commit()
+        return n
+
+    def hidden_keys(self, source: str) -> set:
+        """Chaves naturais cujo ESTADO faz o achado SUMIR do relatório de scan
+        (Mitigado / Falso Positivo). 'Em tratamento' NÃO entra (continua no scan)."""
+        ph = ",".join("?" * len(SCAN_HIDDEN_STATUSES))
+        rows = self._conn.execute(
+            f"SELECT natural_key FROM findings WHERE source=? AND status IN ({ph})",
+            (source, *SCAN_HIDDEN_STATUSES)).fetchall()
+        return {r[0] for r in rows}
 
     def add_note(self, fid: str, note: str, *, actor: str = "system") -> bool:
         if self._conn.execute("SELECT 1 FROM findings WHERE id=?", (fid,)).fetchone() is None:
@@ -562,7 +620,8 @@ def snapshot(db_path: str | None = None, limit: int = 5000) -> dict:
 
 def sync_findings(source: str, observed: list, *, key_of, severity_of,
                   title_of=None, campanha_of=None, details_of=None,
-                  scope_predicate=None, db_path: str | None = None,
+                  scope_predicate=None, corrected=None, resurged=None,
+                  db_path: str | None = None,
                   run_id: str = "", actor: str = "system") -> tuple[int, int]:
     """Sincroniza o resultado de UMA varredura com o store central, de forma
     ADITIVA (não interfere no fluxo/DB/relatório atual do módulo):
@@ -589,9 +648,29 @@ def sync_findings(source: str, observed: list, *, key_of, severity_of,
                 details=(details_of(item) if details_of else None),
                 run_id=run_id, actor=actor)
         closed = repo.mark_absent(source, seen, key_predicate=scope_predicate, actor=actor)
+        # ACOPLAMENTO scan→achado: CORRIGIDO vira MITIGADO; RESSURGIDO reabre p/ NOVO.
+        if resurged:
+            rk = [key_of(it) for it in resurged]
+            repo.mark_resurged(source, [k for k in rk if k], actor=actor)
+        if corrected:
+            ck = [key_of(it) for it in corrected]
+            repo.mark_corrected(source, [k for k in ck if k], actor=actor)
         return len(seen), closed
     finally:
         repo.close()
+
+
+def hidden_keys(source: str, db_path: str | None = None) -> set:
+    """Conveniência p/ os scanners: chaves cujo achado está Mitigado/Falso Positivo
+    (devem sumir do relatório de scan). Nunca levanta — em erro retorna set()."""
+    try:
+        repo = FindingRepository(db_path)
+        try:
+            return repo.hidden_keys(source)
+        finally:
+            repo.close()
+    except Exception:
+        return set()
 
 
 # ============================================================
@@ -640,7 +719,7 @@ def migrate_legacy_dbs(base_dir: str, *, db_path: str | None = None) -> dict:
 
     def _ack_status(module, key):
         reason = acks.get((module, str(key).lower()))
-        return (ST_ACEITO, reason) if reason is not None else (None, None)
+        return (ST_MITIGADO, reason) if reason is not None else (None, None)
 
     # ── monitor.db (scans) — ip:port/proto ──
     mon = base / "monitor" / "monitor.db"
@@ -652,7 +731,7 @@ def migrate_legacy_dbs(base_dir: str, *, db_path: str | None = None) -> dict:
             cols = {r[1] for r in c.execute("PRAGMA table_info(scans)")}
             sel = "ip,port,protocol,service,risk,campanha,status"
             for ip,port,proto,svc,risk,camp,st in c.execute(
-                    f"SELECT {sel} FROM scans WHERE status IN ('NOVO','REINCIDENTE')"):
+                    f"SELECT {sel} FROM scans WHERE status IN ('NOVO','REINCIDENTE','RESSURGIDO')"):
                 key = f"{ip}:{port}/{proto}"
                 fid, _ = repo.upsert("monitor", key, severity=risk or "BAIXO",
                                      title=f"{ip}:{port}/{proto} ({svc or '?'})",
@@ -672,7 +751,7 @@ def migrate_legacy_dbs(base_dir: str, *, db_path: str | None = None) -> dict:
         try:
             c = sqlite3.connect(str(sub))
             for host,risk,camp in c.execute(
-                    "SELECT hostname,risk,campanha FROM subdomains WHERE status IN ('NOVO','REINCIDENTE')"):
+                    "SELECT hostname,risk,campanha FROM subdomains WHERE status IN ('NOVO','REINCIDENTE','RESSURGIDO')"):
                 fid, _ = repo.upsert("submonitor", host, severity=risk or "INFO",
                                      title=host, campanha=camp or "")
                 stt, reason = _ack_status("submonitor", host)
@@ -692,7 +771,7 @@ def migrate_legacy_dbs(base_dir: str, *, db_path: str | None = None) -> dict:
         try:
             c = sqlite3.connect(str(p))
             for dom,risk,camp in c.execute(
-                    f"SELECT domain,risk,campanha FROM {table} WHERE status IN ('NOVO','REINCIDENTE')"):
+                    f"SELECT domain,risk,campanha FROM {table} WHERE status IN ('NOVO','REINCIDENTE','RESSURGIDO')"):
                 fid, _ = repo.upsert(src, dom, severity=risk or "BAIXO", title=dom, campanha=camp or "")
                 stt, reason = _ack_status(src, dom)
                 if stt: repo.set_status(fid, stt, note=f"Migrado do RECONHECIDO: {reason}")
@@ -713,7 +792,7 @@ def migrate_legacy_dbs(base_dir: str, *, db_path: str | None = None) -> dict:
 _USAGE = """argus-finding — gestão operacional de achados (Findings)
 
   argus-finding list [--source monitor|submonitor|credentials|email|typosquat]
-                     [--status novo|em-analise|confirmado|mitigado|aceito|fp]
+                     [--status novo|em-tratamento|mitigado|fp]
                      [--severity CRITICO|ALTO|MEDIO|BAIXO|INFO] [--active]
                      [--limit N] [--page P]
                      (paginado: --limit = tamanho da pagina, padrao 50; --page = numero
@@ -725,7 +804,7 @@ _USAGE = """argus-finding — gestão operacional de achados (Findings)
   argus-finding counts
   argus-finding migrate [<base_dir>]      (importa DBs legados; idempotente)
 
-status: novo | em-analise | confirmado | mitigado | aceito | falso-positivo (fp)
+estado: novo | em-tratamento | mitigado | falso-positivo (fp)
 Toda ação é auditada (finding_events) com o usuário que executou."""
 
 
@@ -850,10 +929,10 @@ def _main(argv=None):
 
             if cmd == "set":
                 if not rest:
-                    print("[ERRO] informe o status. Ex.: argus-finding set <id> aceito --note \"...\""); return 2
+                    print("[ERRO] informe o estado. Ex.: argus-finding set <id> mitigado --note \"...\""); return 2
                 to = normalize_status(rest[0])
                 if not to:
-                    print(f"[ERRO] status inválido: {rest[0]} (use novo|em-analise|confirmado|mitigado|aceito|fp)"); return 2
+                    print(f"[ERRO] estado inválido: {rest[0]} (use novo|em-tratamento|mitigado|fp)"); return 2
                 note = _pop_opt(rest, "--note")
                 repo.set_status(fid, to, actor=actor, note=note)
                 print(f"  ✓ {fid[:10]} → {STATUS_LABEL[to]} (por {actor})")

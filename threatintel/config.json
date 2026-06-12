@@ -19,6 +19,11 @@
     "internetdb_daily_request_limit": 2000,
     "internetdb_cache_ttl_hours": 24,
     "internetdb_top_vulns": 30,
+    "cisa_kev_enabled": true,
+    "cisa_kev_url": "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json",
+    "cisa_kev_request_timeout": 30,
+    "cisa_kev_cache_ttl_hours": 24,
+    "cisa_kev_forces_critico": true,
     "db_path": "CONFIGURADO_PELO_INSTALADOR",
     "log_dir": "CONFIGURADO_PELO_INSTALADOR"
 }

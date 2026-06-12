@@ -152,9 +152,12 @@ def syslog_look(result: dict):
     risk   = result.get("risk","MEDIO")
     status = result.get("status","NOVO")
     sev    = _RISK_SEV.get(risk,"INFO")
-    if status == "REMOVIDO":
-        sev = "NOTICE"; msgid = "TYPO_REM"
-        msg = f"Sósia removido: {result.get('domain','')}"
+    if status == "CORRIGIDO":
+        sev = "NOTICE"; msgid = "TYPO_FIX"
+        msg = f"Sósia corrigido: {result.get('domain','')}"
+    elif status == "RESSURGIDO":
+        msgid = "TYPO_RESURG"
+        msg = f"Sósia ressurgido [{risk}]: {result.get('domain','')} (de {result.get('base_domain','')})"
     elif status == "REINCIDENTE":
         msgid = "TYPO_REIN"
         msg = f"Sósia reincidente [{risk}]: {result.get('domain','')} (de {result.get('base_domain','')})"
@@ -360,16 +363,17 @@ def process_results(results: list[dict]):
 
     for r in results:
         dom = r["domain"]; current.add(dom)
-        cursor.execute("SELECT id FROM lookalikes WHERE domain=? ORDER BY id DESC LIMIT 1", (dom,))
+        cursor.execute("SELECT id,status FROM lookalikes WHERE domain=? ORDER BY id DESC LIMIT 1", (dom,))
         existing = cursor.fetchone()
         _wst = r.get("whois_status", ""); _wcr = r.get("whois_creation", "")
         _wage = r.get("whois_age_days"); _wage = _wage if isinstance(_wage, int) else -1
         if existing:
-            r["status"] = "REINCIDENTE"; reincidentes.append(r); syslog_look(r)
+            new_status = "RESSURGIDO" if existing[1] == "CORRIGIDO" else "REINCIDENTE"
+            r["status"] = new_status; reincidentes.append(r); syslog_look(r)
             cursor.execute(
                 "UPDATE lookalikes SET campanha=?,base_domain=?,fuzzer=?,ip=?,mx=?,risk=?,last_seen=?,status=?,whois_status=?,whois_creation=?,whois_age_days=? WHERE id=?",
                 (r["campanha"], r["base_domain"], r["fuzzer"], r["ip"], int(r["mx"]),
-                 r["risk"], now, "REINCIDENTE", _wst, _wcr, _wage, existing[0]))
+                 r["risk"], now, new_status, _wst, _wcr, _wage, existing[0]))
         else:
             r["status"] = "NOVO"; novos.append(r); syslog_look(r)
             cursor.execute(
@@ -378,13 +382,13 @@ def process_results(results: list[dict]):
                  r["risk"], now, now, "NOVO", _wst, _wcr, _wage))
 
     grace_cutoff = (datetime.datetime.now() - datetime.timedelta(days=CLOSE_GRACE_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
-    cursor.execute("SELECT id,domain,base_domain,campanha FROM lookalikes WHERE status IN ('NOVO','REINCIDENTE') AND last_seen < ?", (grace_cutoff,))
+    cursor.execute("SELECT id,domain,base_domain,campanha FROM lookalikes WHERE status IN ('REINCIDENTE','RESSURGIDO') AND last_seen < ?", (grace_cutoff,))
     for row_id, dom, base, camp in cursor.fetchall():
         if dom not in current:
             entry = {"domain": dom, "base_domain": base or "", "campanha": camp or "",
-                     "fuzzer": "", "ip": "", "mx": False, "risk": "INFO", "status": "REMOVIDO"}
+                     "fuzzer": "", "ip": "", "mx": False, "risk": "INFO", "status": "CORRIGIDO"}
             removidos.append(entry); syslog_look(entry)
-            cursor.execute("UPDATE lookalikes SET status='REMOVIDO', last_seen=? WHERE id=?", (now, row_id))
+            cursor.execute("UPDATE lookalikes SET status='CORRIGIDO', last_seen=? WHERE id=?", (now, row_id))
     conn.commit(); conn.close()
     return novos, reincidentes, removidos
 
@@ -476,6 +480,8 @@ def main():
                     campanha_of=lambda r: r.get("campanha", ""),
                     details_of=lambda r: {"base_domain": r.get("base_domain",""), "fuzzer": r.get("fuzzer",""),
                                           "ip": r.get("ip",""), "mx": r.get("mx", False)},
+                    corrected=removidos,
+                    resurged=[r for r in reincidentes if r.get("status") == "RESSURGIDO"],
                     run_id=str(_run_id or ""))
                 print(f"[FINDINGS] argus.db: {obs} observado(s), {closed} fechado(s)")
                 try:
@@ -484,6 +490,17 @@ def main():
                 except Exception: pass
             except Exception as _exc:
                 print(f"[FINDINGS] sync ignorado (não crítico): {_exc}")
+
+        # ── Esconde do relatório os sósias cujo ACHADO foi tratado (Mitigado/FP) ──
+        if _findings is not None:
+            try:
+                _hidden = _findings.hidden_keys("typosquat")
+                if _hidden:
+                    novos        = [r for r in novos        if r.get("domain") not in _hidden]
+                    reincidentes = [r for r in reincidentes if r.get("domain") not in _hidden]
+                    removidos    = [r for r in removidos    if r.get("domain") not in _hidden]
+            except Exception:
+                pass
 
         from pathlib import Path as _Path
         import os as _os, shutil as _shutil
@@ -508,7 +525,7 @@ def main():
     print(f"[+] Sósia (crítico)  : {criticos}")
     print(f"[+] Novos            : {len(novos)}")
     print(f"[+] Reincidentes     : {len(reincidentes)}")
-    print(f"[+] Removidos        : {len(removidos)}")
+    print(f"[+] Corrigidos       : {len(removidos)}")
     print(f"[+] Tempo de execução: {_fmt_duration(duration_s)}")
 
 if __name__ == "__main__":

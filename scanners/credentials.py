@@ -134,9 +134,12 @@ def syslog_domain(result: dict):
     risk   = result.get("risk","BAIXO")
     status = result.get("status","NOVO")
     sev    = _RISK_SEV.get(risk,"INFO")
-    if status == "REMOVIDO":
-        sev = "NOTICE"; msgid = "CRED_REM"
-        msg = f"Exposição removida: {result.get('domain','')}"
+    if status == "CORRIGIDO":
+        sev = "NOTICE"; msgid = "CRED_FIX"
+        msg = f"Exposição corrigida: {result.get('domain','')}"
+    elif status == "RESSURGIDO":
+        msgid = "CRED_RESURG"
+        msg = f"Exposição ressurgida [{risk}]: {result.get('domain','')} (total={result.get('total',0)})"
     elif status == "REINCIDENTE":
         msgid = "CRED_REIN"
         msg = f"Exposição reincidente [{risk}]: {result.get('domain','')} (total={result.get('total',0)})"
@@ -288,14 +291,15 @@ def process_results(results: list[dict]):
 
     for r in results:
         domain = r["domain"]; current.add(domain)
-        cursor.execute("SELECT id FROM domains WHERE domain=? ORDER BY id DESC LIMIT 1", (domain,))
+        cursor.execute("SELECT id,status FROM domains WHERE domain=? ORDER BY id DESC LIMIT 1", (domain,))
         existing = cursor.fetchone()
         if existing:
-            r["status"] = "REINCIDENTE"; reincidentes.append(r); syslog_domain(r)
+            new_status = "RESSURGIDO" if existing[1] == "CORRIGIDO" else "REINCIDENTE"
+            r["status"] = new_status; reincidentes.append(r); syslog_domain(r)
             cursor.execute(
                 "UPDATE domains SET campanha=?,total=?,employees=?,users=?,third_parties=?,top_url=?,risk=?,last_seen=?,status=? WHERE id=?",
                 (r["campanha"], r.get("total",0), r.get("employees",0), r.get("users",0),
-                 r.get("third_parties",0), r.get("top_url",""), r["risk"], now, "REINCIDENTE", existing[0]))
+                 r.get("third_parties",0), r.get("top_url",""), r["risk"], now, new_status, existing[0]))
         else:
             r["status"] = "NOVO"; novos.append(r); syslog_domain(r)
             cursor.execute(
@@ -304,14 +308,14 @@ def process_results(results: list[dict]):
                  r.get("third_parties",0), r.get("top_url",""), r["risk"], now, now, "NOVO"))
 
     grace_cutoff = (datetime.datetime.now() - datetime.timedelta(days=CLOSE_GRACE_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
-    cursor.execute("SELECT id,domain,campanha FROM domains WHERE status IN ('NOVO','REINCIDENTE') AND last_seen < ?", (grace_cutoff,))
+    cursor.execute("SELECT id,domain,campanha FROM domains WHERE status IN ('REINCIDENTE','RESSURGIDO') AND last_seen < ?", (grace_cutoff,))
     for row_id, old_domain, old_campanha in cursor.fetchall():
         if old_domain not in current:
-            entry = {"domain":old_domain,"campanha":old_campanha or "","risk":"BAIXO","status":"REMOVIDO",
+            entry = {"domain":old_domain,"campanha":old_campanha or "","risk":"BAIXO","status":"CORRIGIDO",
                      "total":0,"employees":0,"users":0,"third_parties":0,"top_url":"",
                      "employees_urls":[],"clients_urls":[],"third_parties_urls":[]}
             removidos.append(entry); syslog_domain(entry)
-            cursor.execute("UPDATE domains SET status='REMOVIDO', last_seen=? WHERE id=?", (now, row_id))
+            cursor.execute("UPDATE domains SET status='CORRIGIDO', last_seen=? WHERE id=?", (now, row_id))
     conn.commit(); conn.close()
     return novos, reincidentes, removidos
 
@@ -393,6 +397,8 @@ def main():
                     campanha_of=lambda r: r.get("campanha", ""),
                     details_of=lambda r: {"total": r.get("total",0), "employees": r.get("employees",0),
                                           "users": r.get("users",0), "third_parties": r.get("third_parties",0)},
+                    corrected=removidos,
+                    resurged=[r for r in reincidentes if r.get("status") == "RESSURGIDO"],
                     run_id=str(_run_id or ""))
                 print(f"[FINDINGS] argus.db: {obs} observado(s), {closed} fechado(s)")
                 try:
@@ -407,6 +413,17 @@ def main():
             _ack_n = ack.apply("credentials", novos, reincidentes)
             if _ack_n:
                 print(f"[ACK] {_ack_n} domínio(s) reconhecido(s) -> status RECONHECIDO / risco INFO")
+
+        # ── Esconde do relatório os domínios cujo ACHADO foi tratado (Mitigado/FP) ──
+        if _findings is not None:
+            try:
+                _hidden = _findings.hidden_keys("credentials")
+                if _hidden:
+                    novos        = [r for r in novos        if r.get("domain") not in _hidden]
+                    reincidentes = [r for r in reincidentes if r.get("domain") not in _hidden]
+                    removidos    = [r for r in removidos    if r.get("domain") not in _hidden]
+            except Exception:
+                pass
 
         from pathlib import Path as _Path
         import os as _os, shutil as _shutil
@@ -431,7 +448,7 @@ def main():
     print(f"[+] Domínios expostos: {comprometidos}")
     print(f"[+] Novos            : {len(novos)}")
     print(f"[+] Reincidentes     : {len(reincidentes)}")
-    print(f"[+] Removidos        : {len(removidos)}")
+    print(f"[+] Corrigidos       : {len(removidos)}")
     print(f"[+] Tempo de execução: {_fmt_duration(duration_s)}")
 
 if __name__ == "__main__":

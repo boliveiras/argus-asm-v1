@@ -31,12 +31,14 @@ lembra do que já foi resolvido.
 ## Como funciona?
 
 Você aponta os alvos, os scanners descobrem o que está exposto, a inteligência de
-ameaças enriquece, e tudo vira achado:
+ameaças enriquece — inclusive cruzando os CVEs encontrados com a **CISA KEV** (a lista
+de vulnerabilidades **exploradas in-the-wild**, que sobem a criticidade e ganham um
+selo **KEV** no ativo) — e tudo vira achado:
 
 ```mermaid
 flowchart LR
     A["Seus alvos<br/>(IPs e domínios)"] --> SC
-    TI["Inteligência de ameaças<br/>AbuseIPDB · Shodan · crt.sh · RDAP"] --> SC
+    TI["Inteligência de ameaças<br/>AbuseIPDB · Shodan · CISA KEV · crt.sh · RDAP"] --> SC
     SC["Os 5 scanners<br/>Portas · Subdomínios · Credenciais<br/>E-mail · Domínios sósia"] --> DB[("Achados<br/>argus.db")]
     DB --> P["Portal web<br/>(você vê e trata)"]
     DB --> R["Relatórios + logs"]
@@ -45,15 +47,34 @@ flowchart LR
 
 Ele roda **sozinho todo dia** (agendado) — e você pode rodar na mão quando quiser.
 Os achados aparecem no **portal web** (`https://<host>:8443`, com login) ou na linha
-de comando (`argus-finding`), onde você faz a triagem. Cada achado segue um ciclo:
+de comando (`argus-finding`), onde você faz a triagem.
 
-```mermaid
-flowchart LR
-    A["Novo"] --> B["Em análise"]
-    B --> C["Confirmado"] --> D["Mitigado"]
-    B --> E["Aceito"]
-    B --> F["Falso positivo"]
-```
+### STATUS e ESTADO
+
+O Argus separa **o que o scanner vê** (STATUS, automático) de **o que o analista decide**
+(ESTADO, manual) — dois níveis que não se misturam.
+
+**STATUS — detecção (cada scanner decide sozinho):**
+
+| Status | Quando acontece |
+|---|---|
+| **Novo** | apareceu pela primeira vez. |
+| **Reincidente** | rodou de novo e continua lá. |
+| **Corrigido** | rodou e não foi mais encontrado (precisa de **3 dias** ausente; nunca vai de Novo direto para Corrigido). |
+| **Ressurgido** | estava Corrigido e voltou a aparecer. |
+
+**ESTADO — triagem do achado (você decide no portal):**
+
+| Estado | O que significa | Onde aparece |
+|---|---|---|
+| **Novo** | ainda não triado. | aba **Backlog** |
+| **Em tratamento** | em análise/correção. | aba **Tratado** (continua nos painéis do scanner) |
+| **Mitigado** | resolvido. | aba **Tratado** (some dos painéis do scanner) |
+| **Falso positivo** | não é risco real. | aba **Tratado** (some dos painéis do scanner) |
+
+O único ponto onde os dois níveis se tocam: quando o scanner marca um item como
+**Corrigido**, o achado correspondente vira **Mitigado** automaticamente. O histórico fica
+sempre guardado.
 
 ## Como instalar?
 

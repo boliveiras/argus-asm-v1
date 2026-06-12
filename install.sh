@@ -190,17 +190,19 @@ copy_if_exists() {
   else warn "$1 não encontrado — pulando"; fi
 }
 
-copy_if_exists "reporter.py"                          "$BASE_DIR/reporter.py"
-copy_if_exists "ack.py"                               "$BASE_DIR/ack.py"
-copy_if_exists "findings.py"                          "$BASE_DIR/findings.py"
-copy_if_exists "webapp.py"                            "$BASE_DIR/webapp.py"
-copy_if_exists "logs.py"                              "$BASE_DIR/logs.py"
+# Os módulos vivem em pastas no REPO (core/ e scanners/), mas o layout de RUNTIME
+# em /etc/argus continua o mesmo (plano) — por isso os imports não mudam.
+copy_if_exists "core/reporter.py"                     "$BASE_DIR/reporter.py"
+copy_if_exists "core/ack.py"                          "$BASE_DIR/ack.py"
+copy_if_exists "core/findings.py"                     "$BASE_DIR/findings.py"
+copy_if_exists "core/webapp.py"                       "$BASE_DIR/webapp.py"
+copy_if_exists "core/logs.py"                         "$BASE_DIR/logs.py"
 copy_if_exists "argus-reset.sh"                       "$BASE_DIR/argus-reset.sh"
-copy_if_exists "monitor.py"                           "$MONITOR_DIR/monitor.py"
-copy_if_exists "submonitor.py"                        "$SUBMONITOR_DIR/submonitor.py"
-copy_if_exists "credentials.py"              "$CREDENTIALS_DIR/credentials.py"
-copy_if_exists "emailauth.py"                "$EMAIL_DIR/emailauth.py"
-copy_if_exists "typosquat.py"                "$TYPOSQUAT_DIR/typosquat.py"
+copy_if_exists "scanners/monitor.py"                  "$MONITOR_DIR/monitor.py"
+copy_if_exists "scanners/submonitor.py"               "$SUBMONITOR_DIR/submonitor.py"
+copy_if_exists "scanners/credentials.py"     "$CREDENTIALS_DIR/credentials.py"
+copy_if_exists "scanners/emailauth.py"       "$EMAIL_DIR/emailauth.py"
+copy_if_exists "scanners/typosquat.py"       "$TYPOSQUAT_DIR/typosquat.py"
 copy_if_exists "threatintel/__init__.py"              "$THREATINTEL_DIR/__init__.py"
 copy_if_exists "threatintel/config.json"              "$THREATINTEL_DIR/config.json"
 copy_if_exists "threatintel/providers/__init__.py"    "$THREATINTEL_DIR/providers/__init__.py"
@@ -210,6 +212,7 @@ copy_if_exists "threatintel/providers/whois_lookup.py" "$THREATINTEL_DIR/provide
 copy_if_exists "threatintel/providers/urlscan.py"     "$THREATINTEL_DIR/providers/urlscan.py"
 copy_if_exists "threatintel/providers/hudsonrock.py"  "$THREATINTEL_DIR/providers/hudsonrock.py"
 copy_if_exists "threatintel/providers/internetdb.py"  "$THREATINTEL_DIR/providers/internetdb.py"
+copy_if_exists "threatintel/providers/cisa_kev.py"    "$THREATINTEL_DIR/providers/cisa_kev.py"
 copy_if_exists "threatintel/core/__init__.py"         "$THREATINTEL_DIR/core/__init__.py"
 copy_if_exists "threatintel/core/database.py"         "$THREATINTEL_DIR/core/database.py"
 copy_if_exists "threatintel/core/cache.py"            "$THREATINTEL_DIR/core/cache.py"

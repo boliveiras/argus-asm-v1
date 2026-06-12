@@ -74,6 +74,11 @@ except ImportError:
     _internetdb = None  # enriquecimento de vulnerabilidades (Shodan InternetDB) opcional
 
 try:
+    from threatintel.providers import cisa_kev as _cisa_kev
+except ImportError:
+    _cisa_kev = None  # enriquecimento KEV (CVE explorada in-the-wild) opcional
+
+try:
     from reporter import generate_monitor_report
 except ImportError:
     print("[ERRO] reporter.py não encontrado no PYTHONPATH.")
@@ -190,9 +195,12 @@ def syslog_port(result: dict):
     status = result.get("status","NOVO")
     sev    = _RISK_SEV.get(risk,"INFO")
     abuse  = result.get("abuse") or {}
-    if status == "FECHADO":
-        sev = "NOTICE"; msgid = "PORT_CLOSED"
-        msg = f"Porta fechada: {result.get('ip')}:{result.get('port')}/{result.get('protocol')}"
+    if status == "CORRIGIDO":
+        sev = "NOTICE"; msgid = "PORT_FIXED"
+        msg = f"Porta corrigida: {result.get('ip')}:{result.get('port')}/{result.get('protocol')}"
+    elif status == "RESSURGIDO":
+        msgid = "PORT_RESURGED"
+        msg = f"Porta ressurgida [{risk}]: {result.get('ip')}:{result.get('port')}/{result.get('protocol')} ({result.get('service','')})"
     elif status == "REINCIDENTE":
         msgid = "PORT_REIN"
         msg = f"Porta reincidente [{risk}]: {result.get('ip')}:{result.get('port')}/{result.get('protocol')} ({result.get('service','')})"
@@ -266,7 +274,9 @@ def init_database():
             idb_vuln_count INTEGER DEFAULT 0,
             idb_vulns      TEXT DEFAULT '',
             idb_tags       TEXT DEFAULT '',
-            idb_ports      TEXT DEFAULT ''
+            idb_ports      TEXT DEFAULT '',
+            kev_count      INTEGER DEFAULT 0,
+            kev_cves       TEXT DEFAULT ''
         )
     """)
     # Migração idempotente: adiciona colunas que faltarem em bancos antigos.
@@ -278,7 +288,8 @@ def init_database():
                      ("abuse_tor","INTEGER DEFAULT 0"),("abuse_reports","INTEGER DEFAULT 0"),
                      ("abuse_last","TEXT DEFAULT ''"),("abuse_source","TEXT DEFAULT ''"),
                      ("idb_vuln_count","INTEGER DEFAULT 0"),("idb_vulns","TEXT DEFAULT ''"),
-                     ("idb_tags","TEXT DEFAULT ''"),("idb_ports","TEXT DEFAULT ''")]:
+                     ("idb_tags","TEXT DEFAULT ''"),("idb_ports","TEXT DEFAULT ''"),
+                     ("kev_count","INTEGER DEFAULT 0"),("kev_cves","TEXT DEFAULT ''")]:
         try: cursor.execute(f"ALTER TABLE scans ADD COLUMN {col} {dfn}")
         except sqlite3.OperationalError: pass
     for col in ("waf",):
@@ -553,6 +564,12 @@ def _idb_cols(result: dict) -> tuple:
     )
 
 
+def _kev_cols(result: dict) -> tuple:
+    """Resumo do CISA KEV (CVEs exploradas in-the-wild) para persistir: (qtd, CVEs)."""
+    k = result.get("kev") or {}
+    return (int(k.get("kev_count", 0) or 0), ",".join(k.get("kev_cves", [])[:50]))
+
+
 def _abuse_cols(result: dict) -> tuple:
     """Extrai o resumo do AbuseIPDB (por IP) de um resultado para persistir no
     banco. Sem dados -> score -1 (= 'sem reputação')."""
@@ -586,54 +603,58 @@ def process_results(scan_results: list[dict], scanned_protocols=("tcp",)):
         current_keys.add(key)
         ab = _abuse_cols(result)
         idb = _idb_cols(result)
-        cursor.execute("SELECT id FROM scans WHERE ip=? AND port=? AND protocol=? ORDER BY id DESC LIMIT 1", key)
+        kev = _kev_cols(result)
+        cursor.execute("SELECT id, status FROM scans WHERE ip=? AND port=? AND protocol=? ORDER BY id DESC LIMIT 1", key)
         existing = cursor.fetchone()
         if existing:
-            result["status"] = "REINCIDENTE"; reincidentes.append(result); syslog_port(result)
+            # RESSURGIDO se estava CORRIGIDO e reapareceu; caso contrário REINCIDENTE.
+            new_status = "RESSURGIDO" if existing[1] == "CORRIGIDO" else "REINCIDENTE"
+            result["status"] = new_status; reincidentes.append(result); syslog_port(result)
             cursor.execute(
                 "UPDATE scans SET last_seen=?,service=?,banner=?,state=?,risk=?,status=?,asn=?,campanha=?,"
                 "abuse_score=?,abuse_country=?,abuse_isp=?,abuse_usage=?,abuse_tor=?,abuse_reports=?,abuse_last=?,abuse_source=?,"
-                "idb_vuln_count=?,idb_vulns=?,idb_tags=?,idb_ports=? WHERE id=?",
+                "idb_vuln_count=?,idb_vulns=?,idb_tags=?,idb_ports=?,kev_count=?,kev_cves=? WHERE id=?",
                 (now, result["service"], result["banner"], result["state"],
-                 result["risk"], "REINCIDENTE", result["asn"], result["campanha"], *ab, *idb, existing[0]))
+                 result["risk"], new_status, result["asn"], result["campanha"], *ab, *idb, *kev, existing[0]))
         else:
             result["status"] = "NOVO"; novos.append(result); syslog_port(result)
             cursor.execute(
                 "INSERT INTO scans (campanha,target,resolved_ip,ip,port,protocol,service,banner,state,ip_type,asn,risk,first_seen,last_seen,status,"
                 "abuse_score,abuse_country,abuse_isp,abuse_usage,abuse_tor,abuse_reports,abuse_last,abuse_source,"
-                "idb_vuln_count,idb_vulns,idb_tags,idb_ports) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "idb_vuln_count,idb_vulns,idb_tags,idb_ports,kev_count,kev_cves) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (result["campanha"],result["target"],result["resolved_ip"],result["ip"],result["port"],
                  result["protocol"],result["service"],result["banner"],result["state"],result["ip_type"],
-                 result["asn"],result["risk"],now,now,"NOVO", *ab, *idb))
+                 result["asn"],result["risk"],now,now,"NOVO", *ab, *idb, *kev))
 
     # Fechar apenas portas do(s) protocolo(s) varrido(s) E sem serem vistas há
     # ≥ CLOSE_GRACE_DAYS (carência contra "misses" transitórios).
     grace_cutoff = (datetime.datetime.now() - datetime.timedelta(days=CLOSE_GRACE_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
     ph = ",".join("?" * len(protos))
+    # Só REINCIDENTE/RESSURGIDO podem ser CORRIGIDOS — NOVO nunca vai direto.
     cursor.execute(
         f"SELECT id,ip,port,protocol,service,banner,risk,target,asn,ip_type,resolved_ip,campanha "
-        f"FROM scans WHERE status IN ('NOVO','REINCIDENTE') AND protocol IN ({ph}) AND last_seen < ?",
+        f"FROM scans WHERE status IN ('REINCIDENTE','RESSURGIDO') AND protocol IN ({ph}) AND last_seen < ?",
         (*protos, grace_cutoff))
     for row_id,ip,port,protocol,service,banner,risk,target,asn,ip_type,resolved_ip,campanha in cursor.fetchall():
         if (ip,port,protocol) not in current_keys:
             entry = {"ip":ip,"port":port,"protocol":protocol,"service":service or "","banner":banner or "",
-                     "risk":risk or "BAIXO","status":"FECHADO","campanha":campanha or "",
+                     "risk":risk or "BAIXO","status":"CORRIGIDO","campanha":campanha or "",
                      "target":target or "","asn":asn or "","ip_type":ip_type or "","resolved_ip":resolved_ip or "","abuse":None}
             corrigidos.append(entry); syslog_port(entry)
-            cursor.execute("UPDATE scans SET status='FECHADO', last_seen=? WHERE id=?", (now, row_id))
+            cursor.execute("UPDATE scans SET status='CORRIGIDO', last_seen=? WHERE id=?", (now, row_id))
     conn.commit(); conn.close()
     return novos, reincidentes, corrigidos
 
 
 _REPORT_COLS = ("campanha,target,resolved_ip,ip,port,protocol,service,banner,ip_type,asn,risk,status,"
                 "abuse_score,abuse_country,abuse_isp,abuse_usage,abuse_tor,abuse_reports,abuse_last,abuse_source,"
-                "idb_vuln_count,idb_vulns,idb_tags,idb_ports")
+                "idb_vuln_count,idb_vulns,idb_tags,idb_ports,kev_count,kev_cves")
 
 def _row_to_result(row) -> dict:
     (campanha,target,resolved_ip,ip,port,protocol,service,banner,ip_type,asn,risk,status,
      ab_score,ab_country,ab_isp,ab_usage,ab_tor,ab_reports,ab_last,ab_source,
-     idb_vc,idb_vulns,idb_tags,idb_ports) = row
+     idb_vc,idb_vulns,idb_tags,idb_ports,kev_count,kev_cves) = row
     abuse = None
     if ab_score is not None and ab_score >= 0:
         abuse = {"abuse_confidence_score":ab_score,"country_code":ab_country or "","isp":ab_isp or "",
@@ -648,10 +669,14 @@ def _row_to_result(row) -> dict:
             "ports": [int(p) for p in (idb_ports or "").split(",") if p.strip().isdigit()],
             "cpes": [], "hostnames": [], "seen": True, "source": "db",
         }
+    kev = None
+    if (kev_count or 0) > 0:
+        kev = {"kev_count": int(kev_count or 0),
+               "kev_cves": [c for c in (kev_cves or "").split(",") if c]}
     return {"campanha":campanha or "","target":target or "","resolved_ip":resolved_ip or "",
             "ip":ip or "","port":port,"protocol":protocol or "","service":service or "",
             "banner":banner or "","state":"open","ip_type":ip_type or "","asn":asn or "",
-            "risk":risk or "BAIXO","status":status or "","abuse":abuse,"internetdb":internetdb}
+            "risk":risk or "BAIXO","status":status or "","abuse":abuse,"internetdb":internetdb,"kev":kev}
 
 def load_report_rows():
     """Monta a entrada do relatório a partir do estado COMPLETO do banco (TCP+UDP):
@@ -663,9 +688,9 @@ def load_report_rows():
     novos = [_row_to_result(r) for r in cur.execute(
         f"SELECT {_REPORT_COLS} FROM scans WHERE status='NOVO'").fetchall()]
     reincidentes = [_row_to_result(r) for r in cur.execute(
-        f"SELECT {_REPORT_COLS} FROM scans WHERE status='REINCIDENTE'").fetchall()]
+        f"SELECT {_REPORT_COLS} FROM scans WHERE status IN ('REINCIDENTE','RESSURGIDO')").fetchall()]
     corrigidos = [_row_to_result(r) for r in cur.execute(
-        f"SELECT {_REPORT_COLS} FROM scans WHERE status='FECHADO' AND last_seen>=?", (cutoff,)).fetchall()]
+        f"SELECT {_REPORT_COLS} FROM scans WHERE status='CORRIGIDO' AND last_seen>=?", (cutoff,)).fetchall()]
     conn.close()
     return novos, reincidentes, corrigidos
 
@@ -801,6 +826,16 @@ def main():
                 except Exception as _exc:
                     print(f"[INTERNETDB] enriquecimento ignorado: {_exc}")
 
+            # CISA KEV — cruza as CVEs do InternetDB com o catálogo de explorados
+            # in-the-wild e eleva (KEV = alta confiança → CRÍTICO por padrão).
+            if _cisa_kev is not None:
+                try:
+                    _cisa_kev.enrich_results(all_results)
+                    for r in all_results:
+                        r["risk"] = _cisa_kev.kev_elevate(r["risk"], r.get("kev"))
+                except Exception as _exc:
+                    print(f"[CISA-KEV] enriquecimento ignorado: {_exc}")
+
         # Diff escopado ao(s) protocolo(s) varrido(s) — não fecha o outro protocolo.
         novos, reincidentes, corrigidos = process_results(all_results, scanned_protocols=modes)
 
@@ -820,6 +855,8 @@ def main():
                     details_of=lambda r: {"service": r.get("service",""), "banner": r.get("banner",""),
                                           "asn": r.get("asn",""), "ip_type": r.get("ip_type","")},
                     scope_predicate=lambda k: k.rsplit("/", 1)[-1] in _proto_set,
+                    corrected=corrigidos,
+                    resurged=[r for r in reincidentes if r.get("status") == "RESSURGIDO"],
                     run_id=str(_run_id or ""))
                 print(f"[FINDINGS] argus.db: {obs} observado(s), {closed} fechado(s)")
                 try:
@@ -831,6 +868,18 @@ def main():
 
         # ── Relatório lido do BANCO (estado completo TCP+UDP) ─────
         rep_novos, rep_rein, rep_corr = load_report_rows()
+
+        # ── Esconde do relatório os ativos cujo ACHADO foi tratado (Mitigado/FP) ──
+        if _findings is not None:
+            try:
+                _hidden = _findings.hidden_keys("monitor")
+                if _hidden:
+                    _kf = lambda r: f"{r.get('ip')}:{r.get('port')}/{r.get('protocol')}"
+                    rep_novos = [r for r in rep_novos if _kf(r) not in _hidden]
+                    rep_rein  = [r for r in rep_rein  if _kf(r) not in _hidden]
+                    rep_corr  = [r for r in rep_corr  if _kf(r) not in _hidden]
+            except Exception:
+                pass
 
         # ── Reconhecimento (RECONHECIDO -> INFO) sobre a visão do relatório ──
         if ack is not None:
@@ -872,7 +921,7 @@ def main():
     print(f"[+] Log RFC5424      : {SYSLOG_FILE}")
     print(f"[+] Novos (run)      : {len(novos)}")
     print(f"[+] Reincidentes(run): {len(reincidentes)}")
-    print(f"[+] Fechados (run)   : {len(corrigidos)}")
+    print(f"[+] Corrigidos (run) : {len(corrigidos)}")
     print(f"[+] Portas UDP (DB)  : {udp_tot}")
     print(f"[+] Tempo de execução: {_fmt_duration(duration_s)}")
 

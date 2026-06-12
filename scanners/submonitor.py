@@ -70,6 +70,11 @@ try:
 except ImportError:
     _internetdb = None  # enriquecimento de vulnerabilidades (Shodan InternetDB) opcional
 
+try:
+    from threatintel.providers import cisa_kev as _cisa_kev
+except ImportError:
+    _cisa_kev = None  # enriquecimento KEV (CVE explorada in-the-wild) opcional
+
 # Provider crt.sh (Certificate Transparency) — descoberta passiva de subdomínios
 try:
     from threatintel.providers import crtsh
@@ -187,9 +192,12 @@ def syslog_host(result: dict):
     risk   = result.get("risk","INFO")
     sev    = _RISK_SEV.get(risk,"INFO")
     abuse  = result.get("abuse") or {}
-    if status == "REMOVIDO":
-        sev = "NOTICE"; msgid = "HOST_REM"
-        msg = f"Host removido: {result.get('hostname','')}"
+    if status == "CORRIGIDO":
+        sev = "NOTICE"; msgid = "HOST_FIX"
+        msg = f"Host corrigido: {result.get('hostname','')}"
+    elif status == "RESSURGIDO":
+        msgid = "HOST_RESURG"
+        msg = f"Host ressurgido [{risk}]: {result.get('hostname','')}"
     elif status == "REINCIDENTE":
         msgid = "HOST_REIN"
         msg = f"Host reincidente [{risk}]: {result.get('hostname','')}"
@@ -864,10 +872,11 @@ def process_results(results: list[dict]):
     for result in results:
         hostname = result["hostname"]
         current_hosts.add(hostname)
-        cursor.execute("SELECT id FROM subdomains WHERE hostname=? ORDER BY id DESC LIMIT 1", (hostname,))
+        cursor.execute("SELECT id, status FROM subdomains WHERE hostname=? ORDER BY id DESC LIMIT 1", (hostname,))
         existing = cursor.fetchone()
         if existing:
-            result["status"] = "REINCIDENTE"; reincidentes.append(result); syslog_host(result)
+            new_status = "RESSURGIDO" if existing[1] == "CORRIGIDO" else "REINCIDENTE"
+            result["status"] = new_status; reincidentes.append(result); syslog_host(result)
             cursor.execute(
                 "UPDATE subdomains SET campanha=?,ip=?,cname=?,asn=?,ip_type=?,environment=?,http_status=?,waf=?,risk=?,dnssec=?,ssl_status=?,ssl_expiry=?,origem=?,whois_creation=?,whois_expiry=?,whois_age_days=?,whois_status=?,whois_registrar=?,last_seen=?,status=? WHERE id=?",
                 (result["campanha"],result["ip"],result["cname"],result["asn"],result["ip_type"],
@@ -881,7 +890,7 @@ def process_results(results: list[dict]):
                  (result.get("whois") or {}).get("age_days") if (result.get("whois") or {}).get("age_days") is not None else -1,
                  (result.get("whois") or {}).get("status","DESCONHECIDO"),
                  (result.get("whois") or {}).get("registrar",""),
-                 now,"REINCIDENTE",existing[0]))
+                 now,new_status,existing[0]))
         else:
             result["status"] = "NOVO"; novos.append(result); syslog_host(result)
             cursor.execute(
@@ -903,18 +912,18 @@ def process_results(results: list[dict]):
     # Carência: só marca REMOVIDO se o host estiver sem ser visto há ≥ CLOSE_GRACE_DAYS
     # (absorve falhas transitórias de DNS / fontes passivas — não remove por 1 miss).
     grace_cutoff = (datetime.datetime.now() - datetime.timedelta(days=CLOSE_GRACE_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
-    cursor.execute("SELECT id,hostname,ip,campanha FROM subdomains WHERE status IN ('NOVO','REINCIDENTE') AND last_seen < ?", (grace_cutoff,))
+    cursor.execute("SELECT id,hostname,ip,campanha FROM subdomains WHERE status IN ('REINCIDENTE','RESSURGIDO') AND last_seen < ?", (grace_cutoff,))
     for row_id, old_hostname, old_ip, old_campanha in cursor.fetchall():
         if old_hostname not in current_hosts:
             entry = {"hostname":old_hostname,"ip":old_ip or "","campanha":old_campanha or "",
-                     "risk":"INFO","status":"REMOVIDO","asn":"","environment":"",
+                     "risk":"INFO","status":"CORRIGIDO","asn":"","environment":"",
                      "http_status":"","waf":"NAO","abuse":None,
                      "dnssec":"DESABILITADO","origem":"wordlist",
                      "ssl":{"status":"SEM CERTIFICADO","expiry_date":""},
                      "whois":{"creation_date":"","expiration_date":"","age_days":None,
                               "status":"DESCONHECIDO","registrar":""}}
             removidos.append(entry); syslog_host(entry)
-            cursor.execute("UPDATE subdomains SET status='REMOVIDO', last_seen=? WHERE id=?", (now, row_id))
+            cursor.execute("UPDATE subdomains SET status='CORRIGIDO', last_seen=? WHERE id=?", (now, row_id))
     conn.commit(); conn.close()
     return novos, reincidentes, removidos
 
@@ -1015,6 +1024,16 @@ def main():
                 except Exception as _exc:
                     print(f"[INTERNETDB] enriquecimento ignorado: {_exc}")
 
+            # CISA KEV — cruza as CVEs do InternetDB com o catálogo de explorados
+            # in-the-wild e eleva (KEV = alta confiança → CRÍTICO por padrão).
+            if _cisa_kev is not None:
+                try:
+                    _cisa_kev.enrich_results(results)
+                    for r in results:
+                        r["risk"] = _cisa_kev.kev_elevate(r["risk"], r.get("kev"))
+                except Exception as _exc:
+                    print(f"[CISA-KEV] enriquecimento ignorado: {_exc}")
+
         novos, reincidentes, removidos = process_results(results)
 
         # ── Store central de achados (argus.db) — ADITIVO ─────────
@@ -1029,6 +1048,8 @@ def main():
                     campanha_of=lambda r: r.get("campanha", ""),
                     details_of=lambda r: {"ip": r.get("ip",""), "environment": r.get("environment",""),
                                           "http_status": r.get("http_status",""), "waf": r.get("waf","")},
+                    corrected=removidos,
+                    resurged=[r for r in reincidentes if r.get("status") == "RESSURGIDO"],
                     run_id=str(_run_id or ""))
                 print(f"[FINDINGS] argus.db: {obs} observado(s), {closed} fechado(s)")
                 try:
@@ -1043,6 +1064,17 @@ def main():
             _ack_n = ack.apply("submonitor", novos, reincidentes)
             if _ack_n:
                 print(f"[ACK] {_ack_n} host(s) reconhecido(s) -> status RECONHECIDO / risco INFO")
+
+        # ── Esconde do relatório os hosts cujo ACHADO foi tratado (Mitigado/FP) ──
+        if _findings is not None:
+            try:
+                _hidden = _findings.hidden_keys("submonitor")
+                if _hidden:
+                    novos        = [r for r in novos        if r.get("hostname") not in _hidden]
+                    reincidentes = [r for r in reincidentes if r.get("hostname") not in _hidden]
+                    removidos    = [r for r in removidos    if r.get("hostname") not in _hidden]
+            except Exception:
+                pass
 
         from pathlib import Path as _Path
         import os as _os, shutil as _shutil
@@ -1075,7 +1107,7 @@ def main():
     print(f"[+] Log RFC5424      : {SYSLOG_FILE}")
     print(f"[+] Novos            : {len(novos)}")
     print(f"[+] Reincidentes     : {len(reincidentes)}")
-    print(f"[+] Removidos        : {len(removidos)}")
+    print(f"[+] Corrigidos       : {len(removidos)}")
     print(f"[+] Tempo de execução: {_fmt_duration(duration_s)}")
 
 if __name__ == "__main__":

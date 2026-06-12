@@ -98,6 +98,16 @@ def _internetdb_to_js(idb: dict | None) -> dict:
     }
 
 
+def _kev_to_js(kev: dict | None) -> dict:
+    """Normaliza o intel CISA KEV (CVEs exploradas in-the-wild) para JS seguro."""
+    if not kev:
+        return {"kev_count": 0, "kev_cves": []}
+    return {
+        "kev_count": int(kev.get("kev_count", 0) or 0),
+        "kev_cves": [str(c) for c in (kev.get("kev_cves") or [])][:50],
+    }
+
+
 # ============================================================
 # CSS COMPARTILHADO
 # ============================================================
@@ -258,6 +268,8 @@ def _common_css() -> str:
   .risk-INFO    { color:var(--muted); }
   .status-NOVO        { color:var(--accent); font-weight:600; }
   .status-REINCIDENTE { color:var(--accent-2); font-weight:600; }
+  .status-CORRIGIDO   { color:var(--green); font-weight:600; }
+  .status-RESSURGIDO  { color:var(--orange); font-weight:700; }
   .status-FECHADO     { color:var(--muted); }
   .status-REMOVIDO    { color:var(--muted); }
   .status-RECONHECIDO { color:#c4b5fd; font-weight:700; background:rgba(167,139,250,.15);
@@ -269,6 +281,9 @@ def _common_css() -> str:
   .ack-reason::before { content:"\201C"; } .ack-reason::after { content:"\201D"; }
   .cve-badge { background:rgba(244,63,94,.16); color:#fda4af; border:1px solid rgba(244,63,94,.34);
        border-radius:6px; padding:2px 8px; font-size:11px; font-weight:700; white-space:nowrap; cursor:help; }
+  /* KEV: exploração CONFIRMADA in-the-wild (CISA) — selo sólido, mais forte que o CVE */
+  .kev-badge { background:var(--red); color:#fff; border-radius:6px; padding:2px 7px; font-size:10.5px;
+       font-weight:800; letter-spacing:.6px; white-space:nowrap; cursor:help; }
   .tag-chip { background:var(--surface); color:var(--muted); border:1px solid var(--border);
        border-radius:5px; padding:1px 6px; font-size:10px; margin-left:3px; }
 
@@ -976,6 +991,7 @@ def _monitor_rows_to_js(rows: list[dict]) -> str:
             "ack_reason":  str(r.get("ack_reason",  "")),
             "abuse":       _abuse_to_js(r.get("abuse")),
             "internetdb":  _internetdb_to_js(r.get("internetdb")),
+            "kev":         _kev_to_js(r.get("kev")),
         })
     return json.dumps(safe, ensure_ascii=False).replace("<", "\\u003c")
 
@@ -1019,14 +1035,17 @@ def generate_monitor_report(
     total_tcp      = sum(1 for r in all_results if r.get("protocol") == "tcp")
     total_vuln_ips = len({r.get("ip") for r in all_results
                           if (r.get("internetdb") or {}).get("vuln_count", 0)})
+    total_kev = len({r.get("ip") for r in all_results
+                     if (r.get("kev") or {}).get("kev_count", 0)})
     topbar = _topbar("monitor")
     kpis = _kpi_tiles([
         (len(novos),        "Novos",          "sev-novo"),
         (len(reincidentes), "Reincidentes",   "sev-rein"),
-        (len(corrigidos),   "Fechados",       ""),
+        (len(corrigidos),   "Corrigidos",     ""),
         (total_critico,     "Críticos",       "sev-crit"),
         (total_alto,        "Alto Risco",     "sev-alto"),
         (total_vuln_ips,    "IPs vulneráveis","sev-crit" if total_vuln_ips else ""),
+        (total_kev,         "IPs com KEV",    "sev-crit" if total_kev else ""),
         (total_ips,         "IPs únicos",     ""),
         (total_tcp,         "Portas TCP",     ""),
         (total_udp,         "Portas UDP",     ""),
@@ -1041,7 +1060,7 @@ def generate_monitor_report(
         "baixo": sev_counts["BAIXO"], "info": sev_counts["INFO"],
         "novos": len(novos), "reincidentes": len(reincidentes), "fechados": len(corrigidos),
         "total": len(all_results), "ips": total_ips, "abusivos": total_abusivos,
-        "tcp": total_tcp, "udp": total_udp, "vuln_ips": total_vuln_ips,
+        "tcp": total_tcp, "udp": total_udp, "vuln_ips": total_vuln_ips, "kev": total_kev,
         "campanhas": sorted({r.get("campanha", "") for r in all_results if r.get("campanha")}),
     }, ensure_ascii=False).replace("<", "\\u003c")
 
@@ -1087,7 +1106,7 @@ def generate_monitor_report(
   <div class="tab active" onclick="switchTab('all')"  id="tab-all" >Todos        <span class="badge" id="b-all" >{len(all_results)}</span></div>
   <div class="tab"        onclick="switchTab('novo')" id="tab-novo">Novos        <span class="badge" id="b-novo">{len(novos)}</span></div>
   <div class="tab"        onclick="switchTab('rein')" id="tab-rein">Reincidentes <span class="badge" id="b-rein">{len(reincidentes)}</span></div>
-  <div class="tab"        onclick="switchTab('corr')" id="tab-corr">Fechados     <span class="badge" id="b-corr">{len(corrigidos)}</span></div>
+  <div class="tab"        onclick="switchTab('corr')" id="tab-corr">Corrigidos   <span class="badge" id="b-corr">{len(corrigidos)}</span></div>
 </div>
 
 <div class="toolbar no-print">
@@ -1104,7 +1123,7 @@ def generate_monitor_report(
   </select>
   <select id="f-status" onchange="applyFilters()">
     <option value="">Todos os Status</option>
-    <option>NOVO</option><option>REINCIDENTE</option><option>FECHADO</option><option>RECONHECIDO</option>
+    <option>NOVO</option><option>REINCIDENTE</option><option>CORRIGIDO</option><option>RESSURGIDO</option><option>RECONHECIDO</option>
   </select>
   <select id="f-proto"  onchange="applyFilters()">
     <option value="">TCP e UDP</option>
@@ -1256,8 +1275,10 @@ function render(){{
     const ackR=r.ack_reason||'';
     const idb=r.internetdb||{{}};
     const vc=idb.vuln_count||0;
+    const kc=(r.kev&&r.kev.kev_count)||0;
+    const kevBadge=kc>0?` <span class="kev-badge" title="${{esc((r.kev.kev_cves||[]).join(', '))}} — explorada(s) in-the-wild (CISA KEV)">KEV</span>`:'';
     const cveCell=vc>0
-      ?`<span class="cve-badge" title="${{esc((idb.vulns||[]).join(', '))}}${{(idb.vulns||[]).length<vc?' …':''}}">${{vc}} CVE${{vc>1?'s':''}}</span>`
+      ?`<span class="cve-badge" title="${{esc((idb.vulns||[]).join(', '))}}${{(idb.vulns||[]).length<vc?' …':''}}">${{vc}} CVE${{vc>1?'s':''}}</span>`+kevBadge
       :'<span class="ssl-none">&#8212;</span>';
     html+=`<tr class="r-${{esc(r.risk)}}${{r.status==='RECONHECIDO'?' ack':''}}">
       <td><span class="camp-badge">${{esc(r.campanha)}}</span></td>
@@ -1360,6 +1381,7 @@ def _submonitor_rows_to_js(rows: list[dict]) -> str:
             "abuse":       _abuse_to_js(r.get("abuse")),
             "urlscan":     _urlscan_to_js(r.get("urlscan")),
             "internetdb":  _internetdb_to_js(r.get("internetdb")),
+            "kev":         _kev_to_js(r.get("kev")),
         })
     return json.dumps(safe, ensure_ascii=False).replace("<", "\\u003c")
 
@@ -1403,7 +1425,7 @@ def generate_submonitor_report(
     kpis = _kpi_tiles([
         (len(novos),        "Novos",         "sev-novo"),
         (len(reincidentes), "Reincidentes",  "sev-rein"),
-        (len(removidos),    "Removidos",     ""),
+        (len(removidos),    "Corrigidos",    ""),
         (total_critico,     "Críticos",      "sev-crit"),
         (total_alto,        "Alto Risco",    "sev-alto"),
         (total_medio,       "Médio",         "sev-med"),
@@ -1465,7 +1487,7 @@ def generate_submonitor_report(
   <div class="tab active" onclick="switchTab('all')"  id="tab-all" >Todos        <span class="badge" id="b-all" >{len(all_results)}</span></div>
   <div class="tab"        onclick="switchTab('novo')" id="tab-novo">Novos        <span class="badge" id="b-novo">{len(novos)}</span></div>
   <div class="tab"        onclick="switchTab('rein')" id="tab-rein">Reincidentes <span class="badge" id="b-rein">{len(reincidentes)}</span></div>
-  <div class="tab"        onclick="switchTab('rem')"  id="tab-rem" >Removidos    <span class="badge" id="b-rem" >{len(removidos)}</span></div>
+  <div class="tab"        onclick="switchTab('rem')"  id="tab-rem" >Corrigidos   <span class="badge" id="b-rem" >{len(removidos)}</span></div>
 </div>
 
 <div class="toolbar no-print">
@@ -1517,7 +1539,7 @@ def generate_submonitor_report(
   </select>
   <select id="f-status" onchange="applyFilters()">
     <option value="">Todos Status</option>
-    <option>NOVO</option><option>REINCIDENTE</option><option>REMOVIDO</option><option>RECONHECIDO</option>
+    <option>NOVO</option><option>REINCIDENTE</option><option>CORRIGIDO</option><option>RESSURGIDO</option><option>RECONHECIDO</option>
   </select>
   <select id="f-http"   onchange="applyFilters()">
     <option value="">Todos HTTP</option>
@@ -1716,8 +1738,10 @@ function render(){{
     const ageVal=(r.whois_age_days!=null&&r.whois_age_days>=0)?r.whois_age_days:'';
     const ackR=r.ack_reason||'';
     const idb=r.internetdb||{{}}; const vc=idb.vuln_count||0;
+    const kc=(r.kev&&r.kev.kev_count)||0;
+    const kevBadge=kc>0?` <span class="kev-badge" title="${{esc((r.kev.kev_cves||[]).join(', '))}} — explorada(s) in-the-wild (CISA KEV)">KEV</span>`:'';
     const cveCell=vc>0
-      ?`<span class="cve-badge" title="${{esc((idb.vulns||[]).join(', '))}}">${{vc}} CVE${{vc>1?'s':''}}</span>`
+      ?`<span class="cve-badge" title="${{esc((idb.vulns||[]).join(', '))}}">${{vc}} CVE${{vc>1?'s':''}}</span>`+kevBadge
       :'<span class="ssl-none">&#8212;</span>';
     html+=`<tr class="r-${{esc(r.risk)}}${{r.status==='RECONHECIDO'?' ack':''}}">
       <td><span class="camp-badge">${{esc(r.campanha)}}</span></td>
@@ -1923,7 +1947,7 @@ def generate_credentials_report(
   <div class="tab active" onclick="switchTab('all')"  id="tab-all" >Todos        <span class="badge" id="b-all" >{len(all_results)}</span></div>
   <div class="tab"        onclick="switchTab('novo')" id="tab-novo">Novos        <span class="badge" id="b-novo">{len(novos)}</span></div>
   <div class="tab"        onclick="switchTab('rein')" id="tab-rein">Reincidentes <span class="badge" id="b-rein">{len(reincidentes)}</span></div>
-  <div class="tab"        onclick="switchTab('rem')"  id="tab-rem" >Removidos    <span class="badge" id="b-rem">{len(removidos)}</span></div>
+  <div class="tab"        onclick="switchTab('rem')"  id="tab-rem" >Corrigidos   <span class="badge" id="b-rem">{len(removidos)}</span></div>
 </div>
 
 <div class="toolbar no-print">
@@ -1935,7 +1959,7 @@ def generate_credentials_report(
   </select>
   <select id="f-status" onchange="applyFilters()">
     <option value="">Todos os Status</option>
-    <option>NOVO</option><option>REINCIDENTE</option><option>REMOVIDO</option><option>RECONHECIDO</option>
+    <option>NOVO</option><option>REINCIDENTE</option><option>CORRIGIDO</option><option>RESSURGIDO</option><option>RECONHECIDO</option>
   </select>
   <select id="f-comp" onchange="applyFilters()">
     <option value="">Comprometidos e limpos</option>
@@ -2221,7 +2245,7 @@ def generate_email_report(
   <div class="tab active" onclick="switchTab('all')"  id="tab-all" >Todos        <span class="badge" id="b-all" >{len(all_results)}</span></div>
   <div class="tab"        onclick="switchTab('novo')" id="tab-novo">Novos        <span class="badge" id="b-novo">{len(novos)}</span></div>
   <div class="tab"        onclick="switchTab('rein')" id="tab-rein">Reincidentes <span class="badge" id="b-rein">{len(reincidentes)}</span></div>
-  <div class="tab"        onclick="switchTab('rem')"  id="tab-rem" >Removidos    <span class="badge" id="b-rem">{len(removidos)}</span></div>
+  <div class="tab"        onclick="switchTab('rem')"  id="tab-rem" >Corrigidos   <span class="badge" id="b-rem">{len(removidos)}</span></div>
 </div>
 
 <div class="toolbar no-print">
@@ -2233,7 +2257,7 @@ def generate_email_report(
   </select>
   <select id="f-status" onchange="applyFilters()">
     <option value="">Todos os Status</option>
-    <option>NOVO</option><option>REINCIDENTE</option><option>REMOVIDO</option><option>RECONHECIDO</option>
+    <option>NOVO</option><option>REINCIDENTE</option><option>CORRIGIDO</option><option>RESSURGIDO</option><option>RECONHECIDO</option>
   </select>
   <select id="f-mx" onchange="applyFilters()">
     <option value="">Recebe e-mail (todos)</option>
@@ -2563,7 +2587,7 @@ def generate_typosquat_report(
   <div class="tab active" onclick="switchTab('all')"  id="tab-all" >Todos        <span class="badge" id="b-all" >{len(all_results)}</span></div>
   <div class="tab"        onclick="switchTab('novo')" id="tab-novo">Novos        <span class="badge" id="b-novo">{len(novos)}</span></div>
   <div class="tab"        onclick="switchTab('rein')" id="tab-rein">Reincidentes <span class="badge" id="b-rein">{len(reincidentes)}</span></div>
-  <div class="tab"        onclick="switchTab('rem')"  id="tab-rem" >Removidos    <span class="badge" id="b-rem">{len(removidos)}</span></div>
+  <div class="tab"        onclick="switchTab('rem')"  id="tab-rem" >Corrigidos   <span class="badge" id="b-rem">{len(removidos)}</span></div>
 </div>
 
 <div class="toolbar no-print">
@@ -2575,7 +2599,7 @@ def generate_typosquat_report(
   </select>
   <select id="f-status" onchange="applyFilters()">
     <option value="">Todos os Status</option>
-    <option>NOVO</option><option>REINCIDENTE</option><option>REMOVIDO</option><option>RECONHECIDO</option>
+    <option>NOVO</option><option>REINCIDENTE</option><option>CORRIGIDO</option><option>RESSURGIDO</option><option>RECONHECIDO</option>
   </select>
   <select id="f-mx" onchange="applyFilters()">
     <option value="">MX (todos)</option>
@@ -2745,8 +2769,8 @@ init();
 
 _SRC_LABEL = {"monitor": "Portas", "submonitor": "Subdomínios",
               "credentials": "Credenciais", "email": "E-mail", "typosquat": "Typosquat"}
-_FST_OPTIONS = [("NOVO", "Novo"), ("EM_ANALISE", "Em análise"), ("CONFIRMADO", "Confirmado"),
-                ("MITIGADO", "Mitigado"), ("ACEITO", "Aceito"), ("FALSO_POSITIVO", "Falso Positivo")]
+_FST_OPTIONS = [("NOVO", "Novo"), ("EM_TRATAMENTO", "Em tratamento"),
+                ("MITIGADO", "Mitigado"), ("FALSO_POSITIVO", "Falso Positivo")]
 
 
 def _findings_rows_to_js(items: list[dict]) -> str:
@@ -2776,13 +2800,13 @@ def _exec_findings(items: list[dict]) -> str:
     backlog = [r for r in active if not r.get("treated")]
     crit = sum(1 for r in backlog if r.get("severity") == "CRITICO")
     alto = sum(1 for r in backlog if r.get("severity") == "ALTO")
-    aceito = sum(1 for r in items if r.get("status") == "ACEITO")
+    mitig = sum(1 for r in items if r.get("status") == "MITIGADO")
     fp = sum(1 for r in items if r.get("status") == "FALSO_POSITIVO")
     lead = (f"{len(items)} achado(s) no total, {len(active)} ativo(s). "
             f"<b>Backlog de {len(backlog)} não tratado(s)</b>"
             + (f" — <b>{crit} crítico(s)</b> e {alto} de alto risco exigem ação."
                if (crit or alto) else " sem críticos pendentes.")
-            + f" Tratados: {aceito} aceito(s), {fp} falso(s)-positivo(s).")
+            + f" Tratados: {mitig} mitigado(s), {fp} falso(s)-positivo(s).")
     backlog.sort(key=lambda r: _SEV_RANK.get(r.get("severity"), 5))
     risks = []
     for r in backlog[:5]:
@@ -2794,7 +2818,7 @@ def _exec_findings(items: list[dict]) -> str:
     recs = []
     def add(c):
         if c not in recs: recs.append(c)
-    if crit: add("Priorize a triagem dos achados <b>críticos</b> do backlog (Confirmar → Mitigar) e registre as tratativas.")
+    if crit: add("Priorize a triagem dos achados <b>críticos</b> do backlog (Em tratamento → Mitigado) e registre as tratativas.")
     if any(not r.get("treated") and r.get("notes", 0) == 0 for r in backlog):
         add("Há achados sem nota/tratativa — documente análise e decisão (rastreabilidade ISO 27001/CIS).")
     if fp: add("Revise periodicamente os Falsos Positivos para evitar mascarar exposições reais.")
@@ -2802,8 +2826,8 @@ def _exec_findings(items: list[dict]) -> str:
     return _exec_panel(lead, risks, recs)
 
 
-_FST_COLOR = {"NOVO": "#7dd3fc", "EM_ANALISE": "#fcd34d", "CONFIRMADO": "#fb923c",
-              "MITIGADO": "#6ee7b7", "ACEITO": "#c4b5fd", "FALSO_POSITIVO": "#8a99b4"}
+_FST_COLOR = {"NOVO": "#7dd3fc", "EM_TRATAMENTO": "#fcd34d",
+              "MITIGADO": "#6ee7b7", "FALSO_POSITIVO": "#8a99b4"}
 _AGING_COLOR = {"<7d": "var(--green)", "7-30d": "var(--yellow)", "30-90d": "var(--orange)", ">90d": "var(--red)"}
 
 
@@ -2893,7 +2917,7 @@ def generate_findings_report(snapshot: dict, output_path: str = "findings_report
 
     total_crit = sum(1 for r in backlog if r.get("severity") == "CRITICO")
     total_alto = sum(1 for r in backlog if r.get("severity") == "ALTO")
-    aceito = sum(1 for r in items if r.get("status") == "ACEITO")
+    mitig  = sum(1 for r in items if r.get("status") == "MITIGADO")
     fp     = sum(1 for r in items if r.get("status") == "FALSO_POSITIVO")
     sev_counts = {s: sum(1 for r in active if r.get("severity") == s)
                   for s in ("CRITICO", "ALTO", "MEDIO", "BAIXO", "INFO")}
@@ -2910,7 +2934,7 @@ def generate_findings_report(snapshot: dict, output_path: str = "findings_report
         (len(active),  "Ativos",         "",                            "k-active"),
         (len(backlog), "Backlog",        "sev-alto" if backlog else "", "k-backlog"),
         (total_crit,   "Críticos (bl)",  "sev-crit",                    "k-crit"),
-        (aceito,       "Aceitos",        "",                            "k-aceito"),
+        (mitig,        "Mitigado",       "",                            "k-mitig"),
         (fp,           "Falso Positivo", "",                            "k-fp"),
     ])
     donut = _donut(sev_counts, "Ativos por severidade")
@@ -2920,7 +2944,7 @@ def generate_findings_report(snapshot: dict, output_path: str = "findings_report
     kpi_json = json.dumps({
         "scope": "findings", "now": now,
         "total": len(items), "active": len(active), "backlog": len(backlog),
-        "critico": total_crit, "alto": total_alto, "aceito": aceito, "fp": fp,
+        "critico": total_crit, "alto": total_alto, "mitig": mitig, "fp": fp,
         "by_status": st_counts,
         "campanhas": sorted({r.get("campanha", "") for r in items if r.get("campanha")}),
     }, ensure_ascii=False).replace("<", "\\u003c")
@@ -3004,7 +3028,7 @@ def generate_findings_report(snapshot: dict, output_path: str = "findings_report
     <option>CRITICO</option><option>ALTO</option><option>MEDIO</option><option>BAIXO</option><option>INFO</option>
   </select>
   <select id="f-status" onchange="applyFilters()">
-    <option value="">Todos os Status</option>
+    <option value="">Todos os Estados</option>
     {status_opts}
   </select>
   <select id="f-active" onchange="applyFilters()">
@@ -3028,7 +3052,7 @@ def generate_findings_report(snapshot: dict, output_path: str = "findings_report
     <th onclick="doSort('source')"    >Fonte      <span class="si" id="si-source"    >&#x21C5;</span></th>
     <th onclick="doSort('category')"  >Categoria  <span class="si" id="si-category"  >&#x21C5;</span></th>
     <th onclick="doSort('severity')"  >Severidade <span class="si" id="si-severity"  >&#x21C5;</span></th>
-    <th onclick="doSort('status')"    >Status     <span class="si" id="si-status"    >&#x21C5;</span></th>
+    <th onclick="doSort('status')"    >Estado     <span class="si" id="si-status"    >&#x21C5;</span></th>
     <th onclick="doSort('active')"    >Obs.       <span class="si" id="si-active"    >&#x21C5;</span></th>
     <th onclick="doSort('campanha')"  >Campanha   <span class="si" id="si-campanha"  >&#x21C5;</span></th>
     <th>Notas/Evid</th>
@@ -3044,7 +3068,7 @@ def generate_findings_report(snapshot: dict, output_path: str = "findings_report
 <div class="pagination no-print" id="pagination"></div>
 
 <p class="page-sub no-print" style="margin-top:12px">
-  Triagem (auditada): <code>argus-finding set &lt;id&gt; em-analise|confirmado|mitigado|aceito|fp --note "..."</code>
+  Triagem (auditada): <code>argus-finding set &lt;id&gt; em-tratamento|mitigado|fp --note "..."</code>
   · <code>argus-finding note &lt;id&gt; "..."</code> · <code>argus-finding evidence &lt;id&gt; "rótulo" "ref"</code>
   &middot; ou use os controles da coluna <b>Ações</b> (requer o serviço web ativo).
 </p>
@@ -3064,7 +3088,7 @@ def generate_findings_report(snapshot: dict, output_path: str = "findings_report
 const SRC_LABEL = {{monitor:'Portas',submonitor:'Subdomínios',credentials:'Credenciais',email:'E-mail',typosquat:'Typosquat'}};
 const CONTROLS = {controls_js};
 function fstBadge(st,label){{
-  const m={{NOVO:'#7dd3fc',EM_ANALISE:'#fcd34d',CONFIRMADO:'#fb923c',MITIGADO:'#6ee7b7',ACEITO:'#c4b5fd',FALSO_POSITIVO:'#8a99b4'}};
+  const m={{NOVO:'#7dd3fc',EM_TRATAMENTO:'#fcd34d',MITIGADO:'#6ee7b7',FALSO_POSITIVO:'#8a99b4'}};
   const c=m[st]||'#8a99b4';
   return '<span style="color:'+c+';font-weight:700;font-size:11px;border:1px solid '+c+'66;border-radius:6px;padding:2px 8px;white-space:nowrap">'+esc(label||st)+'</span>';
 }}
@@ -3152,8 +3176,8 @@ function render(){{
   tbody.innerHTML=html;
   renderPagination(pgDiv,page,pages,total,start,slice.length,'gotoPage');
 }}
-const FST=[['NOVO','Novo'],['EM_ANALISE','Em análise'],['CONFIRMADO','Confirmado'],['MITIGADO','Mitigado'],['ACEITO','Aceito'],['FALSO_POSITIVO','Falso Positivo']];
-const _TREATED=['MITIGADO','ACEITO','FALSO_POSITIVO'];
+const FST=[['NOVO','Novo'],['EM_TRATAMENTO','Em tratamento'],['MITIGADO','Mitigado'],['FALSO_POSITIVO','Falso Positivo']];
+const _TREATED=['EM_TRATAMENTO','MITIGADO','FALSO_POSITIVO'];
 function statusSelect(id,cur){{
   const o=FST.map(s=>'<option value="'+s[0]+'"'+(s[0]===cur?' selected':'')+'>'+s[1]+'</option>').join('');
   return '<select class="act-sel" onchange="setStatus(\\''+id+'\\',this.value)">'+o+'</select>';
@@ -3186,7 +3210,7 @@ function updateTabCounts(){{
   set('k-active',DATA.all.filter(x=>x.active).length);
   set('k-backlog',DATA.backlog.length);
   set('k-crit',DATA.backlog.filter(x=>x.severity==='CRITICO').length);
-  set('k-aceito',DATA.all.filter(x=>x.status==='ACEITO').length);
+  set('k-mitig',DATA.all.filter(x=>x.status==='MITIGADO').length);
   set('k-fp',DATA.all.filter(x=>x.status==='FALSO_POSITIVO').length);
 }}
 function _patch(id,fn){{ DATA.all.forEach(x=>{{ if(x.id===id) fn(x); }}); _rebucket(); updateTabCounts(); applyFilters(); }}
@@ -3385,7 +3409,7 @@ function camps(listId, arr, href){
   const segs={'sb-crit':crit,'sb-alto':alto,'sb-med':med,'sb-baixo':baixo,'sb-info':info};
   for(const id in segs){ const e=document.getElementById(id); if(e) e.style.width=(segs[id]/tot*100)+'%'; }
   setTxt('lg-crit',crit); setTxt('lg-alto',alto); setTxt('lg-med',med); setTxt('lg-baixo',baixo); setTxt('lg-info',info);
-  setTxt('m-total',g(mon,'total')); setTxt('m-crit',g(mon,'critico')); setTxt('m-ips',g(mon,'ips')); setTxt('m-udp',g(mon,'udp')); setTxt('m-vuln',g(mon,'vuln_ips'));
+  setTxt('m-total',g(mon,'total')); setTxt('m-crit',g(mon,'critico')); setTxt('m-ips',g(mon,'ips')); setTxt('m-udp',g(mon,'udp')); setTxt('m-vuln',g(mon,'vuln_ips')); setTxt('m-kev',g(mon,'kev'));
   setTxt('m-when',mon?mon.now:'sem dados');
   camps('m-camps',mon?mon.campanhas:[],'/monitor_report.html');
   setTxt('s-total',g(sub,'total')); setTxt('s-crit',g(sub,'critico')); setTxt('s-us',g(sub,'urlscan'));
@@ -3400,7 +3424,7 @@ function camps(listId, arr, href){
   camps('e-camps',eml?eml.campanhas:[],'/email_report.html');
   const fnd=await loadKpis('/findings_report.html');
   setTxt('f-backlog',g(fnd,'backlog')); setTxt('f-crit',g(fnd,'critico'));
-  setTxt('f-aceito',g(fnd,'aceito')); setTxt('f-fp',g(fnd,'fp')); setTxt('f-total',g(fnd,'total'));
+  setTxt('f-mitig',g(fnd,'mitig')); setTxt('f-fp',g(fnd,'fp')); setTxt('f-total',g(fnd,'total'));
   setTxt('f-when',fnd?fnd.now:'sem dados');
   const ty=await loadKpis('/typosquat_report.html');
   setTxt('ty-total',g(ty,'total')); setTxt('ty-crit',g(ty,'critico')); setTxt('ty-mx',g(ty,'com_mx'));
@@ -3447,6 +3471,7 @@ def build_dashboard() -> str:
         '<div class="kpi sev-crit"><div class="v" id="m-crit">&mdash;</div><div class="l">Críticos</div></div>'
         '<div class="kpi"><div class="v" id="m-ips">&mdash;</div><div class="l">IPs únicos</div></div>'
         '<div class="kpi sev-crit"><div class="v" id="m-vuln">&mdash;</div><div class="l">Vulneráveis</div></div>'
+        '<div class="kpi sev-crit"><div class="v" id="m-kev">&mdash;</div><div class="l">Explorados (KEV)</div></div>'
         '<div class="kpi"><div class="v" id="m-udp">&mdash;</div><div class="l">Portas UDP</div></div></div>'
         '<div id="m-camps"><div class="empty">Carregando…</div></div></div>'
     )
@@ -3516,7 +3541,7 @@ def build_dashboard() -> str:
         '<div class="kpi sev-crit"><div class="v" id="f-crit">&mdash;</div><div class="l">Críticos</div></div>'
         '<div class="kpi"><div class="v" id="f-total">&mdash;</div><div class="l">Total</div></div></div>'
         '<div class="legend" style="width:100%">'
-        '<div class="legend-item"><span class="dot" style="background:#c4b5fd"></span>Aceitos<b id="f-aceito">&mdash;</b></div>'
+        '<div class="legend-item"><span class="dot" style="background:#6ee7b7"></span>Mitigado<b id="f-mitig">&mdash;</b></div>'
         '<div class="legend-item"><span class="dot" style="background:var(--border-2)"></span>Falso Positivo<b id="f-fp">&mdash;</b></div></div>'
         '<a class="list-row" href="/findings_report.html" style="text-decoration:none;color:inherit;margin-top:10px">'
         '<span class="ic2">&#9656;</span><div><div class="nm">Abrir gestão de achados</div>'
