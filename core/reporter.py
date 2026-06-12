@@ -231,11 +231,21 @@ def _common_css() -> str:
          cursor:pointer; font-weight:600; font-size:13px; color:var(--muted); background:transparent; transition:.15s; margin-bottom:-1px; }
   .tab:hover { color:var(--text); }
   .tab.active { color:var(--accent); background:var(--surface); border-color:var(--border); }
-  .tab .badge { display:inline-block; background:var(--bg); color:var(--muted); border-radius:999px; padding:1px 8px; font-size:11px; margin-left:6px; }
-  .badge { display:inline-block; background:var(--border); color:var(--muted); border-radius:999px; padding:1px 8px; font-size:11px; margin-left:4px; }
+  .tab .badge { display:inline-block; background:var(--bg); color:var(--steel-2); border-radius:999px; padding:1px 8px; font-size:11px; margin-left:6px; }
+  .badge { display:inline-block; background:var(--border); color:var(--steel-2); border-radius:999px; padding:1px 8px; font-size:11px; margin-left:4px; }
 
   /* ── Tabela ──────────────────────────────────────────── */
-  .tbl-wrap { overflow-x:auto; border:1px solid var(--border); border-radius:var(--radius); background:var(--surface); }
+  /* Scroll-shadow: a sombra à direita/esquerda sinaliza que há mais
+     colunas fora da área visível; some ao chegar nas extremidades. */
+  .tbl-wrap { overflow-x:auto; border:1px solid var(--border); border-radius:var(--radius);
+    background:
+      linear-gradient(to right, var(--surface) 30%, rgba(15,24,39,0)) left center,
+      linear-gradient(to left,  var(--surface) 30%, rgba(15,24,39,0)) right center,
+      radial-gradient(farthest-side at 0    50%, rgba(0,0,0,.45), rgba(0,0,0,0)) left center,
+      radial-gradient(farthest-side at 100% 50%, rgba(0,0,0,.45), rgba(0,0,0,0)) right center;
+    background-repeat:no-repeat;
+    background-size:42px 100%, 42px 100%, 16px 100%, 16px 100%;
+    background-attachment:local, local, scroll, scroll; }
   table { width:100%; border-collapse:separate; border-spacing:0; font-size:12.5px; }
   th { background:#0e1727; color:var(--muted); padding:11px 12px; text-align:left; white-space:nowrap;
        cursor:pointer; user-select:none; font-size:11px;
@@ -1069,7 +1079,7 @@ def generate_monitor_report(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Argus · Monitor de Superficie Exposta -- {now}</title>
+<title>Argus · Monitor de Superfície Exposta</title>
 <link rel="icon" type="image/svg+xml" href="{_FAVICON}">
 <style>{css}</style>
 </head>
@@ -1144,7 +1154,6 @@ def generate_monitor_report(
     <option value="sim">Com CVE (Shodan)</option>
     <option value="nao">Sem CVE</option>
   </select>
-  <input type="text" id="f-asn" placeholder="Filtrar por ASN..." oninput="applyFilters()" style="max-width:200px;">
   <select id="pgsize"   onchange="changePageSize()">
     <option value="50">50 por pagina</option>
     <option value="100">100 por pagina</option>
@@ -1212,7 +1221,6 @@ function applyFilters(){{
   const pr=document.getElementById('f-proto').value;
   const ab=document.getElementById('f-abuse').value;
   const fv=(document.getElementById('f-vuln')||{{value:''}}).value;
-  const fasn=(document.getElementById('f-asn')||{{value:''}}).value.toLowerCase();
   filtered=DATA[tab].filter(x=>{{
     if(camp&&x.campanha!==camp)return false;
     if(r&&x.risk!==r)return false;
@@ -1222,7 +1230,6 @@ function applyFilters(){{
     const vc=(x.internetdb&&x.internetdb.vuln_count)||0;
     if(fv==='sim'&&vc<1)return false;
     if(fv==='nao'&&vc>=1)return false;
-    if(fasn&&!x.asn.toLowerCase().includes(fasn))return false;
     const s=x.abuse?x.abuse.score:-1;
     if(ab==='any'&&s<0)return false;
     if(ab==='clean'&&s!==0)return false;
@@ -1236,7 +1243,7 @@ function applyFilters(){{
   }});
   page=1;applySort();
 }}
-function clearFilters(){{['q','f-camp','f-risk','f-iptype','f-status','f-proto','f-abuse','f-vuln','f-asn'].forEach(id=>{{const e=document.getElementById(id);if(e)e.value='';}});applyFilters();}}
+function clearFilters(){{['q','f-camp','f-risk','f-iptype','f-status','f-proto','f-abuse','f-vuln'].forEach(id=>{{const e=document.getElementById(id);if(e)e.value='';}});applyFilters();}}
 function doSort(k){{
   if(sortKey===k)sortAsc=!sortAsc;else{{sortKey=k;sortAsc=true;}}
   document.querySelectorAll('.si').forEach(e=>e.textContent='\\u21C5');
@@ -1450,7 +1457,7 @@ def generate_submonitor_report(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Argus · Subdomain Monitor -- {now}</title>
+<title>Argus · Subdomain Monitor</title>
 <link rel="icon" type="image/svg+xml" href="{_FAVICON}">
 <style>{css}</style>
 </head>
@@ -1556,7 +1563,6 @@ def generate_submonitor_report(
     <option value="critical">Score 76-100</option>
     <option value="tor">Node TOR</option>
   </select>
-  <input type="text" id="f-asn" placeholder="Filtrar por ASN..." oninput="applyFilters()" style="max-width:200px;">
   <select id="pgsize"   onchange="changePageSize()">
     <option value="50">50 por pagina</option>
     <option value="100">100 por pagina</option>
@@ -1636,7 +1642,6 @@ function applyFilters(){{
   const fssl=(document.getElementById('f-ssl')||{{value:''}}).value;
   const forigem=(document.getElementById('f-origem')||{{value:''}}).value;
   const fwhois=(document.getElementById('f-whois')||{{value:''}}).value;
-  const fasn=(document.getElementById('f-asn')||{{value:''}}).value.toLowerCase();
   filtered=DATA[tab].filter(x=>{{
     if(camp&&x.campanha!==camp)return false;
     if(env&&x.environment!==env)return false;
@@ -1667,7 +1672,7 @@ function applyFilters(){{
   }});
   page=1;applySort();
 }}
-function clearFilters(){{['q','f-camp','f-env','f-risk','f-ipt','f-waf','f-status','f-http','f-abuse','f-asn','f-dnssec','f-ssl','f-origem','f-whois'].forEach(id=>{{const e=document.getElementById(id);if(e)e.value='';}});applyFilters();}}
+function clearFilters(){{['q','f-camp','f-env','f-risk','f-ipt','f-waf','f-status','f-http','f-abuse','f-dnssec','f-ssl','f-origem','f-whois'].forEach(id=>{{const e=document.getElementById(id);if(e)e.value='';}});applyFilters();}}
 function doSort(k){{
   if(sortKey===k)sortAsc=!sortAsc;else{{sortKey=k;sortAsc=true;}}
   document.querySelectorAll('.si').forEach(e=>e.textContent='\\u21C5');
@@ -1911,7 +1916,7 @@ def generate_credentials_report(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Argus · Credential Exposure -- {now}</title>
+<title>Argus · Credential Exposure</title>
 <link rel="icon" type="image/svg+xml" href="{_FAVICON}">
 <style>{css}</style>
 </head>
@@ -2209,7 +2214,7 @@ def generate_email_report(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Argus · Postura de E-mail -- {now}</title>
+<title>Argus · Postura de E-mail</title>
 <link rel="icon" type="image/svg+xml" href="{_FAVICON}">
 <style>{css}</style>
 </head>
@@ -2551,7 +2556,7 @@ def generate_typosquat_report(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Argus · Typosquat -- {now}</title>
+<title>Argus · Typosquat</title>
 <link rel="icon" type="image/svg+xml" href="{_FAVICON}">
 <style>{css}</style>
 </head>
@@ -2834,6 +2839,11 @@ _AGING_COLOR = {"<7d": "var(--green)", "7-30d": "var(--yellow)", "30-90d": "var(
 def _trend_svg(trends: list) -> str:
     if not trends or not any((t.get("new") or t.get("treated")) for t in trends):
         return '<p class="empty">Sem histórico suficiente para tendência ainda.</p>'
+    # Quando só uma ou duas semanas têm dados, o gráfico parece "vazio" — explica que
+    # o histórico se preenche conforme as execuções, em vez de parecer quebrado.
+    weeks_with_data = sum(1 for t in trends if (t.get("new") or t.get("treated")))
+    sparse_note = ('<p class="empty" style="margin-top:6px">Histórico em formação — as semanas '
+                   'anteriores preenchem conforme as próximas execuções.</p>') if weeks_with_data <= 2 else ''
     W, H, pad = 560, 140, 26
     n = len(trends); maxv = max([max(t["new"], t["treated"]) for t in trends] + [1])
     bw = (W - 2 * pad) / n
@@ -2845,7 +2855,7 @@ def _trend_svg(trends: list) -> str:
         out.append(f'<rect x="{x+bw*0.16:.1f}" y="{H-22-hn:.1f}" width="{w2:.1f}" height="{hn:.1f}" fill="#33a3ef" rx="2"><title>{t["new"]} novo(s)</title></rect>')
         out.append(f'<rect x="{x+bw*0.52:.1f}" y="{H-22-ht:.1f}" width="{w2:.1f}" height="{ht:.1f}" fill="#34d399" rx="2"><title>{t["treated"]} tratado(s)</title></rect>')
         out.append(f'<text x="{x+bw/2:.1f}" y="{H-7}" text-anchor="middle" font-size="9" fill="var(--faint)">{t["label"]}</text>')
-    return f'<svg viewBox="0 0 {W} {H}" width="100%" style="max-width:100%">{"".join(out)}</svg>'
+    return f'<svg viewBox="0 0 {W} {H}" width="100%" style="max-width:100%">{"".join(out)}</svg>{sparse_note}'
 
 
 def _bar_rows(d: dict, labelmap=None, colormap=None) -> str:
@@ -2933,7 +2943,7 @@ def generate_findings_report(snapshot: dict, output_path: str = "findings_report
         (len(items),   "Achados",        "",                            "k-total"),
         (len(active),  "Ativos",         "",                            "k-active"),
         (len(backlog), "Backlog",        "sev-alto" if backlog else "", "k-backlog"),
-        (total_crit,   "Críticos (bl)",  "sev-crit",                    "k-crit"),
+        (total_crit,   "Críticos (backlog)", "sev-crit",                "k-crit"),
         (mitig,        "Mitigado",       "",                            "k-mitig"),
         (fp,           "Falso Positivo", "",                            "k-fp"),
     ])
@@ -2954,7 +2964,7 @@ def generate_findings_report(snapshot: dict, output_path: str = "findings_report
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Argus · Gestão de Achados -- {now}</title>
+<title>Argus · Gestão de Achados</title>
 <link rel="icon" type="image/svg+xml" href="{_FAVICON}">
 <style>{css}</style>
 <style>
@@ -3180,7 +3190,7 @@ const FST=[['NOVO','Novo'],['EM_TRATAMENTO','Em tratamento'],['MITIGADO','Mitiga
 const _TREATED=['EM_TRATAMENTO','MITIGADO','FALSO_POSITIVO'];
 function statusSelect(id,cur){{
   const o=FST.map(s=>'<option value="'+s[0]+'"'+(s[0]===cur?' selected':'')+'>'+s[1]+'</option>').join('');
-  return '<select class="act-sel" onchange="setStatus(\\''+id+'\\',this.value)">'+o+'</select>';
+  return '<select class="act-sel" title="Alterar estado do achado" onchange="setStatus(\\''+id+'\\',this.value)">'+o+'</select>';
 }}
 let _toastT;
 function _toast(msg,ok){{
@@ -3471,9 +3481,11 @@ def build_dashboard() -> str:
         '<div class="kpi sev-crit"><div class="v" id="m-crit">&mdash;</div><div class="l">Críticos</div></div>'
         '<div class="kpi"><div class="v" id="m-ips">&mdash;</div><div class="l">IPs únicos</div></div>'
         '<div class="kpi sev-crit"><div class="v" id="m-vuln">&mdash;</div><div class="l">Vulneráveis</div></div>'
-        '<div class="kpi sev-crit"><div class="v" id="m-kev">&mdash;</div><div class="l">Explorados (KEV)</div></div>'
+        '<div class="kpi sev-crit" title="CISA KEV — Known Exploited Vulnerabilities: CVEs com exploração confirmada in-the-wild"><div class="v" id="m-kev">&mdash;</div><div class="l">Explorados (KEV)</div></div>'
         '<div class="kpi"><div class="v" id="m-udp">&mdash;</div><div class="l">Portas UDP</div></div></div>'
-        '<div id="m-camps"><div class="empty">Carregando…</div></div></div>'
+        '<div id="m-camps"><div class="empty">Carregando…</div></div>'
+        '<a class="list-row" href="/monitor_report.html" style="text-decoration:none;color:inherit;margin-top:10px">'
+        '<span class="ic2">&#9656;</span><div><div class="nm">Ver relatório completo</div></div></a></div>'
     )
     sub_panel = (
         '<div class="panel panel-pad">'
@@ -3482,28 +3494,42 @@ def build_dashboard() -> str:
         '<div class="kpi"><div class="v" id="s-total">&mdash;</div><div class="l">Subdomínios</div></div>'
         '<div class="kpi sev-crit"><div class="v" id="s-crit">&mdash;</div><div class="l">Críticos</div></div>'
         '<div class="kpi"><div class="v" id="s-us">&mdash;</div><div class="l">Visto urlscan</div></div></div>'
-        '<div id="s-camps"><div class="empty">Carregando…</div></div></div>'
+        '<div id="s-camps"><div class="empty">Carregando…</div></div>'
+        '<a class="list-row" href="/submonitor_report.html" style="text-decoration:none;color:inherit;margin-top:10px">'
+        '<span class="ic2">&#9656;</span><div><div class="nm">Ver relatório completo</div></div></a></div>'
     )
     sched = (
         '<div class="panel panel-pad"><h2>&#x23F0; Agenda de Execução (cron)</h2>'
         '<div class="list-row"><span class="ic2">&#x1F5A5;</span><div>'
         '<div class="nm">argus-monitor <span class="pill-ok">ativo</span> <span class="badge">TCP</span></div>'
-        '<div class="dt">Diariamente às <b>10:00</b> · /etc/argus/monitor/monitor.py --tcp</div></div></div>'
+        '<div class="dt">Portas e serviços expostos &middot; diariamente às <b>10:00</b></div></div></div>'
         '<div class="list-row"><span class="ic2">&#x1F4E1;</span><div>'
         '<div class="nm">argus-monitor-udp <span class="pill-ok">ativo</span> <span class="badge">UDP</span></div>'
-        '<div class="dt">Domingos às <b>03:00</b> · /etc/argus/monitor/monitor.py --udp (100 portas)</div></div></div>'
+        '<div class="dt">100 portas UDP curadas &middot; domingos às <b>03:00</b></div></div></div>'
         '<div class="list-row"><span class="ic2">&#x1F310;</span><div>'
         '<div class="nm">argus-submonitor <span class="pill-ok">ativo</span></div>'
-        '<div class="dt">Diariamente às <b>12:00</b> · /etc/argus/submonitor/submonitor.py</div></div></div>'
+        '<div class="dt">Descoberta de subdomínios &middot; diariamente às <b>12:00</b></div></div></div>'
         '<div class="list-row"><span class="ic2">&#x1F511;</span><div>'
         '<div class="nm">argus-credentials <span class="pill-ok">ativo</span></div>'
-        '<div class="dt">Diariamente às <b>14:00</b> · /etc/argus/credentials/credentials.py</div></div></div>'
+        '<div class="dt">Vazamento de credenciais &middot; diariamente às <b>14:00</b></div></div></div>'
         '<div class="list-row"><span class="ic2">&#x2709;&#xFE0F;</span><div>'
         '<div class="nm">argus-email <span class="pill-ok">ativo</span></div>'
-        '<div class="dt">Diariamente às <b>13:00</b> · /etc/argus/email/emailauth.py</div></div></div>'
+        '<div class="dt">Postura SPF/DMARC/DKIM &middot; diariamente às <b>13:00</b></div></div></div>'
         '<div class="list-row"><span class="ic2">&#x1F465;</span><div>'
         '<div class="nm">argus-typosquat <span class="pill-ok">ativo</span></div>'
-        '<div class="dt">Domingos às <b>05:00</b> · /etc/argus/typosquat/typosquat.py (dnstwist)</div></div></div></div>'
+        '<div class="dt">Domínios sósia (dnstwist) &middot; domingos às <b>05:00</b></div></div></div>'
+        # Comandos/paths ficam em "Detalhes técnicos" recolhido — ruído para o uso diário.
+        '<details class="adv" style="margin-top:10px"><summary style="cursor:pointer;color:var(--muted);'
+        'font-size:12px;font-weight:600">Detalhes técnicos (comandos)</summary>'
+        '<pre style="margin-top:8px;background:var(--bg);border:1px solid var(--border);border-radius:8px;'
+        'padding:10px;font-size:11px;color:var(--muted);overflow:auto;white-space:pre-wrap">'
+        'argus-monitor --tcp        # /etc/argus/monitor/monitor.py --tcp\n'
+        'argus-monitor --udp        # /etc/argus/monitor/monitor.py --udp (100 portas)\n'
+        'argus-submonitor           # /etc/argus/submonitor/submonitor.py\n'
+        'argus-credentials          # /etc/argus/credentials/credentials.py\n'
+        'argus-email                # /etc/argus/email/emailauth.py\n'
+        'argus-typosquat            # /etc/argus/typosquat/typosquat.py (dnstwist)</pre></details>'
+        '</div>'
     )
     info = (
         '<div class="panel panel-pad"><h2>&#x2139;&#xFE0F; Bases &amp; Logs</h2>'
@@ -3513,7 +3539,7 @@ def build_dashboard() -> str:
         '<div class="list-row"><span class="ic2">&#x1F4DD;</span><div><div class="nm">Logs RFC 5424</div>'
         '<div class="dt">/var/log/argus/{monitor · submonitor · credentials · email · typosquat}</div></div></div>'
         '<div class="list-row"><span class="ic2">&#x1F310;</span><div><div class="nm">Serviço Web (ações de achados)</div>'
-        '<div class="dt">argus-web (Flask · 127.0.0.1:8099) atrás do Apache :8443 (TLS · Basic Auth)</div></div></div></div>'
+        '<div class="dt">argus-web (Flask) atrás do Apache &middot; acesso por HTTPS com autenticação</div></div></div></div>'
     )
     cred_panel = (
         '<div class="panel panel-pad">'
@@ -3522,7 +3548,9 @@ def build_dashboard() -> str:
         '<div class="kpi sev-crit"><div class="v" id="c-comp">&mdash;</div><div class="l">Domínios exp.</div></div>'
         '<div class="kpi sev-crit"><div class="v" id="c-emp">&mdash;</div><div class="l">Funcionários</div></div>'
         '<div class="kpi sev-alto"><div class="v" id="c-us">&mdash;</div><div class="l">Usuários</div></div></div>'
-        '<div id="c-camps"><div class="empty">Carregando…</div></div></div>'
+        '<div id="c-camps"><div class="empty">Carregando…</div></div>'
+        '<a class="list-row" href="/credentials_report.html" style="text-decoration:none;color:inherit;margin-top:10px">'
+        '<span class="ic2">&#9656;</span><div><div class="nm">Ver relatório completo</div></div></a></div>'
     )
     email_panel = (
         '<div class="panel panel-pad">'
@@ -3531,7 +3559,9 @@ def build_dashboard() -> str:
         '<div class="kpi"><div class="v" id="e-total">&mdash;</div><div class="l">Domínios</div></div>'
         '<div class="kpi sev-crit"><div class="v" id="e-spoof">&mdash;</div><div class="l">Spoofáveis</div></div>'
         '<div class="kpi sev-alto"><div class="v" id="e-nodmarc">&mdash;</div><div class="l">Sem DMARC</div></div></div>'
-        '<div id="e-camps"><div class="empty">Carregando…</div></div></div>'
+        '<div id="e-camps"><div class="empty">Carregando…</div></div>'
+        '<a class="list-row" href="/email_report.html" style="text-decoration:none;color:inherit;margin-top:10px">'
+        '<span class="ic2">&#9656;</span><div><div class="nm">Ver relatório completo</div></div></a></div>'
     )
     findings_panel = (
         '<div class="panel panel-pad">'
@@ -3554,20 +3584,27 @@ def build_dashboard() -> str:
         '<div class="kpi"><div class="v" id="ty-total">&mdash;</div><div class="l">Sósia</div></div>'
         '<div class="kpi sev-crit"><div class="v" id="ty-crit">&mdash;</div><div class="l">P/ phishing</div></div>'
         '<div class="kpi sev-alto"><div class="v" id="ty-mx">&mdash;</div><div class="l">Com MX</div></div></div>'
-        '<div id="ty-camps"><div class="empty">Carregando…</div></div></div>'
+        '<div id="ty-camps"><div class="empty">Carregando…</div></div>'
+        '<a class="list-row" href="/typosquat_report.html" style="text-decoration:none;color:inherit;margin-top:10px">'
+        '<span class="ic2">&#9656;</span><div><div class="nm">Ver relatório completo</div></div></a></div>'
     )
     sources = ('<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:16px">'
                + findings_panel + mon_panel + sub_panel + cred_panel + email_panel + typo_panel + '</div>')
     body = summary + '\n' + sources + '\n' \
         + '<div class="grid-2" style="margin-top:16px">' + sched + info + '</div>'
     return _portal_shell("dashboard", "Dashboard",
-                         "Visão consolidada de superfície exposta e subdomínios", body,
+                         "Visão consolidada da superfície de ataque: portas, subdomínios, "
+                         "credenciais, e-mail, typosquat e gestão de achados", body,
                          extra_script=_DASH_SCRIPT)
 
 
 def build_risk_guide() -> str:
-    def panel(title, inner):
-        return f'<div class="panel panel-pad sect" style="margin-bottom:16px"><h2>{title}</h2>{inner}</div>'
+    # Cada seção recebe uma âncora (aid) para o índice e um link "voltar ao topo".
+    def panel(title, inner, aid=None, toc_label=None):
+        idattr = f' id="{aid}"' if aid else ""
+        top = ('<a href="#top" title="Voltar ao topo" style="margin-left:auto;font-size:11px;'
+               'font-weight:600;color:var(--muted);text-decoration:none">&#x25B2; topo</a>') if aid else ""
+        return f'<div class="panel panel-pad sect"{idattr} style="margin-bottom:16px"><h2>{title}{top}</h2>{inner}</div>'
 
     overview = panel("Visão Geral",
         '<p>O Argus usa um <b>Risk Engine</b> em duas camadas. A primeira avalia o '
@@ -3580,7 +3617,8 @@ def build_risk_guide() -> str:
         '<div class="flow-arrow">+</div>'
         '<div class="flow-step"><div class="l">AbuseIPDB</div><div class="v">Score + TOR</div></div>'
         '<div class="flow-arrow">&#x2192;</div>'
-        '<div class="flow-step res"><div class="l">Resultado</div><div class="v">Risco final</div></div></div>')
+        '<div class="flow-step res"><div class="l">Resultado</div><div class="v">Risco final</div></div></div>',
+        aid="rg-overview", toc_label="Visão geral")
 
     ports = panel("&#x1F5A5; Monitor de Portas",
         '<table class="risk-table"><thead><tr><th>Porta / Serviço</th><th>IP Público</th>'
@@ -3592,7 +3630,8 @@ def build_risk_guide() -> str:
         '<tr><td>2375 — Docker API</td><td class="r-critico">CRÍTICO</td><td class="r-critico">CRÍTICO</td><td>Root no host via container</td></tr>'
         '<tr><td>22 — SSH</td><td class="r-medio">MÉDIO</td><td class="r-baixo">BAIXO</td><td>Seguro, mas alvo de brute force</td></tr>'
         '<tr><td>80/443 — HTTP/S</td><td class="r-baixo">BAIXO</td><td class="r-baixo">BAIXO</td><td>Serviço web padrão</td></tr>'
-        '</tbody></table>')
+        '</tbody></table>',
+        aid="rg-ports", toc_label="Monitor de Portas")
 
     ports_udp = panel("&#x1F4E1; Portas UDP <span class=\"chip\">--udp · semanal</span>",
         '<p style="margin-bottom:10px">Varredura UDP <b>opt-in</b> (<code>argus-monitor --udp</code>, cron semanal) '
@@ -3606,7 +3645,8 @@ def build_risk_guide() -> str:
         '<tr><td>Web moderno</td><td>443 QUIC / HTTP-3</td><td class="r-baixo">BAIXO</td><td>Serviço web legítimo sobre UDP</td></tr>'
         '</tbody></table>'
         '<p style="margin-top:10px"><b>Nota:</b> a criticidade UDP usa tabela própria (o serviço difere do TCP) e também '
-        'eleva por IP público × privado e por reputação AbuseIPDB, como no TCP.</p>')
+        'eleva por IP público × privado e por reputação AbuseIPDB, como no TCP.</p>',
+        aid="rg-udp", toc_label="Portas UDP")
 
     subs = panel("&#x1F310; Subdomain Monitor",
         '<table class="risk-table"><thead><tr><th>Condição</th><th>Risco</th><th>Exemplo</th></tr></thead><tbody>'
@@ -3617,7 +3657,8 @@ def build_risk_guide() -> str:
         '<tr><td>IP privado</td><td class="r-baixo">BAIXO</td><td>intranet.empresa.com.br</td></tr>'
         '</tbody></table>'
         '<p style="margin-top:10px">A detecção distingue <b>WAF</b> (produto de segurança) de '
-        '<b>CDN</b> (proxy reverso), via headers e cookies — pois CDN não garante WAF ativo.</p>')
+        '<b>CDN</b> (proxy reverso), via headers e cookies — pois CDN não garante WAF ativo.</p>',
+        aid="rg-subs", toc_label="Subdomínios")
 
     abuse = panel("&#x1F6E1; Elevação por AbuseIPDB",
         '<div class="sbar"><i style="background:var(--green)"></i><i style="background:var(--yellow)"></i>'
@@ -3628,7 +3669,8 @@ def build_risk_guide() -> str:
         '<tr><td><span class="b-med">Porta crítica + Score &gt; 25</span></td><td class="r-critico">Eleva para CRÍTICO</td></tr>'
         '<tr><td>Node TOR</td><td class="r-alto">+1 nível</td></tr>'
         '<tr><td>Datacenter/Hosting + Score &gt; 0</td><td class="r-alto">+1 nível</td></tr>'
-        '</tbody></table>')
+        '</tbody></table>',
+        aid="rg-abuse", toc_label="Elevação por AbuseIPDB")
 
     vulns = panel("&#x1F41B; Vulnerabilidades (Shodan InternetDB) <span class=\"chip\">free · sem chave</span>",
         '<p style="margin-bottom:10px">Enriquecimento <b>passivo por IP</b> (último crawl do Shodan, sem chave): '
@@ -3641,14 +3683,16 @@ def build_risk_guide() -> str:
         '</tbody></table>'
         '<p style="margin-top:10px"><b>Cautela:</b> o matching de CVE do Shodan é heurístico (banner/CPE) e pode ter '
         '<b>falso-positivo</b> — por isso a elevação é conservadora (CVE sozinha não força CRÍTICO). Trate os CVEs como '
-        '<i>leads a validar</i>. Dado <b>passivo/histórico</b>: pode não ver o que está atrás de firewall que bloqueia o Shodan.</p>')
+        '<i>leads a validar</i>. Dado <b>passivo/histórico</b>: pode não ver o que está atrás de firewall que bloqueia o Shodan.</p>',
+        aid="rg-vulns", toc_label="Vulnerabilidades (Shodan)")
 
     origem = panel("&#x1F50E; Origem da Descoberta",
         '<table class="risk-table"><thead><tr><th>Origem</th><th>Técnica</th><th>Significado</th></tr></thead><tbody>'
         '<tr><td><span class="b-bai">wordlist</span></td><td>Enumeração ativa</td><td>Nomes testados da subs.txt</td></tr>'
         '<tr><td><span class="origem-crtsh">crt.sh</span></td><td>Certificate Transparency (passiva)</td><td>Revelado por certificados emitidos</td></tr>'
         '<tr><td><span class="origem-urlscan">urlscan</span></td><td>urlscan.io Search (passiva)</td><td>Visto em scans históricos públicos</td></tr>'
-        '</tbody></table>')
+        '</tbody></table>',
+        aid="rg-origem", toc_label="Origem da descoberta")
 
     whois = panel("&#x1F4C5; Inteligência de Domínio (RDAP/WHOIS)",
         '<table class="risk-table"><thead><tr><th>Classificação</th><th>Critério</th><th>Relevância CTI</th></tr></thead><tbody>'
@@ -3657,7 +3701,8 @@ def build_risk_guide() -> str:
         '<tr><td><span class="b-bai">ESTABELECIDO</span></td><td>&gt; 1 ano</td><td>Infra madura</td></tr>'
         '<tr><td><span class="b-med">EXPIRANDO</span></td><td>&lt; 30 dias p/ expirar</td><td>Risco de sequestro por lapso</td></tr>'
         '<tr><td><span class="b-crit">EXPIRADO</span></td><td>Já expirou</td><td>Pode ser registrado por terceiros</td></tr>'
-        '</tbody></table>')
+        '</tbody></table>',
+        aid="rg-whois", toc_label="Inteligência de domínio")
 
     email = panel("&#x2709;&#xFE0F; Postura de E-mail (SPF / DMARC / DKIM)",
         '<table class="risk-table"><thead><tr><th>Condição</th><th>Risco</th><th>Por quê</th></tr></thead><tbody>'
@@ -3668,7 +3713,8 @@ def build_risk_guide() -> str:
         '</tbody></table>'
         '<p style="margin-top:10px"><b>Nota:</b> domínios <i>sem</i> MX também são verificados — um '
         'domínio que não envia e-mail ainda deve ter <code>-all</code> + <code>p=reject</code> para impedir '
-        'spoofing. O DKIM é <i>best-effort</i> (sonda seletores comuns), pois o seletor não é descobrível de forma genérica.</p>')
+        'spoofing. O DKIM é <i>best-effort</i> (sonda seletores comuns), pois o seletor não é descobrível de forma genérica.</p>',
+        aid="rg-email", toc_label="Postura de e-mail")
 
     try:
         import findings as _fm
@@ -3693,10 +3739,30 @@ def build_risk_guide() -> str:
             '<table class="risk-table rt-fixed">'
             '<colgroup><col style="width:20%"><col style="width:30%"><col style="width:28%"><col style="width:22%"></colgroup>'
             '<thead><tr><th>Categoria de achado</th><th>ISO/IEC 27002:2022</th>'
-            '<th>CIS Controls v8</th><th>PCI-DSS v4.0</th></tr></thead><tbody>' + crows + '</tbody></table>')
+            '<th>CIS Controls v8</th><th>PCI-DSS v4.0</th></tr></thead><tbody>' + crows + '</tbody></table>',
+            aid="rg-compliance", toc_label="Mapeamento de conformidade")
 
-    body = overview + ports + ports_udp + subs + abuse + vulns + compliance + origem + whois + email
-    return _portal_shell("risk", "Guia de Classificação de Risco",
+    # Índice (TOC) montado na MESMA ordem do corpo — âncoras navegáveis.
+    body_sections = [overview, ports, ports_udp, subs, abuse, vulns]
+    toc_items = [("rg-overview", "Visão geral"), ("rg-ports", "Monitor de Portas"),
+                 ("rg-udp", "Portas UDP"), ("rg-subs", "Subdomínios"),
+                 ("rg-abuse", "Elevação por AbuseIPDB"), ("rg-vulns", "Vulnerabilidades (Shodan)")]
+    if compliance:
+        body_sections.append(compliance)
+        toc_items.append(("rg-compliance", "Mapeamento de conformidade"))
+    body_sections += [origem, whois, email]
+    toc_items += [("rg-origem", "Origem da descoberta"), ("rg-whois", "Inteligência de domínio"),
+                  ("rg-email", "Postura de e-mail")]
+    toc_links = "".join(
+        f'<a href="#{aid}" style="text-decoration:none;font-size:12px;font-weight:600;color:var(--muted);'
+        f'background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:4px 12px">{label}</a>'
+        for aid, label in toc_items)
+    toc = ('<div class="panel panel-pad" id="top" style="margin-bottom:16px">'
+           '<h2 style="font-size:12.5px;color:var(--accent);text-transform:uppercase;letter-spacing:.7px;'
+           'margin-bottom:12px">&#x1F4D1; Índice</h2>'
+           f'<div style="display:flex;flex-wrap:wrap;gap:8px">{toc_links}</div></div>')
+    body = toc + "".join(body_sections)
+    return _portal_shell("risk", "Guia de Risco",
                          "Como o Risk Engine calcula o risco de cada ativo", body)
 
 
