@@ -131,6 +131,13 @@ def _common_css() -> str:
   .wrap { max-width:1560px; margin:0 auto; padding:22px 26px 56px; }
   code, .mono { font-family:var(--mono); }
   a { color:var(--accent); }
+  abbr[title] { text-decoration:underline dotted; text-underline-offset:2px; cursor:help; }
+
+  /* ── Barra de progresso de navegação (feedback de carregamento) ── */
+  #navprog { position:fixed; top:0; left:0; height:3px; width:0; z-index:60;
+             background:linear-gradient(90deg,var(--accent),var(--accent-2)); box-shadow:0 0 8px var(--accent);
+             opacity:0; pointer-events:none; }
+  #navprog.go { width:92%; opacity:1; transition:width 8s cubic-bezier(.1,.7,.1,1); }
 
   /* ── Top bar / navegação ─────────────────────────────── */
   .topbar { position:sticky; top:0; z-index:20; display:flex; align-items:center; gap:22px;
@@ -152,6 +159,12 @@ def _common_css() -> str:
   .nav a svg { width:15px; height:15px; opacity:.85; }
   .topbar-meta { color:var(--faint); font-size:11.5px; text-align:right; white-space:nowrap; }
   .topbar-meta b { color:var(--muted); font-weight:600; }
+  /* ── Breadcrumb (trilha de localização) ──────────────── */
+  .breadcrumb { display:flex; align-items:center; gap:7px; padding:9px 26px 0; font-size:12px; color:var(--muted); flex-wrap:wrap; }
+  .breadcrumb a { color:var(--muted); text-decoration:none; }
+  .breadcrumb a:hover { color:var(--accent); }
+  .breadcrumb .sep { color:var(--faint); }
+  .breadcrumb .cur { color:var(--text); font-weight:600; }
 
   /* ── Cabeçalho da página ─────────────────────────────── */
   .page-head { display:flex; align-items:flex-end; justify-content:space-between; gap:14px; flex-wrap:wrap; margin:6px 0 18px; }
@@ -208,6 +221,21 @@ def _common_css() -> str:
   .btn-csv { background:rgba(52,211,153,.14); color:#a7f3d0; border-color:rgba(52,211,153,.3); }
   .btn-clr { background:var(--surface); color:var(--muted); border-color:var(--border); }
 
+  /* ── "Mais filtros" (agrupa filtros secundários) ────────── */
+  .morefilters { position:relative; display:inline-block; }
+  .morefilters > summary { list-style:none; cursor:pointer; padding:8px 13px; border-radius:var(--radius-sm);
+       border:1px solid var(--border); background:var(--surface); color:var(--muted); font-size:13px; font-weight:600;
+       display:inline-flex; align-items:center; gap:7px; user-select:none; }
+  .morefilters > summary::-webkit-details-marker { display:none; }
+  .morefilters > summary::marker { content:""; }
+  .morefilters[open] > summary { color:var(--accent); border-color:var(--accent); }
+  .morefilters-body { position:absolute; z-index:40; top:calc(100% + 6px); left:0; min-width:240px;
+       background:var(--surface-2,#0e1727); border:1px solid var(--border); border-radius:var(--radius);
+       padding:10px; box-shadow:var(--shadow); display:flex; flex-direction:column; gap:8px; }
+  .morefilters-body::before { content:"Filtros adicionais"; font-size:10px; text-transform:uppercase;
+       letter-spacing:.6px; color:var(--faint); }
+  .morefilters-body select { width:100%; }
+
   /* ── Menu "Colunas" (mostrar/ocultar) ───────────────────── */
   .colmenu { position:relative; display:inline-block; }
   .colmenu > summary { list-style:none; cursor:pointer; padding:8px 13px; border-radius:var(--radius-sm);
@@ -235,17 +263,19 @@ def _common_css() -> str:
   .badge { display:inline-block; background:var(--border); color:var(--steel-2); border-radius:999px; padding:1px 8px; font-size:11px; margin-left:4px; }
 
   /* ── Tabela ──────────────────────────────────────────── */
-  /* Scroll-shadow: a sombra à direita/esquerda sinaliza que há mais
-     colunas fora da área visível; some ao chegar nas extremidades. */
+  /* Indicador de scroll horizontal: a borda recebe um realce + sombra quando há
+     colunas fora da área visível (classes .sx-left/.sx-right setadas por JS). */
   .tbl-wrap { overflow-x:auto; border:1px solid var(--border); border-radius:var(--radius);
-    background:
-      linear-gradient(to right, var(--surface) 30%, rgba(15,24,39,0)) left center,
-      linear-gradient(to left,  var(--surface) 30%, rgba(15,24,39,0)) right center,
-      radial-gradient(farthest-side at 0    50%, rgba(0,0,0,.45), rgba(0,0,0,0)) left center,
-      radial-gradient(farthest-side at 100% 50%, rgba(0,0,0,.45), rgba(0,0,0,0)) right center;
-    background-repeat:no-repeat;
-    background-size:42px 100%, 42px 100%, 16px 100%, 16px 100%;
-    background-attachment:local, local, scroll, scroll; }
+              background:var(--surface); position:relative; transition:box-shadow .15s, border-color .15s; }
+  .tbl-wrap.sx-right { border-right-color:var(--accent);
+       box-shadow:inset -26px 0 22px -22px rgba(2,6,14,.9); }
+  .tbl-wrap.sx-left  { border-left-color:var(--accent);
+       box-shadow:inset 26px 0 22px -22px rgba(2,6,14,.9); }
+  .tbl-wrap.sx-left.sx-right { border-left-color:var(--accent); border-right-color:var(--accent);
+       box-shadow:inset 26px 0 22px -22px rgba(2,6,14,.9), inset -26px 0 22px -22px rgba(2,6,14,.9); }
+  /* Dica textual "role para ver mais colunas" — injetada e alternada por JS. */
+  .scroll-hint { display:none; font-size:11px; font-weight:600; color:var(--accent); margin:6px 2px 0; align-items:center; gap:6px; }
+  .scroll-hint.show { display:inline-flex; }
   table { width:100%; border-collapse:separate; border-spacing:0; font-size:12.5px; }
   th { background:#0e1727; color:var(--muted); padding:11px 12px; text-align:left; white-space:nowrap;
        cursor:pointer; user-select:none; font-size:11px;
@@ -276,8 +306,15 @@ def _common_css() -> str:
   .risk-MEDIO   { color:var(--yellow); font-weight:700; }
   .risk-BAIXO   { color:var(--green); }
   .risk-INFO    { color:var(--muted); }
-  .status-NOVO        { color:var(--accent); font-weight:600; }
-  .status-REINCIDENTE { color:var(--accent-2); font-weight:600; }
+  /* Acessibilidade (daltonismo): forma distinta por severidade, além da cor.
+     Cada nível ganha um símbolo geométrico próprio — não depende só de cor (WCAG 1.4.1). */
+  .risk-CRITICO::before, .r-critico::before { content:"\\25C6 "; font-size:.85em; }  /* losango */
+  .risk-ALTO::before,    .r-alto::before    { content:"\\25B2 "; font-size:.8em; }   /* triângulo */
+  .risk-MEDIO::before,   .r-medio::before   { content:"\\25A0 "; font-size:.8em; }   /* quadrado */
+  .risk-BAIXO::before,   .r-baixo::before   { content:"\\25CF "; font-size:.78em; }  /* círculo */
+  .risk-INFO::before                         { content:"\\2014 "; }                   /* traço */
+  .status-NOVO        { color:var(--accent); font-weight:700; }
+  .status-REINCIDENTE { color:var(--accent-2); font-weight:700; }
   .status-CORRIGIDO   { color:var(--green); font-weight:600; }
   .status-RESSURGIDO  { color:var(--orange); font-weight:700; }
   .status-FECHADO     { color:var(--muted); }
@@ -288,7 +325,7 @@ def _common_css() -> str:
   tr.ack td { background:rgba(167,139,250,.04); }
   .ack-reason { color:var(--muted); font-size:11.5px; font-style:italic; max-width:240px;
        overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:inline-block; vertical-align:bottom; }
-  .ack-reason::before { content:"\201C"; } .ack-reason::after { content:"\201D"; }
+  .ack-reason::before { content:"\\201C"; } .ack-reason::after { content:"\\201D"; }
   .cve-badge { background:rgba(244,63,94,.16); color:#fda4af; border:1px solid rgba(244,63,94,.34);
        border-radius:6px; padding:2px 8px; font-size:11px; font-weight:700; white-space:nowrap; cursor:help; }
   /* KEV: exploração CONFIRMADA in-the-wild (CISA) — selo sólido, mais forte que o CVE */
@@ -307,7 +344,7 @@ def _common_css() -> str:
   .tor-badge { background:rgba(129,140,248,.2); color:#c7d2fe; border-radius:5px; padding:1px 6px; font-size:10px; font-weight:700; margin-left:4px; }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.55} }
 
-  .dnssec-on  { background:rgba(52,211,153,.14); color:#6ee7b7; border-radius:6px; padding:2px 8px; font-size:11px; font-weight:700; }
+  .dnssec-on  { background:rgba(52,211,153,.18); color:#8af0c6; border:1px solid rgba(52,211,153,.45); border-radius:6px; padding:2px 8px; font-size:11px; font-weight:700; }
   .dnssec-off { background:rgba(244,63,94,.12); color:#fda4af; border-radius:6px; padding:2px 8px; font-size:11px; font-weight:600; }
   .ssl-ok     { background:rgba(52,211,153,.14); color:#6ee7b7; border-radius:6px; padding:2px 8px; font-size:11px; font-weight:700; }
   .ssl-warn   { background:rgba(251,191,36,.14); color:#fcd34d; border-radius:6px; padding:2px 8px; font-size:11px; font-weight:700; }
@@ -615,11 +652,27 @@ def _topbar(active: str) -> str:
         f'<a class="{"active" if key==active else ""}" href="{href}">{_NAV_ICONS.get(key,"")}{label}</a>'
         for key, href, label in items
     )
+    # Breadcrumb: Início › <seção atual> — orientação secundária de localização.
+    _cur_label = next((label for key, _href, label in items if key == active), "")
+    breadcrumb = (
+        '<div class="breadcrumb"><a href="/index.html">Início</a>'
+        + (f'<span class="sep">&rsaquo;</span><span class="cur">{_cur_label}</span>' if _cur_label else "")
+        + '</div>'
+    ) if _cur_label else ""
     return (
+        '<div id="navprog"></div>'
         '<script>'
         "(function(){try{if(localStorage.getItem('argus-theme')==='light')document.body.classList.add('light');}catch(e){}})();"
         "function argusToggleTheme(){var l=document.body.classList.toggle('light');"
         "try{localStorage.setItem('argus-theme',l?'light':'dark');}catch(e){}}"
+        # Feedback de carregamento: ao navegar para outra página, anima a barra do topo.
+        "(function(){var b=document.getElementById('navprog');if(!b)return;function go(){b.classList.add('go');}"
+        "window.addEventListener('beforeunload',go);"
+        "document.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('a[href]');if(!a)return;"
+        "var h=a.getAttribute('href')||'';if(a.target==='_blank'||a.hasAttribute('download'))return;"
+        "if(h.charAt(0)==='#'||h.indexOf('javascript:')===0||h.indexOf('mailto:')===0)return;"
+        "if(a.origin&&a.origin!==location.origin)return;go();},true);"
+        "window.addEventListener('pageshow',function(){b.classList.remove('go');});})();"
         '</script>'
         '<div class="topbar">'
         f'<a class="brand" href="/index.html" title="Início">{_logo_svg()}<span class="bwrap"><span class="bn">ARGUS</span>'
@@ -642,6 +695,7 @@ def _topbar(active: str) -> str:
         '<polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>'
         '</a>'
         '</div>'
+        + breadcrumb
     )
 
 
@@ -975,6 +1029,28 @@ function initColMenu(){
   applyColHide(hidden);
 }
 document.addEventListener('DOMContentLoaded', initColMenu);
+
+// ── Indicador de scroll horizontal: realça a borda e mostra dica quando há
+//    colunas fora da área visível; some ao chegar nas extremidades. ──
+function initScrollHints(){
+  document.querySelectorAll('.tbl-wrap').forEach(function(w){
+    var hint=document.createElement('div');
+    hint.className='scroll-hint';
+    hint.innerHTML='⇄ role para ver mais colunas';
+    w.parentNode.insertBefore(hint, w.nextSibling);
+    function upd(){
+      var max=w.scrollWidth-w.clientWidth;
+      var right = max>4 && (max-w.scrollLeft)>4;
+      w.classList.toggle('sx-right', right);
+      w.classList.toggle('sx-left', w.scrollLeft>4);
+      hint.classList.toggle('show', right);
+    }
+    upd();
+    w.addEventListener('scroll', upd, {passive:true});
+    window.addEventListener('resize', upd);
+  });
+}
+document.addEventListener('DOMContentLoaded', initScrollHints);
 """
 
 
@@ -1126,14 +1202,15 @@ def generate_monitor_report(
     <option value="">Todos os Riscos</option>
     <option>CRITICO</option><option>ALTO</option><option>MEDIO</option><option>BAIXO</option>
   </select>
+  <select id="f-status" onchange="applyFilters()">
+    <option value="">Todos os Status</option>
+    <option>NOVO</option><option>REINCIDENTE</option><option>CORRIGIDO</option><option>RESSURGIDO</option><option>RECONHECIDO</option>
+  </select>
+  <details class="morefilters no-print"><summary>&#x2699; Mais filtros</summary><div class="morefilters-body">
   <select id="f-iptype" onchange="applyFilters()">
     <option value="">Publico e Privado</option>
     <option value="PUBLICO">Publico</option>
     <option value="PRIVADO">Privado</option>
-  </select>
-  <select id="f-status" onchange="applyFilters()">
-    <option value="">Todos os Status</option>
-    <option>NOVO</option><option>REINCIDENTE</option><option>CORRIGIDO</option><option>RESSURGIDO</option><option>RECONHECIDO</option>
   </select>
   <select id="f-proto"  onchange="applyFilters()">
     <option value="">TCP e UDP</option>
@@ -1154,6 +1231,7 @@ def generate_monitor_report(
     <option value="sim">Com CVE (Shodan)</option>
     <option value="nao">Sem CVE</option>
   </select>
+  </div></details>
   <select id="pgsize"   onchange="changePageSize()">
     <option value="50">50 por pagina</option>
     <option value="100">100 por pagina</option>
@@ -1508,6 +1586,11 @@ def generate_submonitor_report(
     <option value="">Todos os Riscos</option>
     <option>CRITICO</option><option>ALTO</option><option>MEDIO</option><option>BAIXO</option>
   </select>
+  <select id="f-status" onchange="applyFilters()">
+    <option value="">Todos Status</option>
+    <option>NOVO</option><option>REINCIDENTE</option><option>CORRIGIDO</option><option>RESSURGIDO</option><option>RECONHECIDO</option>
+  </select>
+  <details class="morefilters no-print"><summary>&#x2699; Mais filtros</summary><div class="morefilters-body">
   <select id="f-ipt"    onchange="applyFilters()">
     <option value="">Publico e Privado</option>
     <option value="PUBLICO">Publico</option>
@@ -1544,10 +1627,6 @@ def generate_submonitor_report(
     <option value="EXPIRANDO">Expirando</option>
     <option value="EXPIRADO">Expirado</option>
   </select>
-  <select id="f-status" onchange="applyFilters()">
-    <option value="">Todos Status</option>
-    <option>NOVO</option><option>REINCIDENTE</option><option>CORRIGIDO</option><option>RESSURGIDO</option><option>RECONHECIDO</option>
-  </select>
   <select id="f-http"   onchange="applyFilters()">
     <option value="">Todos HTTP</option>
     <option>200</option><option>301</option><option>302</option>
@@ -1563,6 +1642,7 @@ def generate_submonitor_report(
     <option value="critical">Score 76-100</option>
     <option value="tor">Node TOR</option>
   </select>
+  </div></details>
   <select id="pgsize"   onchange="changePageSize()">
     <option value="50">50 por pagina</option>
     <option value="100">100 por pagina</option>
@@ -2840,10 +2920,13 @@ def _trend_svg(trends: list) -> str:
     if not trends or not any((t.get("new") or t.get("treated")) for t in trends):
         return '<p class="empty">Sem histórico suficiente para tendência ainda.</p>'
     # Quando só uma ou duas semanas têm dados, o gráfico parece "vazio" — explica que
-    # o histórico se preenche conforme as execuções, em vez de parecer quebrado.
+    # o histórico se preenche conforme as execuções, indicando desde quando há dados.
     weeks_with_data = sum(1 for t in trends if (t.get("new") or t.get("treated")))
-    sparse_note = ('<p class="empty" style="margin-top:6px">Histórico em formação — as semanas '
-                   'anteriores preenchem conforme as próximas execuções.</p>') if weeks_with_data <= 2 else ''
+    _since = next((t.get("label", "") for t in trends if (t.get("new") or t.get("treated"))), "")
+    sparse_note = (
+        f'<p class="empty" style="margin-top:6px">Histórico em formação{f" — dados desde {_since}" if _since else ""}; '
+        'as semanas anteriores preenchem conforme as próximas execuções.</p>'
+    ) if weeks_with_data <= 2 else ''
     W, H, pad = 560, 140, 26
     n = len(trends); maxv = max([max(t["new"], t["treated"]) for t in trends] + [1])
     bw = (W - 2 * pad) / n
@@ -3100,7 +3183,7 @@ const CONTROLS = {controls_js};
 function fstBadge(st,label){{
   const m={{NOVO:'#7dd3fc',EM_TRATAMENTO:'#fcd34d',MITIGADO:'#6ee7b7',FALSO_POSITIVO:'#8a99b4'}};
   const c=m[st]||'#8a99b4';
-  return '<span style="color:'+c+';font-weight:700;font-size:11px;border:1px solid '+c+'66;border-radius:6px;padding:2px 8px;white-space:nowrap">'+esc(label||st)+'</span>';
+  return '<span style="color:'+c+';background:'+c+'22;font-weight:700;font-size:11px;border:1px solid '+c+'80;border-radius:6px;padding:2px 8px;white-space:nowrap">'+esc(label||st)+'</span>';
 }}
 const DATA = {{all:{js_all},backlog:{js_back},treated:{js_trt}}};
 const CAMPANHAS = {campanhas_js};
@@ -3638,14 +3721,21 @@ def build_risk_guide() -> str:
         'de <b>100 portas curadas por criticidade</b> — OOB/ICS/RCE, VPN/DNS/SIP, <i>poisoning</i> e refletores de '
         'amplificação. UDP é lento e ambíguo, então a lista é fixa e só reporta portas confirmadas abertas.</p>'
         '<table class="risk-table"><thead><tr><th>Categoria</th><th>Portas (ex.)</th><th>IP Público</th><th>Por quê</th></tr></thead><tbody>'
-        '<tr><td>OOB / ICS / RCE</td><td>623 IPMI · 17185 VxWorks · 69 TFTP · 47808 BACnet · 20000 DNP3 · 44818 EtherNet/IP</td><td class="r-critico">CRÍTICO</td><td>Gestão out-of-band, automação industrial, exec remota</td></tr>'
+        '<tr><td><abbr title="Out-of-Band — gestão fora de banda">OOB</abbr> / '
+        '<abbr title="Industrial Control Systems — sistemas de automação industrial">ICS</abbr> / '
+        '<abbr title="Remote Code Execution — execução remota de código">RCE</abbr></td>'
+        '<td>623 IPMI · 17185 VxWorks · 69 TFTP · 47808 BACnet · 20000 DNP3 · 44818 EtherNet/IP</td><td class="r-critico">CRÍTICO</td><td>Gestão out-of-band, automação industrial, exec remota</td></tr>'
         '<tr><td>Info / poisoning / amplificação</td><td>161 SNMP · 389 CLDAP · 11211 memcached · 137/138 NetBIOS · 5355 LLMNR · 19 chargen</td><td class="r-critico">CRÍTICO</td><td>Vazamento massivo, roubo de credencial, refletor DDoS</td></tr>'
         '<tr><td>Acesso / VPN / DNS / VoIP</td><td>3389 RDP · 500/4500 IPsec · 1194 OpenVPN · 53 DNS · 5060 SIP · 1812 RADIUS</td><td class="r-alto">ALTO</td><td>Endpoints de acesso/autenticação expostos</td></tr>'
         '<tr><td>Infra / telemetria / mídia</td><td>67/68 DHCP · 2055 NetFlow · 5246 CAPWAP · 3478 STUN · jogos</td><td class="r-medio">MÉDIO</td><td>Roteamento, telemetria, mídia e refletores menores</td></tr>'
         '<tr><td>Web moderno</td><td>443 QUIC / HTTP-3</td><td class="r-baixo">BAIXO</td><td>Serviço web legítimo sobre UDP</td></tr>'
         '</tbody></table>'
         '<p style="margin-top:10px"><b>Nota:</b> a criticidade UDP usa tabela própria (o serviço difere do TCP) e também '
-        'eleva por IP público × privado e por reputação AbuseIPDB, como no TCP.</p>',
+        'eleva por IP público × privado e por reputação AbuseIPDB, como no TCP.</p>'
+        '<p class="empty" style="margin-top:8px"><b>Siglas:</b> '
+        'OOB (out-of-band) · ICS (controle industrial) · RCE (execução remota de código) · '
+        'CLDAP (Connectionless LDAP) · CAPWAP (controle de access points) · STUN (NAT traversal) · '
+        'LLMNR/NetBIOS (resolução de nomes Windows).</p>',
         aid="rg-udp", toc_label="Portas UDP")
 
     subs = panel("&#x1F310; Subdomain Monitor",
@@ -3674,7 +3764,9 @@ def build_risk_guide() -> str:
 
     vulns = panel("&#x1F41B; Vulnerabilidades (Shodan InternetDB) <span class=\"chip\">free · sem chave</span>",
         '<p style="margin-bottom:10px">Enriquecimento <b>passivo por IP</b> (último crawl do Shodan, sem chave): '
-        '<b>CVEs conhecidas</b>, portas vistas, CPEs e tags. Aplica a portas (monitor) e subdomínios (submonitor) — '
+        '<b>CVEs conhecidas</b>, portas vistas, '
+        '<abbr title="Common Platform Enumeration — identificador padronizado de produto/versão (ex.: cpe:/a:apache:http_server:2.4)">CPEs</abbr> e tags. '
+        'Aplica a portas (monitor) e subdomínios (submonitor) — '
         'coluna <b>CVEs</b> + KPI <b>IPs vulneráveis</b> + filtro.</p>'
         '<table class="risk-table"><thead><tr><th>Condição</th><th>Efeito no risco</th></tr></thead><tbody>'
         '<tr><td>IP com <span class="b-crit">&ge; 1 CVE</span> conhecida</td><td class="r-alto">Eleva para no mínimo ALTO</td></tr>'
