@@ -311,7 +311,7 @@ def _analyze_spf(records: list[str]) -> dict:
     qual = m.group(1) if m else ""
     lookups = 0
     for tk in low.split():
-        name = re.split(r'[:=]', tk.lstrip("+-~?"), 1)[0]
+        name = re.split(r'[:=]', tk.lstrip("+-~?"), maxsplit=1)[0]
         if name in ("include", "a", "mx", "ptr", "exists", "redirect"):
             lookups += 1
     if qual == "+":   status = "PERIGOSO"
