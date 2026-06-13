@@ -136,6 +136,9 @@ def _common_css() -> str:
   .skip-link { position:absolute; left:-9999px; top:0; z-index:100; background:var(--accent); color:#04121f;
        padding:10px 16px; border-radius:0 0 8px 0; font-weight:700; font-size:13px; text-decoration:none; }
   .skip-link:focus { left:0; }
+  /* Conteúdo só para leitores de tela (visualmente oculto, acessível). */
+  .sr-only { position:absolute!important; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden;
+       clip:rect(0,0,0,0); white-space:nowrap; border:0; }
 
   /* ── Barra de progresso de navegação (feedback de carregamento) ── */
   #navprog { position:fixed; top:0; left:0; height:3px; width:0; z-index:60;
@@ -195,19 +198,21 @@ def _common_css() -> str:
            border-radius:var(--radius); box-shadow:var(--shadow); }
   .kpi-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(118px,1fr)); gap:1px; background:var(--border);
               border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; }
-  .kpi { background:linear-gradient(180deg,var(--surface),var(--surface-2)); padding:15px 16px; position:relative; }
-  .kpi::before { content:''; position:absolute; left:0; top:14px; bottom:14px; width:3px; border-radius:3px; background:var(--border-2); }
-  .kpi .v { font-size:25px; font-weight:800; line-height:1; letter-spacing:-.5px; }
+  .kpi { background:linear-gradient(180deg,var(--surface),var(--surface-2)); padding:15px 16px 15px 18px; position:relative; }
+  /* O número é o herói: cor sólida de alto contraste (--text). A severidade é
+     comunicada pela barra lateral colorida (acento), não pela cor do número. */
+  .kpi::before { content:''; position:absolute; left:0; top:12px; bottom:12px; width:4px; border-radius:0 3px 3px 0; background:var(--border-2); }
+  .kpi .v { font-size:25px; font-weight:800; line-height:1; letter-spacing:-.5px; color:var(--text); }
   .kpi .l { font-size:11.5px; color:var(--muted); margin-top:6px; text-transform:uppercase; letter-spacing:.5px; }
-  .kpi.sev-crit::before{ background:var(--red); }    .kpi.sev-crit .v{ color:var(--red); }
-  .kpi.sev-alto::before{ background:var(--orange); } .kpi.sev-alto .v{ color:var(--orange); }
-  .kpi.sev-med::before{ background:var(--yellow); }  .kpi.sev-med .v{ color:var(--yellow); }
-  .kpi.sev-novo::before{ background:var(--accent); } .kpi.sev-novo .v{ color:var(--accent); }
-  .kpi.sev-rein::before{ background:var(--accent-2);} .kpi.sev-rein .v{ color:var(--accent-2); }
-  .kpi.sev-abus::before{ background:var(--pink); }   .kpi.sev-abus .v{ color:var(--pink); }
+  .kpi.sev-crit::before{ background:var(--red); width:5px; }
+  .kpi.sev-alto::before{ background:var(--orange); }
+  .kpi.sev-med::before{ background:var(--yellow); }
+  .kpi.sev-novo::before{ background:var(--accent); }
+  .kpi.sev-rein::before{ background:var(--accent-2); }
+  .kpi.sev-abus::before{ background:var(--pink); }
 
   .donut-card { padding:16px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; }
-  .donut-card h3 { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.9px; align-self:flex-start; }
+  .donut-card h2 { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.9px; align-self:flex-start; font-weight:700; }
   .donut-flex { display:flex; align-items:center; gap:16px; width:100%; }
   .donut { width:120px; height:120px; flex:none; }
   .donut .tot { font-size:24px; font-weight:800; fill:var(--text); }
@@ -228,8 +233,11 @@ def _common_css() -> str:
   .btn { padding:8px 14px; border-radius:var(--radius-sm); border:1px solid transparent; font-size:13px; font-weight:600;
          cursor:pointer; display:inline-flex; align-items:center; gap:7px; transition:.15s; }
   .btn:hover { transform:translateY(-1px); }
-  .btn-pdf { background:rgba(129,140,248,.14); color:#c7d2fe; border-color:rgba(129,140,248,.3); }
-  .btn-csv { background:rgba(52,211,153,.14); color:#a7f3d0; border-color:rgba(52,211,153,.3); }
+  /* CTAs de exportação: fundo sólido de alto contraste (texto branco ≥4.5:1). */
+  .btn-pdf { background:#4f46e5; color:#fff; border-color:#4f46e5; }
+  .btn-pdf:hover { background:#4338ca; }
+  .btn-csv { background:#047857; color:#fff; border-color:#047857; }
+  .btn-csv:hover { background:#036b4d; }
   .btn-clr { background:var(--surface); color:var(--muted); border-color:var(--border); }
 
   /* ── "Mais filtros" (agrupa filtros secundários) ────────── */
@@ -294,7 +302,8 @@ def _common_css() -> str:
        cursor:pointer; user-select:none; font-size:11px;
        text-transform:uppercase; letter-spacing:.5px; border-bottom:1px solid var(--border-2); }
   th:hover { color:var(--accent); }
-  th .si { margin-left:4px; color:var(--faint); font-size:10px; }
+  th .si { margin-left:5px; color:var(--muted); font-size:13px; vertical-align:middle; }
+  th:hover .si { color:var(--accent); }
   td { padding:9px 12px; vertical-align:middle; border-bottom:1px solid rgba(35,49,76,.6); white-space:nowrap; }
   tbody tr:nth-child(even) td { background:rgba(255,255,255,.012); }
   tbody tr:hover td { background:rgba(51,163,239,.06); }
@@ -440,6 +449,13 @@ def _common_css() -> str:
   .exec-recs li::before { content:'\\2192'; position:absolute; left:0; color:var(--accent); font-weight:700; }
   .exec-none { color:var(--green); font-size:13px; }
 
+  /* Accordion (recolhe seções secundárias p/ reduzir densidade) */
+  .acc > summary { cursor:pointer; list-style:none; display:flex; align-items:center; gap:8px;
+       font-size:12.5px; color:var(--accent); text-transform:uppercase; letter-spacing:.7px; font-weight:700; }
+  .acc > summary::-webkit-details-marker { display:none; }
+  .acc > summary::after { content:'\\25BE'; margin-left:auto; color:var(--muted); transition:transform .15s; }
+  .acc[open] > summary::after { transform:rotate(180deg); }
+  .acc[open] > summary { margin-bottom:12px; }
   .panel-pad { padding:18px 20px; }
   .panel-pad h2 { font-size:12.5px; color:var(--accent); text-transform:uppercase; letter-spacing:.7px;
                   margin-bottom:14px; display:flex; align-items:center; gap:8px; }
@@ -511,12 +527,12 @@ def _common_css() -> str:
   body.light .waf-NAO, body.light .cve-badge, body.light .dnssec-off, body.light .ssl-bad,
   body.light .whois-novo, body.light .whois-expd, body.light .b-crit { color:#be123c; }
   body.light .ip-PRIVADO, body.light .waf-SIM, body.light .dnssec-on, body.light .ssl-ok,
-  body.light .whois-estab, body.light .pill-ok, body.light .b-bai, body.light .btn-csv { color:#047857; }
+  body.light .whois-estab, body.light .pill-ok, body.light .b-bai { color:#047857; }
   body.light .ssl-warn, body.light .whois-recente, body.light .whois-exp, body.light .b-med { color:#a15c07; }
   body.light .b-alto { color:#c2570a; }
   body.light .ip-PUBLICO, body.light .origem-crtsh, body.light .us-link { color:#0369a1; }
   body.light .actions select { color:#0b5e96; }
-  body.light .camp-badge, body.light .btn-pdf, body.light .tor-badge { color:#4338ca; }
+  body.light .camp-badge, body.light .tor-badge { color:#4338ca; }
   body.light .origem-urlscan, body.light .us-seen { color:#7e22ce; }
   body.light .status-RECONHECIDO { color:#6d28d9; }
 
@@ -678,7 +694,9 @@ def _topbar(active: str) -> str:
         ("risk",        "/risk-guide.html",         "Guia de Risco"),
     ]
     links = "".join(
-        f'<a class="{"active" if key==active else ""}" href="{href}">{_NAV_ICONS.get(key,"")}{label}</a>'
+        f'<a class="{"active" if key==active else ""}" href="{href}"'
+        f'{" aria-current=\"page\"" if key==active else ""}>'
+        f'{_NAV_ICONS.get(key,"").replace("<svg", "<svg aria-hidden=\"true\"", 1)}{label}</a>'
         for key, href, label in items
     )
     # Breadcrumb: Início › <seção atual> — orientação secundária de localização.
@@ -708,7 +726,7 @@ def _topbar(active: str) -> str:
         "window.addEventListener('pageshow',function(){b.classList.remove('go');});})();"
         '</script>'
         '<div class="topbar">'
-        f'<a class="brand" href="/index.html" title="Início">{_logo_svg()}<span class="bwrap"><span class="bn">ARGUS</span>'
+        f'<a class="brand" href="/index.html" title="Início" aria-label="Argus — Início">{_logo_svg()}<span class="bwrap"><span class="bn">ARGUS</span>'
         f'<span class="sub">Attack Surface Management</span></span></a>'
         f'<nav class="nav">{links}</nav>'
         '<button class="nav-toggle" type="button" onclick="argusToggleNav()"'
@@ -790,7 +808,7 @@ def _donut(counts: dict, title: str = "Distribuição de Risco") -> str:
         )
 
     return (
-        '<div class="panel donut-card"><h3>' + title + '</h3><div class="donut-flex">'
+        '<div class="panel donut-card"><h2>' + title + '</h2><div class="donut-flex">'
         f'<svg class="donut" viewBox="0 0 120 120">{arcs}'
         f'<text class="tot" x="60" y="60" text-anchor="middle" dominant-baseline="central">{total}</text>'
         '<text class="totl" x="60" y="78" text-anchor="middle">ATIVOS</text></svg>'
@@ -1055,6 +1073,7 @@ function initColMenu(){
     var label=th.textContent.replace(/[⇅↑↓▲▼]/g,'').replace(/\s+/g,' ').trim()||('Coluna '+(i+1));
     var lab=document.createElement('label');
     var cb=document.createElement('input'); cb.type='checkbox'; cb.checked=hidden.indexOf(i)===-1;
+    cb.setAttribute('aria-label','Mostrar coluna '+label);
     cb.addEventListener('change',function(){
       if(cb.checked){ hidden=hidden.filter(function(x){return x!==i;}); }
       else if(hidden.indexOf(i)===-1){ hidden.push(i); }
@@ -1089,6 +1108,20 @@ function initScrollHints(){
   });
 }
 document.addEventListener('DOMContentLoaded', initScrollHints);
+
+// ── Acessibilidade de tabela: scope nos cabeçalhos + caption oculto p/ leitor de tela. ──
+function initTableA11y(){
+  document.querySelectorAll('.tbl-wrap table').forEach(function(t){
+    t.querySelectorAll('thead th').forEach(function(th){ if(!th.getAttribute('scope')) th.setAttribute('scope','col'); });
+    if(!t.querySelector('caption')){
+      var cap=document.createElement('caption'); cap.className='sr-only';
+      var h1=document.querySelector('h1.page-title');
+      cap.textContent='Tabela de '+((h1&&h1.textContent.trim())||'resultados')+'. Use as setas para navegar; clique nos cabeçalhos para ordenar.';
+      t.insertBefore(cap, t.firstChild);
+    }
+  });
+}
+document.addEventListener('DOMContentLoaded', initTableA11y);
 """
 
 
@@ -3563,6 +3596,13 @@ function camps(listId, arr, href){
   setTxt('ty-total',g(ty,'total')); setTxt('ty-crit',g(ty,'critico')); setTxt('ty-mx',g(ty,'com_mx'));
   setTxt('ty-when',ty?ty.now:'sem dados');
   camps('ty-camps',ty?ty.campanhas:[],'/typosquat_report.html');
+  // Estado do Dashboard: nenhum relatório gerado = 1ª execução pendente; relatórios
+  // gerados mas sem nenhum achado = superfície limpa; com achados = esconde os dois.
+  const anyReport = !!(mon||sub||cre||eml||fnd||ty);
+  const totalAll = assets + g(cre,'total') + g(eml,'total') + g(fnd,'total') + g(ty,'total');
+  const pend=document.getElementById('dash-empty'), cln=document.getElementById('dash-clean');
+  if(pend) pend.style.display = anyReport ? 'none' : 'flex';
+  if(cln)  cln.style.display  = (anyReport && totalAll===0) ? 'flex' : 'none';
 })();
 </script>"""
 
@@ -3575,11 +3615,12 @@ def build_dashboard() -> str:
         '<div class="kpi sev-med"><div class="v" id="k-med">&mdash;</div><div class="l">Médio</div></div>'
         '<div class="kpi"><div class="v" id="k-assets">&mdash;</div><div class="l">Ativos totais</div></div>'
         '<div class="kpi sev-novo"><div class="v" id="k-novos">&mdash;</div><div class="l">Novos</div></div>'
-        '<div class="kpi sev-abus"><div class="v" id="k-abus">&mdash;</div><div class="l">IPs Abusivos</div></div>'
+        '<div class="kpi sev-abus" title="IPs com reputação ruim no AbuseIPDB (denúncias de abuso) ou saída TOR">'
+        '<div class="v" id="k-abus">&mdash;</div><div class="l">IPs Abusivos</div></div>'
         '</div>'
     )
     sevbar = (
-        '<div class="panel donut-card"><h3>Distribuição de Risco</h3>'
+        '<div class="panel donut-card"><h2>Distribuição de Risco</h2>'
         '<div class="sbar" style="width:100%">'
         '<i id="sb-crit" style="background:var(--red);width:0"></i>'
         '<i id="sb-alto" style="background:var(--orange);width:0"></i>'
@@ -3616,13 +3657,14 @@ def build_dashboard() -> str:
         '<div class="kpi-grid" style="margin-bottom:14px">'
         '<div class="kpi"><div class="v" id="s-total">&mdash;</div><div class="l">Subdomínios</div></div>'
         '<div class="kpi sev-crit"><div class="v" id="s-crit">&mdash;</div><div class="l">Críticos</div></div>'
-        '<div class="kpi"><div class="v" id="s-us">&mdash;</div><div class="l">Visto urlscan</div></div></div>'
+        '<div class="kpi" title="Subdomínios já vistos em varreduras públicas do urlscan.io (descoberta passiva)">'
+        '<div class="v" id="s-us">&mdash;</div><div class="l">Visto urlscan</div></div></div>'
         '<div id="s-camps"><div class="empty">Carregando…</div></div>'
         '<a class="list-row" href="/submonitor_report.html" style="text-decoration:none;color:inherit;margin-top:10px">'
         '<span class="ic2">&#9656;</span><div><div class="nm">Ver relatório completo</div></div></a></div>'
     )
     sched = (
-        '<div class="panel panel-pad"><h2>&#x23F0; Agenda de Execução (cron)</h2>'
+        '<details class="panel panel-pad acc"><summary>&#x23F0; Agenda de Execução (cron)</summary>'
         '<div class="list-row"><span class="ic2">&#x1F5A5;</span><div>'
         '<div class="nm">argus-monitor <span class="pill-ok">ativo</span> <span class="badge">TCP</span></div>'
         '<div class="dt">Portas e serviços expostos &middot; diariamente às <b>10:00</b></div></div></div>'
@@ -3652,10 +3694,10 @@ def build_dashboard() -> str:
         'argus-credentials          # /etc/argus/credentials/credentials.py\n'
         'argus-email                # /etc/argus/email/emailauth.py\n'
         'argus-typosquat            # /etc/argus/typosquat/typosquat.py (dnstwist)</pre></details>'
-        '</div>'
+        '</details>'
     )
     info = (
-        '<div class="panel panel-pad"><h2>&#x2139;&#xFE0F; Bases &amp; Logs</h2>'
+        '<details class="panel panel-pad acc"><summary>&#x2139;&#xFE0F; Bases &amp; Logs</summary>'
         '<div class="list-row"><span class="ic2">&#x1F5C4;</span><div><div class="nm">Bancos SQLite</div>'
         '<div class="dt"><b>argus.db</b> (Gestão de Achados · store central) · monitor.db · submonitor.db · '
         'credentials.db · email.db · typosquat.db · threatintel.db (cache 48h) · intel.db '
@@ -3664,7 +3706,7 @@ def build_dashboard() -> str:
         '<abbr title="RFC 5424 — formato padrão de mensagens syslog (timestamp, severidade, host, app, dados estruturados)">RFC 5424</abbr></div>'
         '<div class="dt">/var/log/argus/{monitor · submonitor · credentials · email · typosquat}</div></div></div>'
         '<div class="list-row"><span class="ic2">&#x1F310;</span><div><div class="nm">Serviço Web (ações de achados)</div>'
-        '<div class="dt">argus-web (Flask) atrás do Apache &middot; acesso por HTTPS com autenticação</div></div></div></div>'
+        '<div class="dt">argus-web (Flask) atrás do Apache &middot; acesso por HTTPS com autenticação</div></div></div></details>'
     )
     cred_panel = (
         '<div class="panel panel-pad">'
@@ -3682,7 +3724,8 @@ def build_dashboard() -> str:
         f'<h2>{_NAV_ICONS["email"]} Postura de E-mail <span class="badge" id="e-when">&mdash;</span></h2>'
         '<div class="kpi-grid" style="margin-bottom:14px">'
         '<div class="kpi"><div class="v" id="e-total">&mdash;</div><div class="l">Domínios</div></div>'
-        '<div class="kpi sev-crit"><div class="v" id="e-spoof">&mdash;</div><div class="l">Spoofáveis</div></div>'
+        '<div class="kpi sev-crit" title="Domínios sem proteção anti-falsificação (SPF/DMARC fracos) — podem ser usados para forjar e-mails em seu nome">'
+        '<div class="v" id="e-spoof">&mdash;</div><div class="l">Spoofáveis</div></div>'
         '<div class="kpi sev-alto"><div class="v" id="e-nodmarc">&mdash;</div><div class="l">Sem DMARC</div></div></div>'
         '<div id="e-camps"><div class="empty">Carregando…</div></div>'
         '<a class="list-row" href="/email_report.html" style="text-decoration:none;color:inherit;margin-top:10px">'
@@ -3715,7 +3758,27 @@ def build_dashboard() -> str:
     )
     sources = ('<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:16px">'
                + findings_panel + mon_panel + sub_panel + cred_panel + email_panel + typo_panel + '</div>')
-    body = summary + '\n' + sources + '\n' \
+    # Estado vazio do Dashboard (mesmo padrão das páginas internas): desfaz a ambiguidade
+    # "zero por falta de coleta" × "zero por ausência de risco". JS ajusta após carregar.
+    banner = (
+        '<div id="dash-empty" class="panel panel-pad" style="border-left:3px solid var(--accent);'
+        'margin-bottom:16px;display:flex;gap:14px;align-items:flex-start">'
+        '<span style="font-size:22px" aria-hidden="true">&#x23F3;</span>'
+        '<div><div style="font-weight:700;font-size:15px;color:var(--text);margin-bottom:4px">Primeira execução pendente</div>'
+        '<div style="color:var(--muted);font-size:13px;line-height:1.6">O Argus ainda não coletou dados. Os scans rodam '
+        'automaticamente (Portas <b>10:00</b>, Subdomínios <b>12:00</b>, E-mail <b>13:00</b>, Credenciais <b>14:00</b>, '
+        'Typosquat domingos <b>05:00</b>). <b>Os zeros abaixo significam &ldquo;ainda sem coleta&rdquo;, não &ldquo;ausência '
+        'de risco&rdquo;.</b> Para ver agora, rode no servidor: <code>sudo argus-monitor --tcp</code>.</div></div></div>'
+    )
+    clean = (
+        '<div id="dash-clean" class="panel panel-pad" style="display:none;border-left:3px solid var(--green);'
+        'margin-bottom:16px;gap:14px;align-items:flex-start">'
+        '<span style="font-size:22px" aria-hidden="true">&#x2705;</span>'
+        '<div><div style="font-weight:700;font-size:15px;color:var(--text);margin-bottom:4px">Nenhum achado até agora</div>'
+        '<div style="color:var(--muted);font-size:13px;line-height:1.6">Os scans já rodaram e <b>não encontraram exposições</b> '
+        'na superfície monitorada. Os zeros abaixo refletem ausência de risco, não falta de dados.</div></div></div>'
+    )
+    body = banner + clean + summary + '\n' + sources + '\n' \
         + '<div class="grid-2" style="margin-top:16px">' + sched + info + '</div>'
     return _portal_shell("dashboard", "Dashboard",
                          "Visão consolidada da superfície de ataque: portas, subdomínios, "
