@@ -118,7 +118,7 @@ def _common_css() -> str:
   :root {
     --bg:#070c16; --bg-grad:radial-gradient(1150px 580px at 78% -12%, #122747 0%, #070c16 58%);
     --surface:#0f1827; --surface-2:#152237; --border:#223450; --border-2:#324563;
-    --text:#e8f0fb; --muted:#8a99b4; --faint:#5e6e8c; --accent:#33a3ef; --accent-2:#818cf8;
+    --text:#e8f0fb; --muted:#a7b4cc; --faint:#7886a3; --accent:#33a3ef; --accent-2:#818cf8;
     --steel:#cbdaec; --steel-2:#9db2cd;
     --red:#f43f5e; --orange:#fb923c; --yellow:#fbbf24; --green:#34d399; --pink:#f472b6;
     --radius:10px; --radius-sm:7px;
@@ -132,6 +132,10 @@ def _common_css() -> str:
   code, .mono { font-family:var(--mono); }
   a { color:var(--accent); }
   abbr[title] { text-decoration:underline dotted; text-underline-offset:2px; cursor:help; }
+  /* Skip link (acessibilidade): oculto até receber foco via teclado. */
+  .skip-link { position:absolute; left:-9999px; top:0; z-index:100; background:var(--accent); color:#04121f;
+       padding:10px 16px; border-radius:0 0 8px 0; font-weight:700; font-size:13px; text-decoration:none; }
+  .skip-link:focus { left:0; }
 
   /* ── Barra de progresso de navegação (feedback de carregamento) ── */
   #navprog { position:fixed; top:0; left:0; height:3px; width:0; z-index:60;
@@ -150,13 +154,20 @@ def _common_css() -> str:
   .brand .bn { font-weight:800; font-size:16px; letter-spacing:2.4px;
                background:linear-gradient(180deg,var(--steel) 30%,var(--steel-2)); -webkit-background-clip:text;
                background-clip:text; color:transparent; }
-  .brand .sub { color:var(--accent); font-weight:700; font-size:8.5px; text-transform:uppercase; letter-spacing:2px; opacity:.9; }
+  .brand .sub { color:var(--accent); font-weight:700; font-size:10px; text-transform:uppercase; letter-spacing:1.6px; opacity:.95; }
   .nav { display:flex; gap:4px; flex:1; flex-wrap:wrap; }
   .nav a { display:inline-flex; align-items:center; gap:7px; padding:8px 13px; border-radius:var(--radius-sm);
            color:var(--muted); text-decoration:none; font-size:13px; font-weight:600; transition:.15s; }
   .nav a:hover { color:var(--text); background:var(--surface); }
-  .nav a.active { color:var(--accent); background:rgba(51,163,239,.10); box-shadow:inset 0 0 0 1px rgba(51,163,239,.25); }
+  .nav a.active { color:var(--accent); font-weight:700; background:rgba(51,163,239,.16);
+                  box-shadow:inset 0 0 0 1px rgba(51,163,239,.4), inset 0 -2px 0 var(--accent); }
+  body.light .nav a.active { background:rgba(23,105,192,.14); box-shadow:inset 0 0 0 1px rgba(23,105,192,.45), inset 0 -2px 0 var(--accent); }
   .nav a svg { width:15px; height:15px; opacity:.85; }
+  /* Botão hambúrguer — só aparece no mobile (ver media query no fim do CSS). */
+  .nav-toggle { display:none; flex:none; width:44px; height:44px; align-items:center; justify-content:center;
+       border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:var(--radius-sm); cursor:pointer; }
+  .nav-toggle svg { width:20px; height:20px; }
+  .nav-toggle:hover { color:var(--accent); border-color:var(--accent); }
   .topbar-meta { color:var(--faint); font-size:11.5px; text-align:right; white-space:nowrap; }
   .topbar-meta b { color:var(--muted); font-weight:600; }
   /* ── Breadcrumb (trilha de localização) ──────────────── */
@@ -187,7 +198,7 @@ def _common_css() -> str:
   .kpi { background:linear-gradient(180deg,var(--surface),var(--surface-2)); padding:15px 16px; position:relative; }
   .kpi::before { content:''; position:absolute; left:0; top:14px; bottom:14px; width:3px; border-radius:3px; background:var(--border-2); }
   .kpi .v { font-size:25px; font-weight:800; line-height:1; letter-spacing:-.5px; }
-  .kpi .l { font-size:10.5px; color:var(--muted); margin-top:6px; text-transform:uppercase; letter-spacing:.7px; }
+  .kpi .l { font-size:11.5px; color:var(--muted); margin-top:6px; text-transform:uppercase; letter-spacing:.5px; }
   .kpi.sev-crit::before{ background:var(--red); }    .kpi.sev-crit .v{ color:var(--red); }
   .kpi.sev-alto::before{ background:var(--orange); } .kpi.sev-alto .v{ color:var(--orange); }
   .kpi.sev-med::before{ background:var(--yellow); }  .kpi.sev-med .v{ color:var(--yellow); }
@@ -200,7 +211,7 @@ def _common_css() -> str:
   .donut-flex { display:flex; align-items:center; gap:16px; width:100%; }
   .donut { width:120px; height:120px; flex:none; }
   .donut .tot { font-size:24px; font-weight:800; fill:var(--text); }
-  .donut .totl { font-size:8px; fill:var(--muted); letter-spacing:1.5px; }
+  .donut .totl { font-size:9.5px; fill:var(--muted); letter-spacing:1px; }
   .legend { display:flex; flex-direction:column; gap:7px; font-size:12px; }
   .legend-item { display:flex; align-items:center; gap:8px; color:var(--muted); }
   .legend-item .dot { width:9px; height:9px; border-radius:3px; flex:none; }
@@ -277,6 +288,8 @@ def _common_css() -> str:
   .scroll-hint { display:none; font-size:11px; font-weight:600; color:var(--accent); margin:6px 2px 0; align-items:center; gap:6px; }
   .scroll-hint.show { display:inline-flex; }
   table { width:100%; border-collapse:separate; border-spacing:0; font-size:12.5px; }
+  /* Em telas estreitas, a tabela de dados rola na horizontal (não esmaga colunas). */
+  .tbl-wrap table { min-width:680px; }
   th { background:#0e1727; color:var(--muted); padding:11px 12px; text-align:left; white-space:nowrap;
        cursor:pointer; user-select:none; font-size:11px;
        text-transform:uppercase; letter-spacing:.5px; border-bottom:1px solid var(--border-2); }
@@ -419,7 +432,7 @@ def _common_css() -> str:
   .exec-lead b { color:var(--red); }
   .exec-grid { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
   @media (max-width:820px){ .exec-grid { grid-template-columns:1fr; } }
-  .exec-grid h3 { font-size:10.5px; color:var(--muted); text-transform:uppercase; letter-spacing:.6px; margin-bottom:9px; }
+  .exec-grid h3 { font-size:11.5px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; margin-bottom:9px; }
   .exec-risks, .exec-recs { list-style:none; display:flex; flex-direction:column; gap:7px; }
   .exec-risks li { font-size:12.5px; color:var(--text); }
   .exec-risks .sv { font-weight:800; margin-right:7px; font-size:11px; }
@@ -441,7 +454,7 @@ def _common_css() -> str:
   .flow { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:14px 0; padding:14px;
           background:var(--bg); border:1px solid var(--border); border-radius:var(--radius); font-size:12px; }
   .flow-step { background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:8px 14px; text-align:center; min-width:120px; }
-  .flow-step .l { font-size:10px; color:var(--muted); margin-bottom:2px; text-transform:uppercase; letter-spacing:.5px; }
+  .flow-step .l { font-size:11px; color:var(--muted); margin-bottom:2px; text-transform:uppercase; letter-spacing:.4px; }
   .flow-step .v { font-weight:700; color:var(--text); }
   .flow-step.res { background:rgba(51,163,239,.10); border-color:rgba(51,163,239,.3); }
   .flow-step.res .v { color:var(--accent); }
@@ -506,6 +519,22 @@ def _common_css() -> str:
   body.light .camp-badge, body.light .btn-pdf, body.light .tor-badge { color:#4338ca; }
   body.light .origem-urlscan, body.light .us-seen { color:#7e22ce; }
   body.light .status-RECONHECIDO { color:#6d28d9; }
+
+  /* ── Responsivo: navegação colapsável (mobile/tablet) ──── */
+  @media (max-width:820px) {
+    .nav-toggle { display:inline-flex; margin-left:auto; }
+    .nav { display:none; position:absolute; top:100%; left:0; right:0; flex-direction:column; gap:2px;
+           background:rgba(8,12,22,.98); backdrop-filter:blur(10px); border-bottom:1px solid var(--border);
+           padding:8px; z-index:30; max-height:calc(100vh - 58px); overflow:auto; }
+    .nav.open { display:flex; }
+    .nav a { min-height:44px; padding:12px 14px; font-size:14px; }
+    body.light .nav { background:rgba(244,247,251,.98); }
+    .topbar { gap:12px; padding:0 16px; }
+    .wrap { padding:18px 16px 48px; }
+    .breadcrumb { padding:9px 16px 0; }
+    .summary { grid-template-columns:1fr; }
+    .page-head { flex-direction:column; align-items:flex-start; }
+  }
 
   @media print {
     body { background:#fff !important; color:#000 !important; font-size:11px; }
@@ -660,11 +689,15 @@ def _topbar(active: str) -> str:
         + '</div>'
     ) if _cur_label else ""
     return (
+        '<a class="skip-link" href="#conteudo">Pular para o conteúdo</a>'
         '<div id="navprog"></div>'
         '<script>'
         "(function(){try{if(localStorage.getItem('argus-theme')==='light')document.body.classList.add('light');}catch(e){}})();"
         "function argusToggleTheme(){var l=document.body.classList.toggle('light');"
         "try{localStorage.setItem('argus-theme',l?'light':'dark');}catch(e){}}"
+        "function argusToggleNav(){var n=document.querySelector('.nav');if(!n)return;"
+        "var o=n.classList.toggle('open');var b=document.querySelector('.nav-toggle');"
+        "if(b)b.setAttribute('aria-expanded',o?'true':'false');}"
         # Feedback de carregamento: ao navegar para outra página, anima a barra do topo.
         "(function(){var b=document.getElementById('navprog');if(!b)return;function go(){b.classList.add('go');}"
         "window.addEventListener('beforeunload',go);"
@@ -678,6 +711,11 @@ def _topbar(active: str) -> str:
         f'<a class="brand" href="/index.html" title="Início">{_logo_svg()}<span class="bwrap"><span class="bn">ARGUS</span>'
         f'<span class="sub">Attack Surface Management</span></span></a>'
         f'<nav class="nav">{links}</nav>'
+        '<button class="nav-toggle" type="button" onclick="argusToggleNav()"'
+        ' aria-label="Abrir menu de navegação" aria-expanded="false">'
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">'
+        '<line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>'
+        '</button>'
         '<button class="theme-toggle" type="button" onclick="argusToggleTheme()"'
         ' title="Tema claro/escuro" aria-label="Alternar tema claro ou escuro">'
         '<svg class="ic-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"'
@@ -1155,18 +1193,18 @@ def generate_monitor_report(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Argus · Monitor de Superfície Exposta</title>
+<title>Argus · Monitor de Portas</title>
 <link rel="icon" type="image/svg+xml" href="{_FAVICON}">
 <style>{css}</style>
 </head>
 <body>
 {topbar}
 <script id="exm-kpis" type="application/json">{kpi_json}</script>
-<div class="wrap">
+<div class="wrap" id="conteudo" role="main">
 
 <div class="page-head">
   <div>
-    <div class="page-title">Monitor de Superfície Exposta <span class="chip">{intel_badge}</span></div>
+    <h1 class="page-title">Monitor de Portas <span class="chip">{intel_badge}</span></h1>
     <div class="page-sub">Portas e serviços expostos &middot; última verificação: {now}</div>
   </div>
   <div class="actions no-print">
@@ -1196,7 +1234,7 @@ def generate_monitor_report(
 </div>
 
 <div class="toolbar no-print">
-  <input type="text" id="q" placeholder="&#x1F50D;  Busca (IP, target, servico, banner, ASN, ISP...)" oninput="applyFilters()">
+  <input type="text" id="q" aria-label="Buscar na tabela" placeholder="&#x1F50D;  Busca (IP, target, serviço, banner, ASN, ISP...)" oninput="applyFilters()">
   <select id="f-camp"   onchange="applyFilters()"><option value="">Todas as Campanhas</option></select>
   <select id="f-risk"   onchange="applyFilters()">
     <option value="">Todos os Riscos</option>
@@ -1208,8 +1246,8 @@ def generate_monitor_report(
   </select>
   <details class="morefilters no-print"><summary>&#x2699; Mais filtros</summary><div class="morefilters-body">
   <select id="f-iptype" onchange="applyFilters()">
-    <option value="">Publico e Privado</option>
-    <option value="PUBLICO">Publico</option>
+    <option value="">Público e Privado</option>
+    <option value="PUBLICO">Público</option>
     <option value="PRIVADO">Privado</option>
   </select>
   <select id="f-proto"  onchange="applyFilters()">
@@ -1217,7 +1255,7 @@ def generate_monitor_report(
     <option>tcp</option><option>udp</option>
   </select>
   <select id="f-abuse"  onchange="applyFilters()">
-    <option value="">Todos (reputacao)</option>
+    <option value="">Todos (reputação)</option>
     <option value="any">Com dados AbuseIPDB</option>
     <option value="clean">Score 0 (limpo)</option>
     <option value="low">Score 1-25</option>
@@ -1232,10 +1270,10 @@ def generate_monitor_report(
     <option value="nao">Sem CVE</option>
   </select>
   </div></details>
-  <select id="pgsize"   onchange="changePageSize()">
-    <option value="50">50 por pagina</option>
-    <option value="100">100 por pagina</option>
-    <option value="250">250 por pagina</option>
+  <select id="pgsize"   aria-label="Itens por página" onchange="changePageSize()">
+    <option value="50">50 por página</option>
+    <option value="100">100 por página</option>
+    <option value="250">250 por página</option>
     <option value="0">Todos</option>
   </select>
   <button class="btn btn-clr" onclick="clearFilters()">&#x2715; Limpar</button>
@@ -1535,18 +1573,18 @@ def generate_submonitor_report(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Argus · Subdomain Monitor</title>
+<title>Argus · Monitor de Subdomínios</title>
 <link rel="icon" type="image/svg+xml" href="{_FAVICON}">
 <style>{css}</style>
 </head>
 <body>
 {topbar}
 <script id="exm-kpis" type="application/json">{kpi_json}</script>
-<div class="wrap">
+<div class="wrap" id="conteudo" role="main">
 
 <div class="page-head">
   <div>
-    <div class="page-title">Subdomain Monitor <span class="chip">{intel_badge}</span></div>
+    <h1 class="page-title">Monitor de Subdomínios <span class="chip">{intel_badge}</span></h1>
     <div class="page-sub">Subdomínios ativos e seus riscos &middot; última verificação: {now}</div>
   </div>
   <div class="actions no-print">
@@ -1576,7 +1614,7 @@ def generate_submonitor_report(
 </div>
 
 <div class="toolbar no-print">
-  <input type="text" id="q" placeholder="&#x1F50D;  Busca (hostname, IP, ASN, ISP...)" oninput="applyFilters()">
+  <input type="text" id="q" aria-label="Buscar na tabela" placeholder="&#x1F50D;  Busca (hostname, IP, ASN, ISP...)" oninput="applyFilters()">
   <select id="f-camp"   onchange="applyFilters()"><option value="">Todas as Campanhas</option></select>
   <select id="f-env"    onchange="applyFilters()">
     <option value="">Todos Ambientes</option>
@@ -1592,8 +1630,8 @@ def generate_submonitor_report(
   </select>
   <details class="morefilters no-print"><summary>&#x2699; Mais filtros</summary><div class="morefilters-body">
   <select id="f-ipt"    onchange="applyFilters()">
-    <option value="">Publico e Privado</option>
-    <option value="PUBLICO">Publico</option>
+    <option value="">Público e Privado</option>
+    <option value="PUBLICO">Público</option>
     <option value="PRIVADO">Privado</option>
   </select>
   <select id="f-waf"    onchange="applyFilters()">
@@ -1633,7 +1671,7 @@ def generate_submonitor_report(
     <option>401</option><option>403</option><option>404</option><option>500</option><option>-</option>
   </select>
   <select id="f-abuse"  onchange="applyFilters()">
-    <option value="">Todos (reputacao)</option>
+    <option value="">Todos (reputação)</option>
     <option value="any">Com dados AbuseIPDB</option>
     <option value="clean">Score 0 (limpo)</option>
     <option value="low">Score 1-25</option>
@@ -1643,10 +1681,10 @@ def generate_submonitor_report(
     <option value="tor">Node TOR</option>
   </select>
   </div></details>
-  <select id="pgsize"   onchange="changePageSize()">
-    <option value="50">50 por pagina</option>
-    <option value="100">100 por pagina</option>
-    <option value="250">250 por pagina</option>
+  <select id="pgsize"   aria-label="Itens por página" onchange="changePageSize()">
+    <option value="50">50 por página</option>
+    <option value="100">100 por página</option>
+    <option value="250">250 por página</option>
     <option value="0">Todos</option>
   </select>
   <button class="btn btn-clr" onclick="clearFilters()">&#x2715; Limpar</button>
@@ -1996,18 +2034,18 @@ def generate_credentials_report(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Argus · Credential Exposure</title>
+<title>Argus · Exposição de Credenciais</title>
 <link rel="icon" type="image/svg+xml" href="{_FAVICON}">
 <style>{css}</style>
 </head>
 <body>
 {topbar}
 <script id="exm-kpis" type="application/json">{kpi_json}</script>
-<div class="wrap">
+<div class="wrap" id="conteudo" role="main">
 
 <div class="page-head">
   <div>
-    <div class="page-title">Credential Exposure <span class="chip">infostealer · Hudson Rock</span></div>
+    <h1 class="page-title">Exposição de Credenciais <span class="chip">infostealer · Hudson Rock</span></h1>
     <div class="page-sub">Exposição de credenciais em logs de infostealer (agregado por domínio) &middot; última verificação: {now}</div>
   </div>
   <div class="actions no-print">
@@ -2036,7 +2074,7 @@ def generate_credentials_report(
 </div>
 
 <div class="toolbar no-print">
-  <input type="text" id="q" placeholder="&#x1F50D;  Busca (domínio, campanha, app...)" oninput="applyFilters()">
+  <input type="text" id="q" aria-label="Buscar na tabela" placeholder="&#x1F50D;  Busca (domínio, campanha, app...)" oninput="applyFilters()">
   <select id="f-camp" onchange="applyFilters()"><option value="">Todas as Campanhas</option></select>
   <select id="f-risk" onchange="applyFilters()">
     <option value="">Todos os Riscos</option>
@@ -2051,9 +2089,9 @@ def generate_credentials_report(
     <option value="sim">Só comprometidos</option>
     <option value="nao">Só limpos</option>
   </select>
-  <select id="pgsize" onchange="changePageSize()">
-    <option value="50">50 por pagina</option><option value="100">100 por pagina</option>
-    <option value="250">250 por pagina</option><option value="0">Todos</option>
+  <select id="pgsize" aria-label="Itens por página" onchange="changePageSize()">
+    <option value="50">50 por página</option><option value="100">100 por página</option>
+    <option value="250">250 por página</option><option value="0">Todos</option>
   </select>
   <button class="btn btn-clr" onclick="clearFilters()">&#x2715; Limpar</button>
   <details class="colmenu no-print"><summary>&#x25A6; Colunas</summary><div class="colmenu-body" id="colmenu-body"></div></details>
@@ -2301,11 +2339,11 @@ def generate_email_report(
 <body>
 {topbar}
 <script id="exm-kpis" type="application/json">{kpi_json}</script>
-<div class="wrap">
+<div class="wrap" id="conteudo" role="main">
 
 <div class="page-head">
   <div>
-    <div class="page-title">Postura de E-mail <span class="chip">SPF · DMARC · DKIM</span></div>
+    <h1 class="page-title">Postura de E-mail <span class="chip">SPF · DMARC · DKIM</span></h1>
     <div class="page-sub">Anti-spoofing por domínio (autenticação de e-mail) &middot; última verificação: {now}</div>
   </div>
   <div class="actions no-print">
@@ -2334,7 +2372,7 @@ def generate_email_report(
 </div>
 
 <div class="toolbar no-print">
-  <input type="text" id="q" placeholder="&#x1F50D;  Busca (domínio, campanha, problema...)" oninput="applyFilters()">
+  <input type="text" id="q" aria-label="Buscar na tabela" placeholder="&#x1F50D;  Busca (domínio, campanha, problema...)" oninput="applyFilters()">
   <select id="f-camp" onchange="applyFilters()"><option value="">Todas as Campanhas</option></select>
   <select id="f-risk" onchange="applyFilters()">
     <option value="">Todos os Riscos</option>
@@ -2349,9 +2387,9 @@ def generate_email_report(
     <option value="sim">Com MX</option>
     <option value="nao">Sem MX</option>
   </select>
-  <select id="pgsize" onchange="changePageSize()">
-    <option value="50">50 por pagina</option><option value="100">100 por pagina</option>
-    <option value="250">250 por pagina</option><option value="0">Todos</option>
+  <select id="pgsize" aria-label="Itens por página" onchange="changePageSize()">
+    <option value="50">50 por página</option><option value="100">100 por página</option>
+    <option value="250">250 por página</option><option value="0">Todos</option>
   </select>
   <button class="btn btn-clr" onclick="clearFilters()">&#x2715; Limpar</button>
   <details class="colmenu no-print"><summary>&#x25A6; Colunas</summary><div class="colmenu-body" id="colmenu-body"></div></details>
@@ -2524,13 +2562,13 @@ def _portal_shell(active: str, title: str, subtitle: str, body: str,
     if show_head:
         page_head = (
             '<div class="page-head"><div>'
-            f'<div class="page-title">{title}</div>'
+            f'<h1 class="page-title">{title}</h1>'
             f'<div class="page-sub">{subtitle}</div>'
             '</div></div>\n'
         )
     return (
-        head + _topbar(active) + '\n<div class="wrap">\n'
-        + page_head + body + '\n' + _footer() + '\n</div>\n'
+        head + _topbar(active) + '\n<main class="wrap" id="conteudo">\n'
+        + page_head + body + '\n' + _footer() + '\n</main>\n'
         + extra_script + '\n</body>\n</html>\n'
     )
 
@@ -2643,11 +2681,11 @@ def generate_typosquat_report(
 <body>
 {topbar}
 <script id="exm-kpis" type="application/json">{kpi_json}</script>
-<div class="wrap">
+<div class="wrap" id="conteudo" role="main">
 
 <div class="page-head">
   <div>
-    <div class="page-title">Typosquat <span class="chip">dnstwist · homoglyph</span></div>
+    <h1 class="page-title">Typosquat <span class="chip">dnstwist · homoglyph</span></h1>
     <div class="page-sub">Domínios sósia registrados (typosquatting / abuso de marca) &middot; última verificação: {now}</div>
   </div>
   <div class="actions no-print">
@@ -2676,7 +2714,7 @@ def generate_typosquat_report(
 </div>
 
 <div class="toolbar no-print">
-  <input type="text" id="q" placeholder="&#x1F50D;  Busca (sósia, base, técnica, IP...)" oninput="applyFilters()">
+  <input type="text" id="q" aria-label="Buscar na tabela" placeholder="&#x1F50D;  Busca (sósia, base, técnica, IP...)" oninput="applyFilters()">
   <select id="f-camp" onchange="applyFilters()"><option value="">Todas as Campanhas</option></select>
   <select id="f-risk" onchange="applyFilters()">
     <option value="">Todos os Riscos</option>
@@ -2699,9 +2737,9 @@ def generate_typosquat_report(
     <option value="EXPIRANDO">Expirando</option>
     <option value="EXPIRADO">Expirado</option>
   </select>
-  <select id="pgsize" onchange="changePageSize()">
-    <option value="50">50 por pagina</option><option value="100">100 por pagina</option>
-    <option value="250">250 por pagina</option><option value="0">Todos</option>
+  <select id="pgsize" aria-label="Itens por página" onchange="changePageSize()">
+    <option value="50">50 por página</option><option value="100">100 por página</option>
+    <option value="250">250 por página</option><option value="0">Todos</option>
   </select>
   <button class="btn btn-clr" onclick="clearFilters()">&#x2715; Limpar</button>
   <details class="colmenu no-print"><summary>&#x25A6; Colunas</summary><div class="colmenu-body" id="colmenu-body"></div></details>
@@ -3081,15 +3119,15 @@ def generate_findings_report(snapshot: dict, output_path: str = "findings_report
 <body>
 {topbar}
 <script id="exm-kpis" type="application/json">{kpi_json}</script>
-<div class="wrap">
+<div class="wrap" id="conteudo" role="main">
 
 <div class="page-head">
   <div>
-    <div class="page-title">Gestão de Achados <span class="chip">ISO 27001 · CIS · rastreável</span></div>
+    <h1 class="page-title">Gestão de Achados <span class="chip">ISO 27001 · CIS · rastreável</span></h1>
     <div class="page-sub">Ciclo de vida dos achados (status, tratativas, evidências) &middot; atualizado em: {now}</div>
   </div>
   <div class="actions no-print">
-    <button class="btn btn-pdf" onclick="window.print()">Exportar PDF</button>
+    <button class="btn btn-pdf" onclick="exportPDF()">Exportar PDF</button>
     <button class="btn btn-csv" onclick="exportCSV()">Exportar CSV</button>
   </div>
 </div>
@@ -3110,29 +3148,29 @@ def generate_findings_report(snapshot: dict, output_path: str = "findings_report
 </div>
 
 <div class="toolbar no-print">
-  <input type="text" id="q" placeholder="&#x1F50D;  Busca (achado, categoria, campanha, id...)" oninput="applyFilters()">
-  <select id="f-source" onchange="applyFilters()">
+  <input type="text" id="q" aria-label="Buscar achados" placeholder="&#x1F50D;  Busca (achado, categoria, campanha, id...)" oninput="applyFilters()">
+  <select id="f-source" aria-label="Filtrar por fonte" onchange="applyFilters()">
     <option value="">Todas as Fontes</option>
     <option value="monitor">Portas</option><option value="submonitor">Subdomínios</option>
     <option value="credentials">Credenciais</option><option value="email">E-mail</option><option value="typosquat">Typosquat</option>
   </select>
-  <select id="f-sev" onchange="applyFilters()">
+  <select id="f-sev" aria-label="Filtrar por severidade" onchange="applyFilters()">
     <option value="">Todas as Severidades</option>
     <option>CRITICO</option><option>ALTO</option><option>MEDIO</option><option>BAIXO</option><option>INFO</option>
   </select>
-  <select id="f-status" onchange="applyFilters()">
+  <select id="f-status" aria-label="Filtrar por estado" onchange="applyFilters()">
     <option value="">Todos os Estados</option>
     {status_opts}
   </select>
-  <select id="f-active" onchange="applyFilters()">
+  <select id="f-active" aria-label="Filtrar por observação" onchange="applyFilters()">
     <option value="">Observação (todas)</option>
     <option value="1">Ativo (observado)</option>
     <option value="0">Não observado</option>
   </select>
-  <select id="f-camp" onchange="applyFilters()"><option value="">Todas as Campanhas</option></select>
-  <select id="pgsize" onchange="changePageSize()">
-    <option value="50">50 por pagina</option><option value="100">100 por pagina</option>
-    <option value="250">250 por pagina</option><option value="0">Todos</option>
+  <select id="f-camp" aria-label="Filtrar por campanha" onchange="applyFilters()"><option value="">Todas as Campanhas</option></select>
+  <select id="pgsize" aria-label="Itens por página" onchange="changePageSize()">
+    <option value="50">50 por página</option><option value="100">100 por página</option>
+    <option value="250">250 por página</option><option value="0">Todos</option>
   </select>
   <button class="btn btn-clr" onclick="clearFilters()">&#x2715; Limpar</button>
   <details class="colmenu no-print"><summary>&#x25A6; Colunas</summary><div class="colmenu-body" id="colmenu-body"></div></details>
@@ -3367,7 +3405,9 @@ function exportCSV(){{
   const blob=new Blob([[cols.join(','),...rows].join('\\n')],{{type:'text/csv;charset=utf-8;'}});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);
   a.download='findings_'+new Date().toISOString().slice(0,10)+'.csv';a.click();
+  _toast('CSV exportado: '+rows.length+' linha(s)',true);
 }}
+function exportPDF(){{ _toast('Abrindo diálogo de impressão/PDF…',true); setTimeout(function(){{window.print();}},120); }}
 async function hydrate(){{
   // Ao carregar, busca os achados frescos do banco via API (se o serviço estiver
   // no ar) — assim a página SEMPRE reflete o estado real, mesmo que a regeneração
@@ -3429,15 +3469,15 @@ def build_index() -> str:
          "Ciclo de vida dos achados: status, triagem, tratativas e evidências (auditado)."),
         ("monitor",    "/monitor_report.html",    "Monitor de Portas",
          "Superfície exposta — IPs e portas abertas, com risco e reputação AbuseIPDB."),
-        ("submonitor", "/submonitor_report.html", "Subdomain Monitor",
+        ("submonitor", "/submonitor_report.html", "Monitor de Subdomínios",
          "Subdomínios ativos, ambiente, WAF/CDN, SSL, urlscan.io e RDAP/WHOIS."),
-        ("credentials","/credentials_report.html","Credential Exposure",
+        ("credentials","/credentials_report.html","Exposição de Credenciais",
          "Exposição de credenciais em logs de infostealer (Hudson Rock)."),
         ("email",      "/email_report.html",      "Postura de E-mail",
          "Anti-spoofing por domínio — SPF, DMARC e DKIM (autenticação de e-mail)."),
         ("typosquat",  "/typosquat_report.html",  "Typosquat",
          "Domínios sósia registrados (typosquatting/homoglyph, dnstwist) — risco de phishing."),
-        ("risk",       "/risk-guide.html",        "Guia de Classificação de Risco",
+        ("risk",       "/risk-guide.html",        "Guia de Risco",
          "Como o risco é calculado em cada camada do Risk Engine."),
     ]
     hub = '<div class="hub-grid">' + "".join(
@@ -3454,7 +3494,7 @@ def build_index() -> str:
     hero = (
         '<div class="hero-center">'
         f'<div class="logo-xl">{_logo_svg(94)}</div>'
-        '<div class="wordmark">ARGUS</div>'
+        '<h1 class="wordmark">ARGUS</h1>'
         '<div class="hero-tag">Attack Surface Management</div>'
         '<p class="slogan">See everything. <b>Secure what matters.</b></p>'
         + pillars_html +
@@ -3572,7 +3612,7 @@ def build_dashboard() -> str:
     )
     sub_panel = (
         '<div class="panel panel-pad">'
-        f'<h2>{_NAV_ICONS["submonitor"]} Subdomain Monitor <span class="badge" id="s-when">&mdash;</span></h2>'
+        f'<h2>{_NAV_ICONS["submonitor"]} Monitor de Subdomínios <span class="badge" id="s-when">&mdash;</span></h2>'
         '<div class="kpi-grid" style="margin-bottom:14px">'
         '<div class="kpi"><div class="v" id="s-total">&mdash;</div><div class="l">Subdomínios</div></div>'
         '<div class="kpi sev-crit"><div class="v" id="s-crit">&mdash;</div><div class="l">Críticos</div></div>'
@@ -3618,15 +3658,17 @@ def build_dashboard() -> str:
         '<div class="panel panel-pad"><h2>&#x2139;&#xFE0F; Bases &amp; Logs</h2>'
         '<div class="list-row"><span class="ic2">&#x1F5C4;</span><div><div class="nm">Bancos SQLite</div>'
         '<div class="dt"><b>argus.db</b> (Gestão de Achados · store central) · monitor.db · submonitor.db · '
-        'credentials.db · email.db · typosquat.db · threatintel.db (cache 48h) · intel.db (RDAP) · acknowledged.db</div></div></div>'
-        '<div class="list-row"><span class="ic2">&#x1F4DD;</span><div><div class="nm">Logs RFC 5424</div>'
+        'credentials.db · email.db · typosquat.db · threatintel.db (cache 48h) · intel.db '
+        '(<abbr title="RDAP — Registration Data Access Protocol: sucessor moderno do WHOIS, retorna dados de registro de domínios em JSON">RDAP</abbr>) · acknowledged.db</div></div></div>'
+        '<div class="list-row"><span class="ic2">&#x1F4DD;</span><div><div class="nm">Logs '
+        '<abbr title="RFC 5424 — formato padrão de mensagens syslog (timestamp, severidade, host, app, dados estruturados)">RFC 5424</abbr></div>'
         '<div class="dt">/var/log/argus/{monitor · submonitor · credentials · email · typosquat}</div></div></div>'
         '<div class="list-row"><span class="ic2">&#x1F310;</span><div><div class="nm">Serviço Web (ações de achados)</div>'
         '<div class="dt">argus-web (Flask) atrás do Apache &middot; acesso por HTTPS com autenticação</div></div></div></div>'
     )
     cred_panel = (
         '<div class="panel panel-pad">'
-        f'<h2>{_NAV_ICONS["credentials"]} Credential Exposure <span class="badge" id="c-when">&mdash;</span></h2>'
+        f'<h2>{_NAV_ICONS["credentials"]} Exposição de Credenciais <span class="badge" id="c-when">&mdash;</span></h2>'
         '<div class="kpi-grid" style="margin-bottom:14px">'
         '<div class="kpi sev-crit"><div class="v" id="c-comp">&mdash;</div><div class="l">Domínios exp.</div></div>'
         '<div class="kpi sev-crit"><div class="v" id="c-emp">&mdash;</div><div class="l">Funcionários</div></div>'
@@ -3738,7 +3780,7 @@ def build_risk_guide() -> str:
         'LLMNR/NetBIOS (resolução de nomes Windows).</p>',
         aid="rg-udp", toc_label="Portas UDP")
 
-    subs = panel("&#x1F310; Subdomain Monitor",
+    subs = panel("&#x1F310; Monitor de Subdomínios",
         '<table class="risk-table"><thead><tr><th>Condição</th><th>Risco</th><th>Exemplo</th></tr></thead><tbody>'
         '<tr><td>IP público + sem WAF + DEV/HML</td><td class="r-critico">CRÍTICO</td><td>dev.empresa.com.br</td></tr>'
         '<tr><td>IP público + sem WAF + PROD</td><td class="r-alto">ALTO</td><td>api.empresa.com.br</td></tr>'
@@ -3935,6 +3977,43 @@ def build_login_page() -> str:
     )
 
 
+def _empty_state(active: str, label: str) -> str:
+    """Estado vazio pedagógico (onboarding) — mostrado enquanto o módulo não rodou.
+    Diferencia por scanner: agenda do próximo scan, comando manual e próximos passos."""
+    # (comando, agenda legível) por módulo — alinhado aos cron jobs do install.
+    meta = {
+        "monitor":     ("argus-monitor",     "diariamente às 10:00 (UDP aos domingos às 03:00)"),
+        "submonitor":  ("argus-submonitor",  "diariamente às 12:00"),
+        "credentials": ("argus-credentials", "diariamente às 14:00"),
+        "email":       ("argus-email",       "diariamente às 13:00"),
+        "typosquat":   ("argus-typosquat",   "aos domingos às 05:00"),
+        "findings":    ("",                   "atualizado a cada execução de qualquer scanner"),
+    }
+    cmd, sched = meta.get(active, ("", ""))
+    icon = _NAV_ICONS.get(active, "")
+    run_block = (
+        '<div style="margin-top:14px"><div style="font-size:12px;color:var(--muted);margin-bottom:6px">'
+        'Quer ver agora, sem esperar o agendamento? Rode no servidor:</div>'
+        f'<pre style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px 12px;'
+        f'font-size:12.5px;color:var(--steel);display:inline-block">sudo {cmd}</pre></div>'
+    ) if cmd else ""
+    return (
+        '<div class="panel panel-pad" style="text-align:center;padding:40px 24px">'
+        f'<div style="width:56px;height:56px;margin:0 auto 14px;border-radius:14px;display:grid;place-items:center;'
+        f'background:rgba(51,163,239,.12);color:var(--accent)">{icon}</div>'
+        f'<h2 style="font-size:17px;color:var(--text);margin-bottom:8px">Aguardando a primeira execução</h2>'
+        '<p style="color:var(--muted);font-size:13.5px;max-width:560px;margin:0 auto;line-height:1.6">'
+        f'Este módulo (<b>{label}</b>) ainda não coletou dados. O scan roda <b>{sched}</b> — '
+        'os resultados aparecem aqui automaticamente na sequência. Não é erro nem configuração pendente: '
+        'é só a primeira coleta que ainda não ocorreu.</p>'
+        + run_block +
+        '<div style="margin-top:18px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap">'
+        '<a class="btn btn-pdf" href="/dashboard.html" style="text-decoration:none">Ver o Dashboard</a>'
+        '<a class="btn btn-clr" href="/risk-guide.html" style="text-decoration:none">Como o risco é classificado</a>'
+        '</div></div>'
+    )
+
+
 def write_portal(docroot: str) -> None:
     """Grava app.css + login + index/dashboard/risk-guide e placeholders dos relatórios."""
     d = Path(docroot)
@@ -3948,15 +4027,14 @@ def write_portal(docroot: str) -> None:
     for name, active, label in [
         ("findings_report.html",    "findings",    "Gestão de Achados"),
         ("monitor_report.html",     "monitor",     "Monitor de Portas"),
-        ("submonitor_report.html",  "submonitor",  "Subdomain Monitor"),
-        ("credentials_report.html", "credentials", "Credential Exposure"),
+        ("submonitor_report.html",  "submonitor",  "Monitor de Subdomínios"),
+        ("credentials_report.html", "credentials", "Exposição de Credenciais"),
         ("email_report.html",       "email",       "Postura de E-mail"),
         ("typosquat_report.html",   "typosquat",   "Typosquat"),
     ]:
         p = d / name
         if not p.exists():
             p.write_text(_portal_shell(
-                active, label, "Aguardando primeira execução do scan",
-                '<div class="panel panel-pad"><p class="empty">Este relatório será gerado '
-                'automaticamente na próxima execução do scanner.</p></div>'),
+                active, label, "Aguardando a primeira execução do scan",
+                _empty_state(active, label)),
                 encoding="utf-8")
