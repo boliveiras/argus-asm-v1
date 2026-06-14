@@ -213,6 +213,7 @@ copy_if_exists "threatintel/providers/urlscan.py"     "$THREATINTEL_DIR/provider
 copy_if_exists "threatintel/providers/hudsonrock.py"  "$THREATINTEL_DIR/providers/hudsonrock.py"
 copy_if_exists "threatintel/providers/internetdb.py"  "$THREATINTEL_DIR/providers/internetdb.py"
 copy_if_exists "threatintel/providers/cisa_kev.py"    "$THREATINTEL_DIR/providers/cisa_kev.py"
+copy_if_exists "threatintel/providers/nvd.py"         "$THREATINTEL_DIR/providers/nvd.py"
 copy_if_exists "threatintel/core/__init__.py"         "$THREATINTEL_DIR/core/__init__.py"
 copy_if_exists "threatintel/core/database.py"         "$THREATINTEL_DIR/core/database.py"
 copy_if_exists "threatintel/core/cache.py"            "$THREATINTEL_DIR/core/cache.py"
@@ -231,6 +232,20 @@ find "$BASE_DIR" -type f -name "*.txt"  -exec chmod 640 {} \;
 chown -R root:www-data "$MONITOR_DIR" "$SUBMONITOR_DIR" "$CREDENTIALS_DIR" "$EMAIL_DIR" "$TYPOSQUAT_DIR" 2>/dev/null || true
 chmod 750 "$MONITOR_DIR" "$SUBMONITOR_DIR" "$CREDENTIALS_DIR" "$EMAIL_DIR" "$TYPOSQUAT_DIR"
 ok "Scripts: 644, diretórios: 755"
+
+# O serviço argus-web (usuário $APP_USER) precisa LER os bancos dos scanners para
+# montar o mapa de Correlação. ACL concede leitura/travessia ao app user (rX) nos
+# diretórios + default para os arquivos futuros (a .db de cada execução).
+_acl_ok=true
+for _sd in "$MONITOR_DIR" "$SUBMONITOR_DIR" "$CREDENTIALS_DIR" "$EMAIL_DIR" "$TYPOSQUAT_DIR"; do
+  setfacl -Rm  "u:$APP_USER:rX" "$_sd" 2>/dev/null || _acl_ok=false
+  setfacl -dm  "u:$APP_USER:rX" "$_sd" 2>/dev/null || _acl_ok=false
+done
+if $_acl_ok; then
+  ok "ACL: $APP_USER pode ler os bancos dos scanners (mapa de Correlação)"
+else
+  warn "setfacl indisponível — o mapa de Correlação pode não ler os bancos (instale o pacote 'acl')"
+fi
 chown root:adm "$LOG_DIR_MONITOR" "$LOG_DIR_SUBMONITOR" "$LOG_DIR_CREDENTIALS" "$LOG_DIR_EMAIL" "$LOG_DIR_TYPOSQUAT"
 chmod 750 "$LOG_DIR_MONITOR" "$LOG_DIR_SUBMONITOR" "$LOG_DIR_CREDENTIALS" "$LOG_DIR_EMAIL" "$LOG_DIR_TYPOSQUAT"
 # Auditoria: o serviço argus-web (usuário $APP_USER) ESCREVE o audit.log; o grupo
@@ -369,6 +384,30 @@ PYEOF
     fi
   else
     ok "API key do urlscan já configurada"
+  fi
+
+  # ── NVD API key (opcional — eleva o rate-limit: 5→50 req/30s) ──
+  CURRENT_NVD=$(python3 -c "import json; d=json.load(open('$CONFIG_JSON')); print(d.get('nvd_api_key',''))" 2>/dev/null || echo "")
+  if [ "$CURRENT_NVD" = "SUA_API_KEY_AQUI" ] || [ -z "$CURRENT_NVD" ]; then
+    echo -e "\n  ${YELLOW}Cole sua API key do NVD/NIST — opcional, só eleva o rate-limit (deixe em branco para usar sem key):${NC}"
+    read -r -p "  NVD API Key: " USER_NVD_KEY
+    if [ -n "$USER_NVD_KEY" ]; then
+      python3 - << PYEOF
+import json
+with open("$CONFIG_JSON") as f:
+    d = json.load(f)
+d["nvd_api_key"] = "$USER_NVD_KEY"
+with open("$CONFIG_JSON", "w") as f:
+    json.dump(d, f, indent=4)
+PYEOF
+      chown "root:$APP_USER" "$CONFIG_JSON" 2>/dev/null || true
+      chmod 640 "$CONFIG_JSON"
+      ok "API key do NVD configurada"
+    else
+      warn "NVD sem key — funciona, mas com rate-limit baixo (edite $CONFIG_JSON depois)"
+    fi
+  else
+    ok "API key do NVD já configurada"
   fi
 fi
 

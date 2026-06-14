@@ -108,6 +108,23 @@ def _kev_to_js(kev: dict | None) -> dict:
     }
 
 
+def _nvd_to_js(nvd: dict | None) -> dict:
+    """Normaliza o intel NVD (CVSS oficial por CVE) para JS seguro."""
+    if not nvd:
+        return {"max_cvss": 0, "max_severity": "", "scores": {}}
+    scores = {}
+    for c, s in (nvd.get("scores") or {}).items():
+        try:
+            scores[str(c)] = float(s)
+        except (TypeError, ValueError):
+            pass
+    return {
+        "max_cvss": float(nvd.get("max_cvss", 0) or 0),
+        "max_severity": str(nvd.get("max_severity", "") or ""),
+        "scores": dict(list(scores.items())[:50]),
+    }
+
+
 # ============================================================
 # CSS COMPARTILHADO
 # ============================================================
@@ -320,8 +337,6 @@ def _common_css() -> str:
   .camp-badge { background:rgba(129,140,248,.16); color:#c7d2fe; border-radius:6px; padding:2px 8px; font-size:11px; font-weight:700; }
   .ip-PUBLICO { background:rgba(51,163,239,.14); color:#7dd3fc; border-radius:6px; padding:2px 8px; font-size:11px; font-weight:700; }
   .ip-PRIVADO { background:rgba(52,211,153,.14); color:#6ee7b7; border-radius:6px; padding:2px 8px; font-size:11px; font-weight:700; }
-  .waf-SIM { background:rgba(52,211,153,.14); color:#6ee7b7; border-radius:6px; padding:2px 7px; font-size:11px; font-weight:600; }
-  .waf-NAO { background:rgba(244,63,94,.14); color:#fda4af; border-radius:6px; padding:2px 7px; font-size:11px; font-weight:600; }
 
   .risk-CRITICO { color:var(--red);    font-weight:800; }
   .risk-ALTO    { color:var(--orange); font-weight:800; }
@@ -524,9 +539,9 @@ def _common_css() -> str:
   body.light .sect p, body.light .exec-lead, body.light .exec-recs li { color:#41506a; }
   body.light .pg-btn.active { color:#fff; }
   /* pílulas: texto mais escuro para contraste no claro */
-  body.light .waf-NAO, body.light .cve-badge, body.light .dnssec-off, body.light .ssl-bad,
+  body.light .cve-badge, body.light .dnssec-off, body.light .ssl-bad,
   body.light .whois-novo, body.light .whois-expd, body.light .b-crit { color:#be123c; }
-  body.light .ip-PRIVADO, body.light .waf-SIM, body.light .dnssec-on, body.light .ssl-ok,
+  body.light .ip-PRIVADO, body.light .dnssec-on, body.light .ssl-ok,
   body.light .whois-estab, body.light .pill-ok, body.light .b-bai { color:#047857; }
   body.light .ssl-warn, body.light .whois-recente, body.light .whois-exp, body.light .b-med { color:#a15c07; }
   body.light .b-alto { color:#c2570a; }
@@ -660,6 +675,11 @@ _NAV_ICONS = {
     "risk":       '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">'
                   '<path d="M8 1.4 14 3.8v4.1c0 3.9-2.6 6-6 6.7-3.4-.7-6-2.8-6-6.7V3.8z" stroke-linejoin="round"/>'
                   '<path d="M8 5.2v3.1" stroke-linecap="round"/><circle cx="8" cy="10.6" r=".5" fill="currentColor" stroke="none"/></svg>',
+    # Correlação — grafo: nós ligados (domínio/subdomínio/IP compartilhado)
+    "correlacao": '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">'
+                  '<circle cx="3.2" cy="8" r="1.8"/><circle cx="12.8" cy="3.4" r="1.8"/>'
+                  '<circle cx="12.8" cy="12.6" r="1.8"/>'
+                  '<path d="M4.8 7.1 11.2 4.1M4.8 8.9l6.4 3" stroke-linecap="round"/></svg>',
 }
 
 
@@ -688,6 +708,7 @@ def _topbar(active: str) -> str:
         ("findings",    "/findings_report.html",    "Gestão de Achados"),
         ("monitor",     "/monitor_report.html",     "Portas"),
         ("submonitor",  "/submonitor_report.html",  "Subdomínios"),
+        ("correlacao",  "/correlacao.html",         "Correlação"),
         ("credentials", "/credentials_report.html", "Credenciais"),
         ("email",       "/email_report.html",       "E-mail"),
         ("typosquat",   "/typosquat_report.html",   "Typosquat"),
@@ -901,15 +922,13 @@ def _exec_submonitor(all_results: list) -> str:
              (f"<b>{tc} crítico(s)</b> e {ta} de alto risco exigem atenção."
               if (tc or ta) else "Nenhuma exposição crítica ou de alto risco nesta execução."))
     def fmt(r):
-        waf = r.get("waf", "NAO")
-        wtxt = "sem WAF" if (not waf or waf == "NAO") else _h(waf)
-        return f'{_h(r.get("hostname"))} ({_h(r.get("environment"))}, {wtxt})'
+        return f'{_h(r.get("hostname"))} ({_h(r.get("environment"))})'
     risks = _top_risks(cur, fmt)
     recs = []
     def add(c):
         if c not in recs: recs.append(c)
-    if any(r.get("risk") == "CRITICO" for r in cur): add("Ambientes dev/homolog expostos sem WAF — remova da internet ou proteja com WAF/VPN.")
-    if any(r.get("risk") == "ALTO" for r in cur): add("Apps de produção sem WAF — avalie proteção com WAF/CDN.")
+    if any(r.get("risk") == "CRITICO" for r in cur): add("Ambientes dev/homolog expostos na internet — remova do acesso público ou proteja por VPN.")
+    if any(r.get("risk") == "ALTO" for r in cur): add("Apps de produção expostos — restrinja a superfície e revise o que precisa estar público.")
     if any((r.get("whois") or {}).get("status") == "NOVO" for r in cur): add("Domínios recém-registrados detectados — verifique legitimidade (possível phishing/typosquatting).")
     if any((r.get("ssl") or {}).get("status", "").startswith("EXPIRA") for r in cur): add("Certificados TLS vencidos ou próximos do vencimento — renove.")
     if any((r.get("urlscan") or {}).get("seen") for r in cur): add("Subdomínios aparecem em scans públicos (urlscan) — revise a exposição.")
@@ -1149,6 +1168,7 @@ def _monitor_rows_to_js(rows: list[dict]) -> str:
             "abuse":       _abuse_to_js(r.get("abuse")),
             "internetdb":  _internetdb_to_js(r.get("internetdb")),
             "kev":         _kev_to_js(r.get("kev")),
+            "nvd":         _nvd_to_js(r.get("nvd")),
         })
     return json.dumps(safe, ensure_ascii=False).replace("<", "\\u003c")
 
@@ -1220,6 +1240,14 @@ def generate_monitor_report(
         "tcp": total_tcp, "udp": total_udp, "vuln_ips": total_vuln_ips, "kev": total_kev,
         "campanhas": sorted({r.get("campanha", "") for r in all_results if r.get("campanha")}),
     }, ensure_ascii=False).replace("<", "\\u003c")
+    # Linhas compactas p/ o módulo de Correlação (lido client-side, como o Dashboard).
+    corr_rows = json.dumps([
+        {"ip": str(r.get("ip", "")), "port": r.get("port", ""), "risk": r.get("risk", "BAIXO"),
+         "cve": int((r.get("internetdb") or {}).get("vuln_count", 0) or 0),
+         "kev": int((r.get("kev") or {}).get("kev_count", 0) or 0),
+         "cvss": float((r.get("nvd") or {}).get("max_cvss", 0) or 0)}
+        for r in all_results if r.get("ip")
+    ], ensure_ascii=False).replace("<", "\\u003c")
 
     html = f"""<!DOCTYPE html>
 <html lang="pt-BR">
@@ -1233,6 +1261,7 @@ def generate_monitor_report(
 <body>
 {topbar}
 <script id="exm-kpis" type="application/json">{kpi_json}</script>
+<script id="exm-rows" type="application/json">{corr_rows}</script>
 <div class="wrap" id="conteudo" role="main">
 
 <div class="page-head">
@@ -1433,8 +1462,13 @@ function render(){{
     const vc=idb.vuln_count||0;
     const kc=(r.kev&&r.kev.kev_count)||0;
     const kevBadge=kc>0?` <span class="kev-badge" title="${{esc((r.kev.kev_cves||[]).join(', '))}} — explorada(s) in-the-wild (CISA KEV)">KEV</span>`:'';
+    const nv=r.nvd||{{}};
+    const mc=nv.max_cvss||0;
+    const sevC={{CRITICO:'#f43f5e',ALTO:'#fb923c',MEDIO:'#fbbf24',BAIXO:'#34d399'}}[nv.max_severity]||'#8a99b4';
+    const cvssBadge=mc>0?` <span class="cve-badge" style="background:${{sevC}}22;color:${{sevC}};border-color:${{sevC}}66" title="Maior CVSS entre as CVEs do ativo (NVD/NIST) — severidade ${{esc(nv.max_severity||'')}}">CVSS ${{mc.toFixed(1)}}</span>`:'';
+    const cveTitle=(idb.vulns||[]).map(function(c){{var s=(nv.scores||{{}})[c];return c+(s?(' '+s):'');}}).join(', ');
     const cveCell=vc>0
-      ?`<span class="cve-badge" title="${{esc((idb.vulns||[]).join(', '))}}${{(idb.vulns||[]).length<vc?' …':''}}">${{vc}} CVE${{vc>1?'s':''}}</span>`+kevBadge
+      ?`<span class="cve-badge" title="${{esc(cveTitle)}}${{(idb.vulns||[]).length<vc?' …':''}}">${{vc}} CVE${{vc>1?'s':''}}</span>`+cvssBadge+kevBadge
       :'<span class="ssl-none">&#8212;</span>';
     html+=`<tr class="r-${{esc(r.risk)}}${{r.status==='RECONHECIDO'?' ack':''}}">
       <td><span class="camp-badge">${{esc(r.campanha)}}</span></td>
@@ -1520,7 +1554,6 @@ def _submonitor_rows_to_js(rows: list[dict]) -> str:
             "asn":         str(r.get("asn",         "")),
             "ip_type":     str(r.get("ip_type",     "")),
             "http_status": str(r.get("http_status", "")),
-            "waf":         str(r.get("waf",         "NAO")),
             "environment": str(r.get("environment", "")),
             "risk":        str(r.get("risk",        "INFO")),
             "status":      str(r.get("status",      "")),
@@ -1538,6 +1571,7 @@ def _submonitor_rows_to_js(rows: list[dict]) -> str:
             "urlscan":     _urlscan_to_js(r.get("urlscan")),
             "internetdb":  _internetdb_to_js(r.get("internetdb")),
             "kev":         _kev_to_js(r.get("kev")),
+            "nvd":         _nvd_to_js(r.get("nvd")),
         })
     return json.dumps(safe, ensure_ascii=False).replace("<", "\\u003c")
 
@@ -1600,6 +1634,13 @@ def generate_submonitor_report(
         "total": len(all_results), "urlscan": total_urlscan, "abusivos": total_abusivos,
         "campanhas": sorted({r.get("campanha", "") for r in all_results if r.get("campanha")}),
     }, ensure_ascii=False).replace("<", "\\u003c")
+    # Linhas compactas p/ o módulo de Correlação (subdomínio -> IP).
+    corr_rows = json.dumps([
+        {"h": str(r.get("hostname", "")), "ip": str(r.get("ip", "")),
+         "camp": str(r.get("campanha", "")), "risk": r.get("risk", "INFO"),
+         "env": str(r.get("environment", ""))}
+        for r in all_results if r.get("hostname") and r.get("ip")
+    ], ensure_ascii=False).replace("<", "\\u003c")
 
     html = f"""<!DOCTYPE html>
 <html lang="pt-BR">
@@ -1613,6 +1654,7 @@ def generate_submonitor_report(
 <body>
 {topbar}
 <script id="exm-kpis" type="application/json">{kpi_json}</script>
+<script id="exm-rows" type="application/json">{corr_rows}</script>
 <div class="wrap" id="conteudo" role="main">
 
 <div class="page-head">
@@ -1666,11 +1708,6 @@ def generate_submonitor_report(
     <option value="">Público e Privado</option>
     <option value="PUBLICO">Público</option>
     <option value="PRIVADO">Privado</option>
-  </select>
-  <select id="f-waf"    onchange="applyFilters()">
-    <option value="">Com e Sem WAF</option>
-    <option value="NAO">Sem WAF</option>
-    <option value="SIM">Com WAF</option>
   </select>
   <select id="f-dnssec" onchange="applyFilters()">
     <option value="">DNSSEC (todos)</option>
@@ -1733,7 +1770,6 @@ def generate_submonitor_report(
     <th onclick="doSort('ip_type')"         >Tipo             <span class="si" id="si-ip_type"        >&#x21C5;</span></th>
     <th onclick="doSort('asn')"             >ASN              <span class="si" id="si-asn"            >&#x21C5;</span></th>
     <th onclick="doSort('http_status')"     >HTTP             <span class="si" id="si-http_status"    >&#x21C5;</span></th>
-    <th onclick="doSort('waf')"             >WAF              <span class="si" id="si-waf"            >&#x21C5;</span></th>
     <th onclick="doSort('environment')"     >Ambiente         <span class="si" id="si-environment"    >&#x21C5;</span></th>
     <th onclick="doSort('origem')"           >Origem           <span class="si" id="si-origem"         >&#x21C5;</span></th>
     <th onclick="doSort('risk')"            >Risco            <span class="si" id="si-risk"           >&#x21C5;</span></th>
@@ -1785,7 +1821,6 @@ function applyFilters(){{
   const env=document.getElementById('f-env').value;
   const risk=document.getElementById('f-risk').value;
   const ipt=document.getElementById('f-ipt').value;
-  const waf=document.getElementById('f-waf').value;
   const st=document.getElementById('f-status').value;
   const http=document.getElementById('f-http').value;
   const ab=document.getElementById('f-abuse').value;
@@ -1800,8 +1835,6 @@ function applyFilters(){{
     if(ipt&&x.ip_type!==ipt)return false;
     if(st&&x.status!==st)return false;
     if(http&&x.http_status!==http)return false;
-    if(waf==='NAO'&&x.waf!=='NAO')return false;
-    if(waf==='SIM'&&x.waf==='NAO')return false;
     if(fdnssec&&x.dnssec!==fdnssec)return false;
     if(forigem&&(x.origem||'wordlist')!==forigem)return false;
     if(fwhois&&(x.whois_status||'DESCONHECIDO')!==fwhois)return false;
@@ -1823,7 +1856,7 @@ function applyFilters(){{
   }});
   page=1;applySort();
 }}
-function clearFilters(){{['q','f-camp','f-env','f-risk','f-ipt','f-waf','f-status','f-http','f-abuse','f-dnssec','f-ssl','f-origem','f-whois'].forEach(id=>{{const e=document.getElementById(id);if(e)e.value='';}});applyFilters();}}
+function clearFilters(){{['q','f-camp','f-env','f-risk','f-ipt','f-status','f-http','f-abuse','f-dnssec','f-ssl','f-origem','f-whois'].forEach(id=>{{const e=document.getElementById(id);if(e)e.value='';}});applyFilters();}}
 function doSort(k){{
   if(sortKey===k)sortAsc=!sortAsc;else{{sortKey=k;sortAsc=true;}}
   document.querySelectorAll('.si').forEach(e=>e.textContent='\\u21C5');
@@ -1859,8 +1892,6 @@ function render(){{
     const score=(ab.score!==undefined)?ab.score:-1;
     const torBadge=ab.is_tor?'<span class="tor-badge">TOR</span>':'';
     const lastRpt=ab.last_reported_at?ab.last_reported_at.substring(0,10):'';
-    const wafCls=(r.waf&&r.waf!=='NAO')?'waf-SIM':'waf-NAO';
-    const wafLbl=(r.waf&&r.waf!=='NAO')?r.waf:'NAO';
     const dnssecBadge=(r.dnssec==='HABILITADO')?'<span class="dnssec-on">HABILITADO</span>':'<span class="dnssec-off">DESABILITADO</span>';
     let sslBadge;
     const sslSt=r.ssl_status||'SEM CERTIFICADO';
@@ -1896,8 +1927,13 @@ function render(){{
     const idb=r.internetdb||{{}}; const vc=idb.vuln_count||0;
     const kc=(r.kev&&r.kev.kev_count)||0;
     const kevBadge=kc>0?` <span class="kev-badge" title="${{esc((r.kev.kev_cves||[]).join(', '))}} — explorada(s) in-the-wild (CISA KEV)">KEV</span>`:'';
+    const nv=r.nvd||{{}};
+    const mc=nv.max_cvss||0;
+    const sevC={{CRITICO:'#f43f5e',ALTO:'#fb923c',MEDIO:'#fbbf24',BAIXO:'#34d399'}}[nv.max_severity]||'#8a99b4';
+    const cvssBadge=mc>0?` <span class="cve-badge" style="background:${{sevC}}22;color:${{sevC}};border-color:${{sevC}}66" title="Maior CVSS entre as CVEs do ativo (NVD/NIST) — severidade ${{esc(nv.max_severity||'')}}">CVSS ${{mc.toFixed(1)}}</span>`:'';
+    const cveTitle=(idb.vulns||[]).map(function(c){{var s=(nv.scores||{{}})[c];return c+(s?(' '+s):'');}}).join(', ');
     const cveCell=vc>0
-      ?`<span class="cve-badge" title="${{esc((idb.vulns||[]).join(', '))}}">${{vc}} CVE${{vc>1?'s':''}}</span>`+kevBadge
+      ?`<span class="cve-badge" title="${{esc(cveTitle)}}">${{vc}} CVE${{vc>1?'s':''}}</span>`+cvssBadge+kevBadge
       :'<span class="ssl-none">&#8212;</span>';
     html+=`<tr class="r-${{esc(r.risk)}}${{r.status==='RECONHECIDO'?' ack':''}}">
       <td><span class="camp-badge">${{esc(r.campanha)}}</span></td>
@@ -1906,7 +1942,6 @@ function render(){{
       <td><span class="ip-${{esc(r.ip_type)}}">${{esc(r.ip_type)}}</span></td>
       <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${{esc(r.asn)}}">${{esc(r.asn)}}</td>
       <td>${{esc(r.http_status)}}</td>
-      <td><span class="${{wafCls}}">${{esc(wafLbl)}}</span></td>
       <td>${{esc(r.environment)}}</td>
       <td>${{origemBadge}}</td>
       <td class="risk-${{esc(r.risk)}}">${{esc(r.risk)}}</td>
@@ -1931,7 +1966,7 @@ function render(){{
   renderPagination(pgDiv,page,pages,total,start,slice.length,'gotoPage');
 }}
 function exportCSV(){{
-  const base=['campanha','hostname','ip','ip_type','cname','asn','http_status','waf','environment','origem','risk','status','ack_reason','dnssec','ssl_status','ssl_expiry','whois_status','whois_creation','whois_expiry','whois_age_days','whois_registrar'];
+  const base=['campanha','hostname','ip','ip_type','cname','asn','http_status','environment','origem','risk','status','ack_reason','dnssec','ssl_status','ssl_expiry','whois_status','whois_creation','whois_expiry','whois_age_days','whois_registrar'];
   const abCol=['score','country','isp','usage_type','is_tor','total_reports','last_reported_at'];
   const usCol=['seen','server','ip','asnname','country','scan_uuid','report_url'];
   const hdr=[...base,...abCol.map(c=>'abuse_'+c),...usCol.map(c=>'urlscan_'+c)].join(',');
@@ -3503,7 +3538,7 @@ def build_index() -> str:
         ("monitor",    "/monitor_report.html",    "Monitor de Portas",
          "Superfície exposta — IPs e portas abertas, com risco e reputação AbuseIPDB."),
         ("submonitor", "/submonitor_report.html", "Monitor de Subdomínios",
-         "Subdomínios ativos, ambiente, WAF/CDN, SSL, urlscan.io e RDAP/WHOIS."),
+         "Subdomínios ativos, ambiente, SSL, urlscan.io e RDAP/WHOIS."),
         ("credentials","/credentials_report.html","Exposição de Credenciais",
          "Exposição de credenciais em logs de infostealer (Hudson Rock)."),
         ("email",      "/email_report.html",      "Postura de E-mail",
@@ -3603,6 +3638,16 @@ function camps(listId, arr, href){
   const pend=document.getElementById('dash-empty'), cln=document.getElementById('dash-clean');
   if(pend) pend.style.display = anyReport ? 'none' : 'flex';
   if(cln)  cln.style.display  = (anyReport && totalAll===0) ? 'flex' : 'none';
+  // Card de Correlação: conta subdomínios, IPs únicos e IPs compartilhados (exm-rows).
+  try{
+    const sr=await fetch('/submonitor_report.html',{cache:'no-store'}).then(r=>r.ok?r.text():'').catch(()=>'');
+    const mm=sr.match(/<script id="exm-rows" type="application\/json">([\s\S]*?)<\/script>/);
+    let rows=[]; try{ rows=mm?JSON.parse(mm[1]):[]; }catch(e){}
+    const hosts=new Set(), ips=new Set(), ipHosts={};
+    rows.forEach(r=>{ if(r.h)hosts.add(r.h); if(r.ip){ips.add(r.ip); (ipHosts[r.ip]=ipHosts[r.ip]||new Set()).add(r.h);} });
+    const shared=Object.values(ipHosts).filter(s=>s.size>1).length;
+    setTxt('d-corr-sub',hosts.size); setTxt('d-corr-ip',ips.size); setTxt('d-corr-shared',shared);
+  }catch(e){}
 })();
 </script>"""
 
@@ -3756,8 +3801,20 @@ def build_dashboard() -> str:
         '<a class="list-row" href="/typosquat_report.html" style="text-decoration:none;color:inherit;margin-top:10px">'
         '<span class="ic2">&#9656;</span><div><div class="nm">Ver relatório completo</div></div></a></div>'
     )
+    corr_panel = (
+        '<div class="panel panel-pad">'
+        f'<h2>{_NAV_ICONS["correlacao"]} Correlação</h2>'
+        '<div class="kpi-grid" style="margin-bottom:14px">'
+        '<div class="kpi"><div class="v" id="d-corr-sub">&mdash;</div><div class="l">Subdomínios</div></div>'
+        '<div class="kpi"><div class="v" id="d-corr-ip">&mdash;</div><div class="l">IPs únicos</div></div>'
+        '<div class="kpi sev-abus" title="IPs servindo mais de um subdomínio — possível ponto único de falha">'
+        '<div class="v" id="d-corr-shared">&mdash;</div><div class="l">IPs compartilhados</div></div></div>'
+        '<a class="list-row" href="/correlacao.html" style="text-decoration:none;color:inherit;margin-top:10px">'
+        '<span class="ic2">&#9656;</span><div><div class="nm">Abrir mapa de correlação</div>'
+        '<div class="dt">subdomínios × IPs · ponto único de falha</div></div></a></div>'
+    )
     sources = ('<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:16px">'
-               + findings_panel + mon_panel + sub_panel + cred_panel + email_panel + typo_panel + '</div>')
+               + findings_panel + mon_panel + sub_panel + corr_panel + cred_panel + email_panel + typo_panel + '</div>')
     # Estado vazio do Dashboard (mesmo padrão das páginas internas): desfaz a ambiguidade
     # "zero por falta de coleta" × "zero por ausência de risco". JS ajusta após carregar.
     banner = (
@@ -3796,12 +3853,12 @@ def build_risk_guide() -> str:
 
     overview = panel("Visão Geral",
         '<p>O Argus usa um <b>Risk Engine</b> em duas camadas. A primeira avalia o '
-        'contexto técnico (porta/serviço, ambiente, WAF, tipo de IP). A segunda enriquece com '
+        'contexto técnico (porta/serviço, ambiente, tipo de IP). A segunda enriquece com '
         'reputação do AbuseIPDB. <b>O risco nunca é rebaixado</b> — só pode ser elevado.</p>'
         '<div class="flow">'
         '<div class="flow-step"><div class="l">Porta / Host</div><div class="v">Risco base</div></div>'
         '<div class="flow-arrow">+</div>'
-        '<div class="flow-step"><div class="l">Contexto</div><div class="v">IP / WAF / Ambiente</div></div>'
+        '<div class="flow-step"><div class="l">Contexto</div><div class="v">IP / Ambiente</div></div>'
         '<div class="flow-arrow">+</div>'
         '<div class="flow-step"><div class="l">AbuseIPDB</div><div class="v">Score + TOR</div></div>'
         '<div class="flow-arrow">&#x2192;</div>'
@@ -3845,14 +3902,14 @@ def build_risk_guide() -> str:
 
     subs = panel("&#x1F310; Monitor de Subdomínios",
         '<table class="risk-table"><thead><tr><th>Condição</th><th>Risco</th><th>Exemplo</th></tr></thead><tbody>'
-        '<tr><td>IP público + sem WAF + DEV/HML</td><td class="r-critico">CRÍTICO</td><td>dev.empresa.com.br</td></tr>'
-        '<tr><td>IP público + sem WAF + PROD</td><td class="r-alto">ALTO</td><td>api.empresa.com.br</td></tr>'
-        '<tr><td>IP público + keyword de gestão</td><td class="r-medio">MÉDIO</td><td>grafana/jenkins/vault…</td></tr>'
-        '<tr><td>IP público + com WAF</td><td class="r-baixo">BAIXO</td><td>www atrás de WAF</td></tr>'
+        '<tr><td>IP público + DEV/HML</td><td class="r-critico">CRÍTICO</td><td>dev.empresa.com.br</td></tr>'
+        '<tr><td>IP público + PROD</td><td class="r-alto">ALTO</td><td>api.empresa.com.br</td></tr>'
         '<tr><td>IP privado</td><td class="r-baixo">BAIXO</td><td>intranet.empresa.com.br</td></tr>'
         '</tbody></table>'
-        '<p style="margin-top:10px">A detecção distingue <b>WAF</b> (produto de segurança) de '
-        '<b>CDN</b> (proxy reverso), via headers e cookies — pois CDN não garante WAF ativo.</p>',
+        '<p style="margin-top:10px">Todo subdomínio em <b>IP público</b> é tratado como exposto. '
+        'A detecção passiva de WAF foi <b>removida</b> por gerar falso positivo (a presença de '
+        'CDN não garante WAF ativo, e confirmar exigiria sonda comportamental intrusiva) — '
+        'o risco é então elevado pelas camadas de reputação (AbuseIPDB) e vulnerabilidade (CVE/CVSS).</p>',
         aid="rg-subs", toc_label="Subdomínios")
 
     abuse = panel("&#x1F6E1; Elevação por AbuseIPDB",
@@ -3961,6 +4018,158 @@ def build_risk_guide() -> str:
     body = toc + "".join(body_sections)
     return _portal_shell("risk", "Guia de Risco",
                          "Como o Risk Engine calcula o risco de cada ativo", body)
+
+
+_CORR_SCRIPT = r"""<script>
+(function(){
+  var SEV={CRITICO:'#f43f5e',ALTO:'#fb923c',MEDIO:'#fbbf24',BAIXO:'#34d399',INFO:'#8a99b4'};
+  var TLBL={campaign:'Campanha',domain:'Domínio',subdomain:'Subdomínio',ip:'IP',
+            email:'Achado · postura de e-mail',cred:'Achado · credenciais',typo:'Achado · typosquat'};
+  var RAD={campaign:14,domain:11,subdomain:8,ip:8,email:7,cred:7,typo:7};
+  var N={}, ADJ={}, INDEG={}, open={}, POS={}, sel=null;
+  function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+  function setTxt(id,v){var e=document.getElementById(id); if(e)e.textContent=v;}
+  function showOnly(id){['corr-empty','corr-off','corr-main'].forEach(function(x){var e=document.getElementById(x);if(e)e.style.display=(x===id?(x==='corr-main'?'block':'block'):'none');});}
+  function start(){
+    fetch('/api/correlation',{cache:'no-store'}).then(function(r){return r.ok?r.json():null;}).then(function(j){
+      if(!j||!j.ok){ showOnly('corr-off'); return; }
+      if(!j.nodes||!j.nodes.length){ showOnly('corr-empty'); return; }
+      N={}; ADJ={}; INDEG={};
+      j.nodes.forEach(function(n){N[n.id]=n;});
+      (j.edges||[]).forEach(function(e){ (ADJ[e[0]]=ADJ[e[0]]||[]).push(e[1]); INDEG[e[1]]=(INDEG[e[1]]||0)+1; });
+      showOnly('corr-main');
+      var st=j.stats||{}; setTxt('corr-nsub',st.subdomains||0); setTxt('corr-nip',st.ips||0); setTxt('corr-nshared',st.shared_ips||0);
+      var camps=j.nodes.filter(function(n){return n.type==='campaign';}).map(function(n){return n.label;}).sort();
+      var s=document.getElementById('corr-camp'); s.innerHTML='';
+      var o0=document.createElement('option'); o0.value='*'; o0.textContent='Todas as campanhas'; s.appendChild(o0);
+      camps.forEach(function(c){var o=document.createElement('option');o.value=c;o.textContent=c;s.appendChild(o);});
+      s.value=camps.length===1?camps[0]:'*';
+      s.onchange=function(){render(s.value);};
+      render(s.value);
+    }).catch(function(){ showOnly('corr-off'); });
+  }
+  function roots(camp){ return Object.keys(N).filter(function(id){return N[id].type==='campaign' && (camp==='*'||N[id].label===camp);}); }
+  function kids(id){ return (ADJ[id]||[]).length>0; }
+  function visible(rts){
+    var vis={}; rts.forEach(function(r){vis[r]=1;}); var ch=true;
+    while(ch){ ch=false; Object.keys(vis).forEach(function(id){ if(open[id]&&ADJ[id]) ADJ[id].forEach(function(c){ if(!vis[c]){vis[c]=1;ch=true;} }); }); }
+    return vis;
+  }
+  function layout(ids,W,H){
+    ids.forEach(function(id){ if(!POS[id]){ var p=null; Object.keys(ADJ).forEach(function(s){ if((ADJ[s]||[]).indexOf(id)>=0 && POS[s]) p=POS[s]; });
+      var bx=p?p.x:W/2, by=p?p.y:H/2; POS[id]={x:bx+(Math.random()*60-30),y:by+(Math.random()*60-30),vx:0,vy:0}; } POS[id].vx=0;POS[id].vy=0; });
+    var iters=ids.length>220?120:260;
+    for(var it=0;it<iters;it++){
+      for(var i=0;i<ids.length;i++)for(var j=i+1;j<ids.length;j++){ var a=POS[ids[i]],b=POS[ids[j]],dx=a.x-b.x,dy=a.y-b.y,d2=dx*dx+dy*dy||0.01,d=Math.sqrt(d2),f=2300/d2,fx=dx/d*f,fy=dy/d*f; a.vx+=fx;a.vy+=fy;b.vx-=fx;b.vy-=fy; }
+      ids.forEach(function(s){ (ADJ[s]||[]).forEach(function(t){ if(!POS[t])return; var a=POS[s],b=POS[t],dx=b.x-a.x,dy=b.y-a.y,d=Math.sqrt(dx*dx+dy*dy)||0.01,f=(d-86)*0.045,fx=dx/d*f,fy=dy/d*f; a.vx+=fx;a.vy+=fy;b.vx-=fx;b.vy-=fy; }); });
+      ids.forEach(function(id){ var p=POS[id]; p.vx+=(W/2-p.x)*0.006; p.vy+=(H/2-p.y)*0.006; p.x+=Math.max(-14,Math.min(14,p.vx))*0.85; p.y+=Math.max(-14,Math.min(14,p.vy))*0.85; p.vx*=0.85;p.vy*=0.85; });
+    }
+    ids.forEach(function(id){ var p=POS[id]; p.x=Math.max(36,Math.min(W-36,p.x)); p.y=Math.max(30,Math.min(H-30,p.y)); });
+  }
+  function render(camp){
+    var rts=roots(camp); rts.forEach(function(r){ if(!(r in open)) open[r]=true; });
+    var vis=visible(rts), ids=Object.keys(vis); layout(ids,960,600);
+    var svg=document.getElementById('corr-svg'); var h='';
+    Object.keys(vis).forEach(function(s){ if(!open[s])return; (ADJ[s]||[]).forEach(function(t){ if(!vis[t])return; var a=POS[s],b=POS[t],sh=(INDEG[t]||0)>1;
+      h+='<line x1="'+a.x.toFixed(0)+'" y1="'+a.y.toFixed(0)+'" x2="'+b.x.toFixed(0)+'" y2="'+b.y.toFixed(0)+'" stroke="'+(sh?'#fb923c':'var(--border-2)')+'" stroke-width="'+(sh?1.6:0.7)+'"/>'; }); });
+    ids.forEach(function(id){ var n=N[id],p=POS[id],r=RAD[n.type]||8,c=SEV[n.risk]||'#8a99b4',sh=(n.type==='ip'&&(INDEG[id]||0)>1),ring=(kids(id)&&!open[id]);
+      h+='<g class="corr-node" tabindex="0" role="button" aria-label="'+esc(n.label)+', '+esc(TLBL[n.type]||n.type)+', risco '+esc(n.risk)+'" data-id="'+esc(id)+'">';
+      h+='<title>'+esc(n.label)+' — '+esc(TLBL[n.type]||n.type)+'</title>';
+      if(ring) h+='<circle cx="'+p.x.toFixed(0)+'" cy="'+p.y.toFixed(0)+'" r="'+(r+4)+'" fill="none" stroke="'+c+'" stroke-width="0.7" stroke-dasharray="2 2"/>';
+      if(sh)   h+='<circle cx="'+p.x.toFixed(0)+'" cy="'+p.y.toFixed(0)+'" r="'+(r+3)+'" fill="none" stroke="#fb923c" stroke-width="1.6"/>';
+      h+='<circle cx="'+p.x.toFixed(0)+'" cy="'+p.y.toFixed(0)+'" r="'+r+'" fill="'+c+'" stroke="'+(id===sel?'var(--text)':c)+'" stroke-width="'+(id===sel?2.2:1)+'"/>';
+      if(n.type==='campaign'||n.type==='domain'||sh){ var lbl=n.label.length>26?n.label.slice(0,25)+'…':n.label;
+        h+='<text x="'+p.x.toFixed(0)+'" y="'+(p.y+r+12).toFixed(0)+'" text-anchor="middle" font-size="11" fill="var(--muted)">'+esc(lbl)+'</text>'; }
+      h+='</g>';
+    });
+    svg.innerHTML=h; buildList();
+  }
+  function selectNode(id){ var n=N[id]; if(!n)return; if(kids(id))open[id]=!open[id]; sel=id;
+    var cur=document.getElementById('corr-camp'); render(cur?cur.value:'*'); detail(id);
+  }
+  function detail(id){ var n=N[id],d=document.getElementById('corr-detail'); if(!d)return;
+    var rows=(n.detail||[]).map(function(kv){ return '<tr><td style="color:var(--muted);padding:5px 12px 5px 0;white-space:nowrap;vertical-align:top">'+esc(kv[0])+'</td><td style="padding:5px 0;text-align:right">'+esc(kv[1])+'</td></tr>'; }).join('');
+    var sh=(n.type==='ip'&&(INDEG[id]||0)>1);
+    d.innerHTML='<div style="display:flex;align-items:center;gap:8px;margin-bottom:3px"><span style="width:12px;height:12px;border-radius:50%;background:'+(SEV[n.risk]||'#8a99b4')+';flex:none"></span><span style="font-size:15px;font-weight:700">'+esc(n.label)+'</span>'+(sh?' <span style="color:#fb923c;font-size:12px">(compartilhado)</span>':'')+'</div>'
+      +'<div class="page-sub" style="margin-bottom:10px">'+esc(TLBL[n.type]||n.type)+(kids(id)?(' · clique no nó para '+(open[id]?'recolher':'expandir')):'')+'</div>'
+      +'<table style="width:100%;font-size:13px;border-top:1px solid var(--border)">'+rows+'</table>';
+    d.style.display='block';
+  }
+  function buildList(){ var el=document.getElementById('corr-list'); if(!el)return;
+    var subs=Object.keys(N).filter(function(id){return N[id].type==='subdomain';});
+    var html='<table><caption class="sr-only">Subdomínios e seus IPs; "compartilhado por" indica IP servindo vários subdomínios</caption><thead><tr><th scope="col">Subdomínio</th><th scope="col">IP</th><th scope="col">Compartilhado por</th><th scope="col">Risco</th></tr></thead><tbody>';
+    subs.sort(function(a,b){return N[a].label.localeCompare(N[b].label);}).forEach(function(id){
+      var ipid=(ADJ[id]||[]).filter(function(c){return N[c]&&N[c].type==='ip';})[0];
+      var ipn=ipid?N[ipid]:null, deg=ipid?(INDEG[ipid]||1):1;
+      html+='<tr><td>'+esc(N[id].label)+'</td><td>'+(ipn?'<code>'+esc(ipn.label)+'</code>':'—')+'</td><td>'+(deg>1?('<span style="color:#fb923c;font-weight:700">'+deg+' subdomínios</span>'):'1')+'</td><td class="risk-'+esc(N[id].risk)+'">'+esc(N[id].risk)+'</td></tr>';
+    });
+    html+='</tbody></table>'; el.innerHTML=html;
+  }
+  document.addEventListener('click',function(e){ var g=e.target.closest&&e.target.closest('g.corr-node[data-id]'); if(g)selectNode(g.getAttribute('data-id')); });
+  document.addEventListener('keydown',function(e){ if(e.key!=='Enter'&&e.key!==' ')return; var g=e.target.closest&&e.target.closest('g.corr-node[data-id]'); if(g){e.preventDefault();selectNode(g.getAttribute('data-id'));} });
+  if(document.readyState!=='loading') start(); else document.addEventListener('DOMContentLoaded',start);
+})();
+</script>"""
+
+
+def build_correlation_page() -> str:
+    body = (
+        '<style>'
+        '#corr-wrap{border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);overflow:auto;margin-top:6px}'
+        '#corr-svg{width:100%;height:600px;display:block}'
+        '.corr-node{cursor:pointer}.corr-node:hover circle{stroke-width:3}'
+        '.corr-node:focus{outline:none}.corr-node:focus circle{stroke:var(--accent);stroke-width:3}'
+        '#corr-detail{display:none;margin-top:14px}'
+        '.corr-legend{display:flex;gap:16px;flex-wrap:wrap;align-items:center;font-size:12px;color:var(--muted);margin-left:auto}'
+        '.corr-legend .dot{width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:5px;vertical-align:middle}'
+        '</style>'
+        # Estado vazio (mesmo padrão dos módulos): nenhum achado para correlacionar ainda.
+        '<div id="corr-empty" class="panel panel-pad" style="display:none;text-align:center;padding:40px 24px">'
+        '<div style="font-weight:700;font-size:15px;color:var(--text);margin-bottom:6px">Nada para correlacionar ainda</div>'
+        '<div style="color:var(--muted);font-size:13px;line-height:1.6;max-width:580px;margin:0 auto">O mapa cruza '
+        '<b>tudo o que foi descoberto</b> — subdomínios, IPs/portas, reputação, CVE/KEV/CVSS, postura de e-mail, '
+        'credenciais vazadas e domínios sósia. Rode os scanners (<code>sudo argus-submonitor</code>, '
+        '<code>sudo argus-monitor --tcp</code>, etc.) — o grafo aparece aqui em seguida.</div>'
+        '<div style="margin-top:16px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap">'
+        '<a class="btn btn-pdf" href="/dashboard.html" style="text-decoration:none">Ver o Dashboard</a></div></div>'
+        # Serviço web indisponível (este módulo depende do argus-web para juntar os bancos).
+        '<div id="corr-off" class="panel panel-pad" style="display:none;text-align:center;padding:40px 24px">'
+        '<div style="font-weight:700;font-size:15px;color:var(--text);margin-bottom:6px">Serviço de correlação indisponível</div>'
+        '<div style="color:var(--muted);font-size:13px;line-height:1.6;max-width:560px;margin:0 auto">Este mapa é montado '
+        'pelo serviço <code>argus-web</code> (junta os bancos dos scanners em tempo real). '
+        'Verifique se o serviço está ativo: <code>systemctl status argus-web</code>.</div></div>'
+        # Conteúdo principal (escondido até carregar)
+        '<div id="corr-main" style="display:none">'
+        '<div class="toolbar no-print">'
+        '<select id="corr-camp" aria-label="Filtrar por campanha"></select>'
+        '<div class="corr-legend">'
+        '<span>cor = criticidade:</span>'
+        '<span><span class="dot" style="background:#f43f5e"></span>crítico</span>'
+        '<span><span class="dot" style="background:#fb923c"></span>alto</span>'
+        '<span><span class="dot" style="background:#fbbf24"></span>médio</span>'
+        '<span><span class="dot" style="background:#34d399"></span>baixo</span>'
+        '<span><span class="dot" style="background:#8a99b4"></span>info</span>'
+        '<span style="color:#fb923c">&#9711; anel = IP compartilhado</span></div></div>'
+        '<div class="kpi-grid" style="max-width:540px;margin-bottom:14px">'
+        '<div class="kpi"><div class="v" id="corr-nsub">&mdash;</div><div class="l">Subdomínios</div></div>'
+        '<div class="kpi"><div class="v" id="corr-nip">&mdash;</div><div class="l">IPs únicos</div></div>'
+        '<div class="kpi sev-abus"><div class="v" id="corr-nshared">&mdash;</div><div class="l">IPs compartilhados</div></div></div>'
+        '<div id="corr-wrap"><svg id="corr-svg" viewBox="0 0 960 600" role="img" '
+        'aria-label="Grafo de correlação entre campanhas, subdomínios e IPs. Use a lista acessível abaixo para os detalhes."></svg></div>'
+        '<p class="page-sub" style="margin-top:8px">Clique em um nó para <b>expandir</b> (campanha &rarr; domínios &rarr; '
+        'subdomínios e achados &rarr; IPs) e ver os <b>detalhes do enriquecimento</b>. Anel pontilhado = pode expandir; '
+        'IP com anel <span style="color:#fb923c">laranja</span> é servido por vários subdomínios (raio de explosão).</p>'
+        '<div id="corr-detail" class="panel panel-pad"></div>'
+        '<details style="margin-top:14px"><summary style="cursor:pointer;color:var(--muted);font-weight:600">'
+        'Lista acessível (subdomínio &rarr; IP)</summary>'
+        '<div id="corr-list" class="tbl-wrap" style="margin-top:10px"></div></details>'
+        '</div>'
+    )
+    return _portal_shell(
+        "correlacao", "Correlação",
+        "Mapa de toda a superfície: domínios, subdomínios, IPs e achados (e-mail, credenciais, typosquat) — "
+        "com enriquecimento e cor por criticidade",
+        body, extra_script=_CORR_SCRIPT)
 
 
 def build_login_page() -> str:
@@ -4087,6 +4296,8 @@ def write_portal(docroot: str) -> None:
     (d / "index.html").write_text(build_index(), encoding="utf-8")
     (d / "dashboard.html").write_text(build_dashboard(), encoding="utf-8")
     (d / "risk-guide.html").write_text(build_risk_guide(), encoding="utf-8")
+    # Página de Correlação — lê os relatórios client-side; sempre regerada.
+    (d / "correlacao.html").write_text(build_correlation_page(), encoding="utf-8")
     for name, active, label in [
         ("findings_report.html",    "findings",    "Gestão de Achados"),
         ("monitor_report.html",     "monitor",     "Monitor de Portas"),

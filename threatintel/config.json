@@ -24,6 +24,13 @@
     "cisa_kev_request_timeout": 30,
     "cisa_kev_cache_ttl_hours": 24,
     "cisa_kev_forces_critico": true,
+    "nvd_api_key": "SUA_API_KEY_AQUI",
+    "nvd_request_timeout": 20,
+    "nvd_daily_request_limit": 1000,
+    "nvd_cache_ttl_hours": 168,
+    "nvd_top_cves": 30,
+    "nvd_cvss_critico": 9.0,
+    "nvd_cvss_alto": 7.0,
     "db_path": "CONFIGURADO_PELO_INSTALADOR",
     "log_dir": "CONFIGURADO_PELO_INSTALADOR"
 }

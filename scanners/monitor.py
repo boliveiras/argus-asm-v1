@@ -79,6 +79,11 @@ except ImportError:
     _cisa_kev = None  # enriquecimento KEV (CVE explorada in-the-wild) opcional
 
 try:
+    from threatintel.providers import nvd as _nvd
+except ImportError:
+    _nvd = None  # enriquecimento NVD (CVSS oficial por CVE) opcional
+
+try:
     from reporter import generate_monitor_report
 except ImportError:
     print("[ERRO] reporter.py não encontrado no PYTHONPATH.")
@@ -276,7 +281,10 @@ def init_database():
             idb_tags       TEXT DEFAULT '',
             idb_ports      TEXT DEFAULT '',
             kev_count      INTEGER DEFAULT 0,
-            kev_cves       TEXT DEFAULT ''
+            kev_cves       TEXT DEFAULT '',
+            nvd_max_score  REAL DEFAULT 0,
+            nvd_severity   TEXT DEFAULT '',
+            nvd_scores     TEXT DEFAULT ''
         )
     """)
     # Migração idempotente: adiciona colunas que faltarem em bancos antigos.
@@ -289,7 +297,9 @@ def init_database():
                      ("abuse_last","TEXT DEFAULT ''"),("abuse_source","TEXT DEFAULT ''"),
                      ("idb_vuln_count","INTEGER DEFAULT 0"),("idb_vulns","TEXT DEFAULT ''"),
                      ("idb_tags","TEXT DEFAULT ''"),("idb_ports","TEXT DEFAULT ''"),
-                     ("kev_count","INTEGER DEFAULT 0"),("kev_cves","TEXT DEFAULT ''")]:
+                     ("kev_count","INTEGER DEFAULT 0"),("kev_cves","TEXT DEFAULT ''"),
+                     ("nvd_max_score","REAL DEFAULT 0"),("nvd_severity","TEXT DEFAULT ''"),
+                     ("nvd_scores","TEXT DEFAULT ''")]:
         try: cursor.execute(f"ALTER TABLE scans ADD COLUMN {col} {dfn}")
         except sqlite3.OperationalError: pass
     for col in ("waf",):
@@ -570,6 +580,14 @@ def _kev_cols(result: dict) -> tuple:
     return (int(k.get("kev_count", 0) or 0), ",".join(k.get("kev_cves", [])[:50]))
 
 
+def _nvd_cols(result: dict) -> tuple:
+    """Resumo do NVD (CVSS oficial) para persistir: (maior CVSS, severidade, mapa
+    compacto 'CVE:score,...'). Permite o relatório reconstruir do banco."""
+    n = result.get("nvd") or {}
+    scores = ",".join(f"{c}:{s}" for c, s in list((n.get("scores") or {}).items())[:50])
+    return (float(n.get("max_cvss", 0) or 0), str(n.get("max_severity", "") or ""), scores)
+
+
 def _abuse_cols(result: dict) -> tuple:
     """Extrai o resumo do AbuseIPDB (por IP) de um resultado para persistir no
     banco. Sem dados -> score -1 (= 'sem reputação')."""
@@ -604,6 +622,7 @@ def process_results(scan_results: list[dict], scanned_protocols=("tcp",)):
         ab = _abuse_cols(result)
         idb = _idb_cols(result)
         kev = _kev_cols(result)
+        nvd = _nvd_cols(result)
         cursor.execute("SELECT id, status FROM scans WHERE ip=? AND port=? AND protocol=? ORDER BY id DESC LIMIT 1", key)
         existing = cursor.fetchone()
         if existing:
@@ -613,19 +632,21 @@ def process_results(scan_results: list[dict], scanned_protocols=("tcp",)):
             cursor.execute(
                 "UPDATE scans SET last_seen=?,service=?,banner=?,state=?,risk=?,status=?,asn=?,campanha=?,"
                 "abuse_score=?,abuse_country=?,abuse_isp=?,abuse_usage=?,abuse_tor=?,abuse_reports=?,abuse_last=?,abuse_source=?,"
-                "idb_vuln_count=?,idb_vulns=?,idb_tags=?,idb_ports=?,kev_count=?,kev_cves=? WHERE id=?",
+                "idb_vuln_count=?,idb_vulns=?,idb_tags=?,idb_ports=?,kev_count=?,kev_cves=?,"
+                "nvd_max_score=?,nvd_severity=?,nvd_scores=? WHERE id=?",
                 (now, result["service"], result["banner"], result["state"],
-                 result["risk"], new_status, result["asn"], result["campanha"], *ab, *idb, *kev, existing[0]))
+                 result["risk"], new_status, result["asn"], result["campanha"], *ab, *idb, *kev, *nvd, existing[0]))
         else:
             result["status"] = "NOVO"; novos.append(result); syslog_port(result)
             cursor.execute(
                 "INSERT INTO scans (campanha,target,resolved_ip,ip,port,protocol,service,banner,state,ip_type,asn,risk,first_seen,last_seen,status,"
                 "abuse_score,abuse_country,abuse_isp,abuse_usage,abuse_tor,abuse_reports,abuse_last,abuse_source,"
-                "idb_vuln_count,idb_vulns,idb_tags,idb_ports,kev_count,kev_cves) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "idb_vuln_count,idb_vulns,idb_tags,idb_ports,kev_count,kev_cves,"
+                "nvd_max_score,nvd_severity,nvd_scores) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (result["campanha"],result["target"],result["resolved_ip"],result["ip"],result["port"],
                  result["protocol"],result["service"],result["banner"],result["state"],result["ip_type"],
-                 result["asn"],result["risk"],now,now,"NOVO", *ab, *idb, *kev))
+                 result["asn"],result["risk"],now,now,"NOVO", *ab, *idb, *kev, *nvd))
 
     # Fechar apenas portas do(s) protocolo(s) varrido(s) E sem serem vistas há
     # ≥ CLOSE_GRACE_DAYS (carência contra "misses" transitórios).
@@ -649,12 +670,14 @@ def process_results(scan_results: list[dict], scanned_protocols=("tcp",)):
 
 _REPORT_COLS = ("campanha,target,resolved_ip,ip,port,protocol,service,banner,ip_type,asn,risk,status,"
                 "abuse_score,abuse_country,abuse_isp,abuse_usage,abuse_tor,abuse_reports,abuse_last,abuse_source,"
-                "idb_vuln_count,idb_vulns,idb_tags,idb_ports,kev_count,kev_cves")
+                "idb_vuln_count,idb_vulns,idb_tags,idb_ports,kev_count,kev_cves,"
+                "nvd_max_score,nvd_severity,nvd_scores")
 
 def _row_to_result(row) -> dict:
     (campanha,target,resolved_ip,ip,port,protocol,service,banner,ip_type,asn,risk,status,
      ab_score,ab_country,ab_isp,ab_usage,ab_tor,ab_reports,ab_last,ab_source,
-     idb_vc,idb_vulns,idb_tags,idb_ports,kev_count,kev_cves) = row
+     idb_vc,idb_vulns,idb_tags,idb_ports,kev_count,kev_cves,
+     nvd_max_score,nvd_severity,nvd_scores) = row
     abuse = None
     if ab_score is not None and ab_score >= 0:
         abuse = {"abuse_confidence_score":ab_score,"country_code":ab_country or "","isp":ab_isp or "",
@@ -673,10 +696,21 @@ def _row_to_result(row) -> dict:
     if (kev_count or 0) > 0:
         kev = {"kev_count": int(kev_count or 0),
                "kev_cves": [c for c in (kev_cves or "").split(",") if c]}
+    nvd = None
+    if (nvd_max_score or 0) > 0:
+        scores = {}
+        for pair in (nvd_scores or "").split(","):
+            if ":" in pair:
+                _c, _s = pair.rsplit(":", 1)
+                try: scores[_c] = float(_s)
+                except ValueError: pass
+        nvd = {"count": len(scores), "max_cvss": float(nvd_max_score or 0),
+               "max_severity": nvd_severity or "", "scores": scores,
+               "worst_cve": max(scores, key=scores.get) if scores else ""}
     return {"campanha":campanha or "","target":target or "","resolved_ip":resolved_ip or "",
             "ip":ip or "","port":port,"protocol":protocol or "","service":service or "",
             "banner":banner or "","state":"open","ip_type":ip_type or "","asn":asn or "",
-            "risk":risk or "BAIXO","status":status or "","abuse":abuse,"internetdb":internetdb,"kev":kev}
+            "risk":risk or "BAIXO","status":status or "","abuse":abuse,"internetdb":internetdb,"kev":kev,"nvd":nvd}
 
 def load_report_rows():
     """Monta a entrada do relatório a partir do estado COMPLETO do banco (TCP+UDP):
@@ -835,6 +869,15 @@ def main():
                         r["risk"] = _cisa_kev.kev_elevate(r["risk"], r.get("kev"))
                 except Exception as _exc:
                     print(f"[CISA-KEV] enriquecimento ignorado: {_exc}")
+
+            # NVD — pontua (CVSS oficial) as CVEs do InternetDB e eleva por severidade.
+            if _nvd is not None:
+                try:
+                    _nvd.enrich_results(all_results)
+                    for r in all_results:
+                        r["risk"] = _nvd.nvd_elevate(r["risk"], r.get("nvd"))
+                except Exception as _exc:
+                    print(f"[NVD] enriquecimento ignorado: {_exc}")
 
         # Diff escopado ao(s) protocolo(s) varrido(s) — não fecha o outro protocolo.
         novos, reincidentes, corrigidos = process_results(all_results, scanned_protocols=modes)

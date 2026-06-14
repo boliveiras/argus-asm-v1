@@ -31,14 +31,14 @@ lembra do que já foi resolvido.
 ## Como funciona?
 
 Você aponta os alvos, os scanners descobrem o que está exposto, a inteligência de
-ameaças enriquece — inclusive cruzando os CVEs encontrados com a **CISA KEV** (a lista
-de vulnerabilidades **exploradas in-the-wild**, que sobem a criticidade e ganham um
-selo **KEV** no ativo) — e tudo vira achado:
+ameaças enriquece — cruzando os CVEs encontrados com a **CISA KEV** (vulnerabilidades
+**exploradas in-the-wild**, que ganham um selo **KEV**) e com a **NVD** (a nota **CVSS**
+oficial de cada falha) — e tudo vira achado:
 
 ```mermaid
 flowchart LR
     A["Seus alvos<br/>(IPs e domínios)"] --> SC
-    TI["Inteligência de ameaças<br/>AbuseIPDB · Shodan · CISA KEV · crt.sh · RDAP"] --> SC
+    TI["Inteligência de ameaças<br/>AbuseIPDB · Shodan · CISA KEV · NVD · crt.sh · RDAP"] --> SC
     SC["Os 5 scanners<br/>Portas · Subdomínios · Credenciais<br/>E-mail · Domínios sósia"] --> DB[("Achados<br/>argus.db")]
     DB --> P["Portal web<br/>(você vê e trata)"]
     DB --> R["Relatórios + logs"]
@@ -75,6 +75,39 @@ O Argus separa **o que o scanner vê** (STATUS, automático) de **o que o analis
 O único ponto onde os dois níveis se tocam: quando o scanner marca um item como
 **Corrigido**, o achado correspondente vira **Mitigado** automaticamente. O histórico fica
 sempre guardado.
+
+## Tudo conectado — o mapa de correlação
+
+Achado solto conta pouco. O que importa é como as coisas se ligam: **um mesmo IP
+servindo vários subdomínios** é um ponto único de falha; uma **CVE crítica** nesse IP
+vira o raio de explosão de tudo que depende dele. O **mapa de correlação** mostra isso
+como um grafo: você clica e expande — campanha → domínios → subdomínios e achados → IPs —
+e cada bolinha tem a **cor da sua criticidade**. Clicar em qualquer item abre o que se
+sabe dele (o enriquecimento).
+
+Exemplo (dados fictícios): `api` e `vpn` resolvem para o **mesmo IP**, que está exposto
+e tem uma CVE explorada:
+
+```mermaid
+flowchart TD
+    C["ACME · campanha"]:::camp --> D["acme.com.br"]:::crit
+    D --> S2["api.acme.com.br"]:::alto
+    D --> S3["vpn.acme.com.br"]:::crit
+    D --> EM["postura de e-mail<br/>SPF ok · DMARC fraco"]:::alto
+    D --> CR["credenciais vazadas<br/>3 funcionários"]:::alto
+    S2 --> IP["203.0.113.20<br/>(IP compartilhado)"]:::crit
+    S3 --> IP
+    IP --> E["ASN AS16509 Amazon · reputação 62%<br/>portas 22/443 · CVE-2021-44228 (KEV) · CVSS 10.0"]:::info
+
+    classDef camp fill:#eef0fe,stroke:#818cf8,color:#23235c
+    classDef crit fill:#fde4e4,stroke:#f43f5e,color:#7a1d1d
+    classDef alto fill:#fdebd9,stroke:#fb923c,color:#7a3d12
+    classDef info fill:#eef2f7,stroke:#8a99b4,color:#33415c
+```
+
+No exemplo, clicar no IP compartilhado revela a tabelinha de enriquecimento — provedor
+(ASN), reputação, portas abertas, CVE/KEV e nota CVSS — e fica claro que **dois serviços
+caem juntos** se aquele host for comprometido.
 
 ## Como instalar?
 

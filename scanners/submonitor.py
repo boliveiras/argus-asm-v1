@@ -75,6 +75,11 @@ try:
 except ImportError:
     _cisa_kev = None  # enriquecimento KEV (CVE explorada in-the-wild) opcional
 
+try:
+    from threatintel.providers import nvd as _nvd
+except ImportError:
+    _nvd = None  # enriquecimento NVD (CVSS oficial por CVE) opcional
+
 # Provider crt.sh (Certificate Transparency) — descoberta passiva de subdomínios
 try:
     from threatintel.providers import crtsh
@@ -212,7 +217,6 @@ def syslog_host(result: dict):
                  environment = str(result.get("environment", "")),
                  risk        = risk,
                  http_status = str(result.get("http_status", "")),
-                 waf         = str(result.get("waf",         "NAO")),
                  dnssec      = str(result.get("dnssec",      "DESABILITADO")),
                  ssl_status  = str((result.get("ssl") or {}).get("status","SEM CERTIFICADO")),
                  origem      = str(result.get("origem",      "wordlist")),
@@ -264,14 +268,13 @@ def init_database():
             ip_type     TEXT,
             environment TEXT,
             http_status TEXT,
-            waf         TEXT,
             risk        TEXT,
             first_seen  TEXT,
             last_seen   TEXT,
             status      TEXT
         )
     """)
-    for col, dfn in [("campanha","TEXT DEFAULT ''"),("waf","TEXT DEFAULT 'NAO'"),
+    for col, dfn in [("campanha","TEXT DEFAULT ''"),
                      ("dnssec","TEXT DEFAULT 'DESABILITADO'"),
                      ("ssl_status","TEXT DEFAULT 'SEM CERTIFICADO'"),
                      ("ssl_expiry","TEXT DEFAULT ''"),
@@ -283,7 +286,7 @@ def init_database():
                      ("whois_registrar","TEXT DEFAULT ''")]:
         try: cursor.execute(f"ALTER TABLE subdomains ADD COLUMN {col} {dfn}")
         except sqlite3.OperationalError: pass
-    for col in ("title",):
+    for col in ("title", "waf"):
         try: cursor.execute(f"ALTER TABLE subdomains DROP COLUMN {col}")
         except sqlite3.OperationalError: pass
     conn.commit(); conn.close()
@@ -397,7 +400,7 @@ async def resolve_asn_bulk(session: aiohttp.ClientSession, results: list[dict]) 
         for idx in indices: results[idx]["asn"] = resolved
 
 # ============================================================
-# ENVIRONMENT / WAF / RISK
+# ENVIRONMENT / RISK
 # ============================================================
 
 def detect_environment(hostname: str) -> str:
@@ -406,111 +409,14 @@ def detect_environment(hostname: str) -> str:
     if any(x in h for x in ("hml","hom","homolog")): return "HML"
     return "PROD"
 
-# Detecção passiva via headers e NOMES de cookies. Cada assinatura é:
-#   (tipo, chave, agulha|None, rótulo)
-#   tipo "h" = header (agulha = substring exigida no valor, ou None p/ só existir)
-#   tipo "c" = nome de cookie (substring no conjunto de nomes de cookies)
-#
-# Assinaturas de WAF DEDICADO (produto de segurança de aplicação) — sinal forte
-# de que há proteção de aplicação ativa. Têm precedência sobre CDN.
-_WAF_SIGS = [
-    ("h", "x-sucuri-id",             None,        "Sucuri"),
-    ("h", "x-sucuri-cache",          None,        "Sucuri"),
-    ("h", "x-iinfo",                 None,        "Imperva/Incapsula"),
-    ("h", "x-cdn",                   "incapsula", "Imperva/Incapsula"),
-    ("h", "x-cdn",                   "imperva",   "Imperva"),
-    ("h", "x-protected-by",          "sucuri",    "Sucuri"),
-    ("h", "x-protected-by",          "wordfence", "Wordfence"),
-    ("h", "x-reblaze-protection",    None,        "Reblaze"),
-    ("h", "x-barracuda-connect",     None,        "Barracuda"),
-    ("h", "cf-mitigated",            None,        "Cloudflare WAF"),
-    ("h", "x-wzws-requested-method", None,        "WangZhan WAF"),
-    ("h", "server",                  "mod_security", "ModSecurity"),
-    ("h", "server",                  "modsecurity",  "ModSecurity"),
-    ("h", "server",                  "fortiweb",  "FortiWeb"),
-    ("h", "server",                  "barracuda", "Barracuda"),
-    ("h", "server",                  "airlock",   "Airlock"),
-    ("c", "incap_ses",               None,        "Imperva/Incapsula"),
-    ("c", "visid_incap",             None,        "Imperva/Incapsula"),
-    ("c", "aws-waf-token",           None,        "AWS WAF"),
-    ("c", "awswaf",                  None,        "AWS WAF"),
-    ("c", "barra_counter_session",   None,        "Barracuda"),
-    ("c", "sucuri",                  None,        "Sucuri"),
-]
-
-# Assinaturas de CDN / proxy reverso. ATENÇÃO: indicam proxy na frente do host,
-# NÃO necessariamente um WAF ativo (o WAF pode estar desligado). Por isso o rótulo
-# distingue "CDN" de "WAF". Confirmar WAF ativo exige sonda comportamental.
-_CDN_SIGS = [
-    ("h", "cf-ray",                  None,        "Cloudflare"),
-    ("h", "cf-cache-status",         None,        "Cloudflare"),
-    ("h", "server",                  "cloudflare", "Cloudflare"),
-    ("c", "__cf_bm",                 None,        "Cloudflare"),
-    ("c", "__cfduid",                None,        "Cloudflare"),
-    ("h", "x-amz-cf-id",             None,        "Amazon CloudFront"),
-    ("h", "x-amz-cf-pop",            None,        "Amazon CloudFront"),
-    ("h", "server",                  "cloudfront", "Amazon CloudFront"),
-    ("h", "x-amzn-requestid",        None,        "AWS"),
-    ("h", "x-amzn-trace-id",         None,        "AWS"),
-    ("h", "server",                  "awselb",    "AWS ELB"),
-    ("c", "awsalb",                  None,        "AWS ELB"),
-    ("c", "awsalbcors",              None,        "AWS ELB"),
-    ("h", "x-akamai-transformed",    None,        "Akamai"),
-    ("h", "akamai-cache-status",     None,        "Akamai"),
-    ("h", "akamai-grn",              None,        "Akamai"),
-    ("c", "ak_bmsc",                 None,        "Akamai"),
-    ("h", "x-fastly-request-id",     None,        "Fastly"),
-    ("h", "x-azure-ref",             None,        "Azure Front Door"),
-    ("h", "x-msedge-ref",            None,        "Azure Front Door"),
-    ("h", "server",                  "bigip",     "F5 BIG-IP"),
-    ("c", "bigipserver",             None,        "F5 BIG-IP"),
-]
-
-def detect_waf(headers: dict) -> str:
-    """
-    Detecção PASSIVA de WAF/CDN a partir de headers e nomes de cookies.
-    Retorna "WAF (<vendor>)", "CDN (<vendor>)" ou "NAO".
-
-    Limitação: a presença de CDN (Cloudflare/CloudFront/Fastly/Akamai/...) indica
-    proxy reverso, NÃO garante WAF ativo. Confirmar exige sonda comportamental
-    (enviar payload suspeito e observar bloqueio) — não realizada aqui.
-    """
-    h = {k.lower(): str(v).lower() for k, v in headers.items()}
-    # Nomes de cookies agregados por fetch_headers na chave sintética.
-    cookies = h.get("set-cookie-names", "")
-
-    def _match(sigs):
-        for typ, key, needle, label in sigs:
-            if typ == "h":
-                if key in h and (needle is None or needle in h[key]):
-                    return label
-            elif key in cookies:   # tipo "c": nome de cookie
-                return label
-        return None
-
-    waf = _match(_WAF_SIGS)
-    if waf:
-        return f"WAF ({waf})"
-    cdn = _match(_CDN_SIGS)
-    if cdn:
-        return f"CDN ({cdn})"
-    return "NAO"
-
-_MGMT_KEYWORDS = [
-    "grafana","prometheus","kibana","elasticsearch","zabbix","nagios","icinga","netdata",
-    "influxdb","jenkins","gitlab","sonarqube","nexus","artifactory","jira","confluence",
-    "bitbucket","portainer","rancher","k8s","kubernetes","traefik","airflow",
-    "phpmyadmin","adminer","pgadmin","redisinsight","vault","consul","keycloak",
-    "swagger","api-docs","ftp","sftp","vpn","rdp",
-]
-
 def calculate_base_risk(hostname: str, ip_type: str = "PUBLICO",
-                        environment: str = "PROD", waf: str = "NAO") -> str:
-    is_exposed = ip_type == "PUBLICO" and waf == "NAO"
-    h = hostname.lower()
+                        environment: str = "PROD") -> str:
+    # Risco base sem WAF (detecção passiva de WAF foi removida por gerar falso
+    # positivo): todo subdomínio em IP público está exposto. DEV/HML expostos são
+    # CRÍTICOS; demais públicos, ALTO; IP privado, BAIXO.
+    is_exposed = ip_type == "PUBLICO"
     if is_exposed and environment in ("DEV","HML"): return "CRITICO"
     if is_exposed: return "ALTO"
-    if ip_type == "PUBLICO" and any(kw in h for kw in _MGMT_KEYWORDS): return "MEDIO"
     return "BAIXO"
 
 # ============================================================
@@ -539,17 +445,9 @@ _ua_idx = 0
 def _next_ua() -> str:
     global _ua_idx; ua = _USER_AGENTS[_ua_idx % len(_USER_AGENTS)]; _ua_idx += 1; return ua
 
-def _headers_plus_cookies(resp) -> dict:
-    """dict de headers + chave sintética 'set-cookie-names' com os NOMES dos
-    cookies (em minúsculas). Usada só pelo detect_waf para assinaturas por cookie."""
-    h = dict(resp.headers)
-    try:
-        names = " ".join(resp.cookies.keys()).lower()
-        if names:
-            h["set-cookie-names"] = names
-    except Exception:
-        pass
-    return h
+def _resp_headers(resp) -> dict:
+    """dict simples dos headers da resposta HTTP."""
+    return dict(resp.headers)
 
 async def fetch_headers(session: aiohttp.ClientSession, hostname: str) -> tuple[str, dict]:
     _timeout = aiohttp.ClientTimeout(total=3)
@@ -558,12 +456,12 @@ async def fetch_headers(session: aiohttp.ClientSession, hostname: str) -> tuple[
         url = f"{scheme}://{hostname}"
         try:
             async with session.head(url, ssl=False, headers=hdrs, allow_redirects=False, timeout=_timeout) as resp:
-                if resp.status != 405: return str(resp.status), _headers_plus_cookies(resp)
+                if resp.status != 405: return str(resp.status), _resp_headers(resp)
         except Exception: pass
         try:
             async with session.get(url, ssl=False, headers={**hdrs,"Range":"bytes=0-0"},
                                    allow_redirects=False, timeout=_timeout) as resp:
-                await resp.read(); return str(resp.status), _headers_plus_cookies(resp)
+                await resp.read(); return str(resp.status), _resp_headers(resp)
         except Exception: continue
     return "-", {}
 
@@ -730,9 +628,8 @@ async def probe_subdomain(session: aiohttp.ClientSession, entry: dict,
                           http_sem: asyncio.Semaphore,
                           resolver: aiodns.DNSResolver) -> dict:
     async with http_sem:
-        http_status, hdrs = await fetch_headers(session, entry["hostname"])
-    waf  = detect_waf(hdrs)
-    risk = calculate_base_risk(entry["hostname"], entry["ip_type"], entry["environment"], waf)
+        http_status, _hdrs = await fetch_headers(session, entry["hostname"])
+    risk = calculate_base_risk(entry["hostname"], entry["ip_type"], entry["environment"])
 
     # DNSSEC — verifica se a zona está assinada
     dnssec = await check_dnssec(resolver, entry["hostname"])
@@ -743,7 +640,7 @@ async def probe_subdomain(session: aiohttp.ClientSession, entry: dict,
     if http_status not in ("-", ""):
         ssl_info = await check_ssl_cert(entry["hostname"])
 
-    return {**entry, "http_status":http_status, "waf":waf, "risk":risk,
+    return {**entry, "http_status":http_status, "risk":risk,
             "dnssec":dnssec, "ssl":ssl_info}
 
 def _build_candidates(campaigns: list[tuple[str, list[str]]],
@@ -878,9 +775,9 @@ def process_results(results: list[dict]):
             new_status = "RESSURGIDO" if existing[1] == "CORRIGIDO" else "REINCIDENTE"
             result["status"] = new_status; reincidentes.append(result); syslog_host(result)
             cursor.execute(
-                "UPDATE subdomains SET campanha=?,ip=?,cname=?,asn=?,ip_type=?,environment=?,http_status=?,waf=?,risk=?,dnssec=?,ssl_status=?,ssl_expiry=?,origem=?,whois_creation=?,whois_expiry=?,whois_age_days=?,whois_status=?,whois_registrar=?,last_seen=?,status=? WHERE id=?",
+                "UPDATE subdomains SET campanha=?,ip=?,cname=?,asn=?,ip_type=?,environment=?,http_status=?,risk=?,dnssec=?,ssl_status=?,ssl_expiry=?,origem=?,whois_creation=?,whois_expiry=?,whois_age_days=?,whois_status=?,whois_registrar=?,last_seen=?,status=? WHERE id=?",
                 (result["campanha"],result["ip"],result["cname"],result["asn"],result["ip_type"],
-                 result["environment"],result["http_status"],result.get("waf","NAO"),result["risk"],
+                 result["environment"],result["http_status"],result["risk"],
                  result.get("dnssec","DESABILITADO"),
                  (result.get("ssl") or {}).get("status","SEM CERTIFICADO"),
                  (result.get("ssl") or {}).get("expiry_date",""),
@@ -894,10 +791,10 @@ def process_results(results: list[dict]):
         else:
             result["status"] = "NOVO"; novos.append(result); syslog_host(result)
             cursor.execute(
-                "INSERT INTO subdomains (campanha,hostname,ip,cname,asn,ip_type,environment,http_status,waf,risk,dnssec,ssl_status,ssl_expiry,origem,whois_creation,whois_expiry,whois_age_days,whois_status,whois_registrar,first_seen,last_seen,status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO subdomains (campanha,hostname,ip,cname,asn,ip_type,environment,http_status,risk,dnssec,ssl_status,ssl_expiry,origem,whois_creation,whois_expiry,whois_age_days,whois_status,whois_registrar,first_seen,last_seen,status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (result["campanha"],result["hostname"],result["ip"],result["cname"],result["asn"],
                  result["ip_type"],result["environment"],result["http_status"],
-                 result.get("waf","NAO"),result["risk"],
+                 result["risk"],
                  result.get("dnssec","DESABILITADO"),
                  (result.get("ssl") or {}).get("status","SEM CERTIFICADO"),
                  (result.get("ssl") or {}).get("expiry_date",""),
@@ -917,7 +814,7 @@ def process_results(results: list[dict]):
         if old_hostname not in current_hosts:
             entry = {"hostname":old_hostname,"ip":old_ip or "","campanha":old_campanha or "",
                      "risk":"INFO","status":"CORRIGIDO","asn":"","environment":"",
-                     "http_status":"","waf":"NAO","abuse":None,
+                     "http_status":"","abuse":None,
                      "dnssec":"DESABILITADO","origem":"wordlist",
                      "ssl":{"status":"SEM CERTIFICADO","expiry_date":""},
                      "whois":{"creation_date":"","expiration_date":"","age_days":None,
@@ -973,6 +870,78 @@ def _fmt_duration(seconds: int) -> str:
     if m < 60: return f"{m}m {s:02d}s"
     h, m = divmod(m, 60); return f"{h}h {m:02d}m {s:02d}s"
 
+
+def feed_monitor_targets(results: list[dict], campaigns: list[tuple[str, list[str]]]) -> None:
+    """Realimenta os alvos do monitor de portas com os IPs PÚBLICOS resolvidos dos
+    subdomínios. Para CADA campanha do submonitor, garante o arquivo correspondente
+    em monitor/targets/EMPRESA.txt (cria se não existir) e anexa os IPs novos como
+    'IP  # hostname' — o comentário marca o que foi resolvido automaticamente. Faz
+    dedupe contra o que já está no arquivo (entradas manuais são preservadas).
+    Nunca levanta exceção."""
+    # monitor/targets é irmão de submonitor/ (ambos sob /etc/argus). chdir já garante
+    # cwd no diretório do submonitor; resolvemos pelo __file__ para robustez.
+    mon_targets = Path(__file__).resolve().parent.parent / "monitor" / "targets"
+    try:
+        mon_targets.mkdir(parents=True, exist_ok=True)
+    except Exception as exc:
+        print(f"[FEED] não foi possível acessar {mon_targets}: {exc}")
+        return
+
+    # IP público -> primeiro hostname que resolveu para ele, por campanha.
+    by_camp: dict[str, dict[str, str]] = {}
+    for r in results:
+        if r.get("ip_type") != "PUBLICO":
+            continue
+        ip = (r.get("ip") or "").strip()
+        camp = (r.get("campanha") or "").strip()
+        if not ip or not camp:
+            continue
+        by_camp.setdefault(camp, {}).setdefault(ip, (r.get("hostname") or "").strip())
+
+    total_added = 0
+    for camp, _domains in campaigns:
+        fpath = mon_targets / f"{camp}.txt"
+        created = not fpath.exists()
+        existing: set[str] = set()
+        if not created:
+            try:
+                for raw in fpath.read_text(encoding="utf-8").splitlines():
+                    val = raw.split("#", 1)[0].strip()   # ignora comentário inline
+                    if val:
+                        existing.add(val)
+            except Exception:
+                pass
+
+        ipmap = by_camp.get(camp, {})
+        new_lines = [f"{ip}  # {host}".rstrip()
+                     for ip, host in sorted(ipmap.items()) if ip not in existing]
+
+        if created:
+            # Auto-cria a campanha no monitor com o mesmo nome (mesmo sem IPs novos).
+            header = f"# Campanha {camp} — alvos do monitor (IPs auto-resolvidos do submonitor)\n"
+            try:
+                fpath.write_text(header + ("\n".join(new_lines) + "\n" if new_lines else ""),
+                                 encoding="utf-8")
+                total_added += len(new_lines)
+                print(f"[FEED] {camp}.txt criado em monitor/targets (+{len(new_lines)} IP público(s))")
+            except Exception as exc:
+                print(f"[FEED] falha ao criar {fpath}: {exc}")
+            continue
+
+        if not new_lines:
+            continue
+        try:
+            with open(fpath, "a", encoding="utf-8") as f:
+                f.write("\n".join(new_lines) + "\n")
+            total_added += len(new_lines)
+            print(f"[FEED] {camp}.txt atualizado: +{len(new_lines)} IP público(s) -> monitor/targets")
+        except Exception as exc:
+            print(f"[FEED] falha ao escrever {fpath}: {exc}")
+
+    if total_added:
+        print(f"[FEED] Total: {total_added} IP(s) público(s) realimentados nos alvos do monitor")
+
+
 def main():
     if "--install-cron" in sys.argv: setup_cron(); return
 
@@ -1011,8 +980,7 @@ def main():
             print()
             _ti_enrich(results)
             for r in results:
-                base = calculate_base_risk(r["hostname"], r["ip_type"],
-                                           r["environment"], r.get("waf","NAO"))
+                base = calculate_base_risk(r["hostname"], r["ip_type"], r["environment"])
                 r["risk"] = _ti_risk(base, r["ip_type"], r.get("abuse"))
 
             # Shodan InternetDB (vulnerabilidades/CVE) — enriquece e eleva (leve)
@@ -1034,7 +1002,22 @@ def main():
                 except Exception as _exc:
                     print(f"[CISA-KEV] enriquecimento ignorado: {_exc}")
 
+            # NVD — pontua (CVSS oficial) as CVEs do InternetDB e eleva por severidade.
+            if _nvd is not None:
+                try:
+                    _nvd.enrich_results(results)
+                    for r in results:
+                        r["risk"] = _nvd.nvd_elevate(r["risk"], r.get("nvd"))
+                except Exception as _exc:
+                    print(f"[NVD] enriquecimento ignorado: {_exc}")
+
         novos, reincidentes, removidos = process_results(results)
+
+        # ── Realimenta os alvos do monitor com os IPs públicos resolvidos ──
+        try:
+            feed_monitor_targets(results, campaigns)
+        except Exception as _exc:
+            print(f"[FEED] realimentação de alvos ignorada (não crítico): {_exc}")
 
         # ── Store central de achados (argus.db) — ADITIVO ─────────
         # Cada subdomínio ativo é um ativo exposto rastreável (severidade real).
@@ -1047,7 +1030,7 @@ def main():
                     title_of=lambda r: r.get("hostname", ""),
                     campanha_of=lambda r: r.get("campanha", ""),
                     details_of=lambda r: {"ip": r.get("ip",""), "environment": r.get("environment",""),
-                                          "http_status": r.get("http_status",""), "waf": r.get("waf","")},
+                                          "http_status": r.get("http_status","")},
                     corrected=removidos,
                     resurged=[r for r in reincidentes if r.get("status") == "RESSURGIDO"],
                     run_id=str(_run_id or ""))

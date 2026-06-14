@@ -49,6 +49,8 @@ Produção: serviço systemd como o app user, atrás do Apache (Fase 2.1b).
 """
 
 import os
+import sqlite3
+from pathlib import Path
 
 try:
     from flask import Flask, request, jsonify
@@ -57,6 +59,263 @@ except ImportError:                       # degrada com mensagem clara
     _FLASK_OK = False
 
 import findings as F
+
+
+# ============================================================
+# CORRELAÇÃO — grafo da superfície (junta os bancos dos scanners)
+# ============================================================
+
+_RANK = {"CRITICO": 0, "ALTO": 1, "MEDIO": 2, "BAIXO": 3, "INFO": 4}
+_ACTIVE = "('NOVO','REINCIDENTE','RESSURGIDO')"
+
+
+def _argus_base() -> str:
+    """Diretório base do Argus (/etc/argus). Deriva do ARGUS_DB, senão usa o padrão."""
+    db = os.environ.get("ARGUS_DB", "")
+    if db:
+        p = Path(db).resolve().parent
+        return str(p.parent if p.name == "store" else p)
+    return os.environ.get("ARGUS_BASE", "/etc/argus")
+
+
+def _worse(a: str, b: str) -> str:
+    """Retorna a pior severidade entre as duas (para agregar campanha/domínio)."""
+    return a if _RANK.get(a, 4) <= _RANK.get(b, 4) else b
+
+
+def _ro_rows(db_path: str, sql: str) -> list[dict]:
+    """Lê linhas de um banco em modo SOMENTE LEITURA. Nunca levanta."""
+    try:
+        if not Path(db_path).exists():
+            return []
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5)
+        try:
+            cur = conn.execute(sql)
+            cols = [d[0] for d in cur.description]
+            return [dict(zip(cols, r)) for r in cur.fetchall()]
+        finally:
+            conn.close()
+    except Exception:
+        return []
+
+
+def _base_domain(host: str, known: set) -> str:
+    """Domínio-base de um hostname: o maior domínio conhecido que é sufixo dele;
+    senão, heurística dos 2 últimos rótulos."""
+    host = (host or "").lower().strip(".")
+    cands = [d for d in known if host == d or host.endswith("." + d)]
+    if cands:
+        return max(cands, key=len)
+    parts = host.split(".")
+    return ".".join(parts[-2:]) if len(parts) >= 2 else host
+
+
+def correlation_graph(base: str | None = None) -> dict:
+    """Constrói o grafo de correlação cruzando os bancos dos scanners + enriquecimento.
+    Estrutura: campanha -> domínios -> (subdomínios + achados e-mail/credencial/typosquat)
+    -> IPs (com ASN/reputação/portas/CVE/KEV/CVSS). Nunca levanta — bancos ausentes
+    são simplesmente ignorados."""
+    b = Path(base or _argus_base())
+    subs = _ro_rows(str(b / "submonitor" / "submonitor.db"),
+                    f"SELECT campanha,hostname,ip,asn,ip_type,environment,risk,http_status,ssl_status,origem "
+                    f"FROM subdomains WHERE status IN {_ACTIVE}")
+    mons = _ro_rows(str(b / "monitor" / "monitor.db"),
+                    f"SELECT campanha,ip,port,protocol,service,asn,risk,abuse_score,abuse_country,abuse_isp,"
+                    f"abuse_tor,idb_vuln_count,idb_vulns,kev_count,kev_cves,nvd_max_score,nvd_severity "
+                    f"FROM scans WHERE status IN {_ACTIVE}")
+    creds = _ro_rows(str(b / "credentials" / "credentials.db"),
+                     f"SELECT campanha,domain,total,employees,users,third_parties,risk "
+                     f"FROM domains WHERE status IN {_ACTIVE} AND total>0")
+    mails = _ro_rows(str(b / "email" / "email.db"),
+                     f"SELECT campanha,domain,spf_status,dmarc_status,dkim_status,risk,issues,has_mx "
+                     f"FROM domains WHERE status IN {_ACTIVE}")
+    typos = _ro_rows(str(b / "typosquat" / "typosquat.db"),
+                     f"SELECT campanha,base_domain,domain,fuzzer,risk,whois_status,mx "
+                     f"FROM lookalikes WHERE status IN {_ACTIVE}")
+
+    # Agrega o enriquecimento por IP (vindo do monitor de portas).
+    ipagg: dict[str, dict] = {}
+    for r in mons:
+        ip = (r.get("ip") or "").strip()
+        if not ip:
+            continue
+        a = ipagg.setdefault(ip, {"ports": set(), "asn": "", "risk": "INFO", "cve": 0, "kev": 0,
+                                  "cvss": 0.0, "abuse": -1, "country": "", "isp": "", "tor": 0,
+                                  "kev_cves": set()})
+        if r.get("port"):
+            a["ports"].add(f"{r.get('port')}/{r.get('protocol') or 'tcp'}")
+        a["asn"] = a["asn"] or (r.get("asn") or "")
+        a["risk"] = _worse(a["risk"], r.get("risk") or "INFO")
+        a["cve"] = max(a["cve"], int(r.get("idb_vuln_count") or 0))
+        a["kev"] = max(a["kev"], int(r.get("kev_count") or 0))
+        a["cvss"] = max(a["cvss"], float(r.get("nvd_max_score") or 0))
+        for c in (r.get("kev_cves") or "").split(","):
+            if c.strip():
+                a["kev_cves"].add(c.strip())
+        sc = r.get("abuse_score")
+        if sc is not None and sc >= 0 and sc > a["abuse"]:
+            a["abuse"] = int(sc); a["country"] = r.get("abuse_country") or ""
+            a["isp"] = r.get("abuse_isp") or ""; a["tor"] = int(r.get("abuse_tor") or 0)
+
+    # Domínios-base conhecidos (de credenciais/e-mail/typosquat) p/ ancorar subdomínios.
+    known_domains = set()
+    for r in creds:  known_domains.add((r.get("domain") or "").lower().strip("."))
+    for r in mails:  known_domains.add((r.get("domain") or "").lower().strip("."))
+    for r in typos:  known_domains.add((r.get("base_domain") or "").lower().strip("."))
+    known_domains.discard("")
+
+    nodes: dict[str, dict] = {}
+    edges: list = []
+
+    def node(nid, ntype, label, risk="INFO", detail=None):
+        n = nodes.get(nid)
+        if n is None:
+            n = nodes[nid] = {"id": nid, "type": ntype, "label": label, "risk": risk,
+                              "detail": detail or []}
+        else:
+            n["risk"] = _worse(n["risk"], risk)
+        return n
+
+    def edge(a, c):
+        edges.append([a, c])
+
+    def camp_node(camp):
+        cid = "camp:" + camp
+        node(cid, "campaign", camp, "INFO")
+        return cid
+
+    def dom_node(camp, dom):
+        did = "dom:" + camp + ":" + dom
+        node(did, "domain", dom, "INFO")
+        edge(camp_node(camp), did)
+        return did
+
+    # ── Subdomínios -> IP (com enriquecimento do IP) ──
+    for r in subs:
+        camp = (r.get("campanha") or "").strip() or "(sem campanha)"
+        host = (r.get("hostname") or "").strip()
+        if not host:
+            continue
+        dom = _base_domain(host, known_domains)
+        did = dom_node(camp, dom)
+        sid = "sub:" + camp + ":" + host
+        srisk = r.get("risk") or "INFO"
+        node(sid, "subdomain", host, srisk, [
+            ["Ambiente", r.get("environment") or "—"],
+            ["HTTP", r.get("http_status") or "—"],
+            ["SSL", r.get("ssl_status") or "—"],
+            ["Origem", r.get("origem") or "—"],
+            ["IP", r.get("ip") or "—"],
+            ["ASN", r.get("asn") or "—"],
+            ["Risco", srisk],
+        ])
+        node(did, "domain", dom, srisk)   # propaga severidade ao domínio/campanha
+        node(camp_node(camp), "campaign", camp, srisk)
+        edge(did, sid)
+        ip = (r.get("ip") or "").strip()
+        if ip:
+            ag = ipagg.get(ip, {})
+            iprisk = _worse(ag.get("risk", "INFO"), srisk)
+            det = [["ASN", ag.get("asn") or r.get("asn") or "—"]]
+            if ag.get("abuse", -1) >= 0:
+                det.append(["Reputação (AbuseIPDB)",
+                            f"{ag['abuse']}%" + (f" · {ag.get('isp')}" if ag.get("isp") else "")
+                            + (" · TOR" if ag.get("tor") else "")])
+            else:
+                det.append(["Reputação (AbuseIPDB)", "sem dados"])
+            det.append(["Portas abertas", ", ".join(sorted(ag.get("ports", []))) or "—"])
+            det.append(["CVEs", str(ag.get("cve", 0)) + (f" · KEV {ag['kev']}" if ag.get("kev") else "")])
+            if ag.get("cvss", 0):
+                det.append(["CVSS máx", f"{ag['cvss']:.1f}"])
+            det.append(["Tipo de IP", r.get("ip_type") or "—"])
+            node("ip:" + ip, "ip", ip, iprisk, det)
+            edge(sid, "ip:" + ip)
+
+    # ── Achados de e-mail (por domínio) ──
+    for r in mails:
+        camp = (r.get("campanha") or "").strip() or "(sem campanha)"
+        dom = (r.get("domain") or "").strip()
+        if not dom:
+            continue
+        did = dom_node(camp, dom)
+        risk = r.get("risk") or "INFO"
+        eid = "email:" + camp + ":" + dom
+        node(eid, "email", "postura de e-mail", risk, [
+            ["SPF", r.get("spf_status") or "—"],
+            ["DMARC", r.get("dmarc_status") or "—"],
+            ["DKIM", r.get("dkim_status") or "—"],
+            ["MX", "sim" if r.get("has_mx") else "não"],
+            ["Problemas", r.get("issues") or "—"],
+            ["Risco", risk],
+        ])
+        node(did, "domain", dom, risk)
+        node(camp_node(camp), "campaign", camp, risk)
+        edge(did, eid)
+
+    # ── Achados de credenciais (por domínio) ──
+    for r in creds:
+        camp = (r.get("campanha") or "").strip() or "(sem campanha)"
+        dom = (r.get("domain") or "").strip()
+        if not dom:
+            continue
+        did = dom_node(camp, dom)
+        risk = r.get("risk") or "INFO"
+        cid = "cred:" + camp + ":" + dom
+        node(cid, "cred", "credenciais vazadas", risk, [
+            ["Total", str(r.get("total") or 0)],
+            ["Funcionários", str(r.get("employees") or 0)],
+            ["Usuários", str(r.get("users") or 0)],
+            ["Terceiros", str(r.get("third_parties") or 0)],
+            ["Risco", risk],
+        ])
+        node(did, "domain", dom, risk)
+        node(camp_node(camp), "campaign", camp, risk)
+        edge(did, cid)
+
+    # ── Sósias (typosquat) por domínio-base ──
+    for r in typos:
+        camp = (r.get("campanha") or "").strip() or "(sem campanha)"
+        base_d = (r.get("base_domain") or "").strip()
+        look = (r.get("domain") or "").strip()
+        if not base_d or not look:
+            continue
+        did = dom_node(camp, base_d)
+        risk = r.get("risk") or "INFO"
+        tid = "typo:" + camp + ":" + look
+        node(tid, "typo", look, risk, [
+            ["Base", base_d],
+            ["Técnica", r.get("fuzzer") or "—"],
+            ["Idade (domínio)", r.get("whois_status") or "—"],
+            ["MX", "sim" if r.get("mx") else "não"],
+            ["Risco", risk],
+        ])
+        node(did, "domain", base_d, risk)
+        node(camp_node(camp), "campaign", camp, risk)
+        edge(did, tid)
+
+    # Detalhe sintético para campanhas e domínios (contagens).
+    for n in nodes.values():
+        if n["type"] == "campaign":
+            doms = sum(1 for e in edges if e[0] == n["id"])
+            n["detail"] = [["Domínios", str(doms)], ["Pior achado", n["risk"]]]
+        elif n["type"] == "domain":
+            ch = [e[1] for e in edges if e[0] == n["id"]]
+            n["detail"] = [["Subdomínios", str(sum(1 for c in ch if c.startswith("sub:")))],
+                           ["Achados", str(sum(1 for c in ch if c.split(':', 1)[0] in ('email', 'cred', 'typo')))],
+                           ["Pior achado", n["risk"]]]
+
+    ip_ids = [k for k in nodes if k.startswith("ip:")]
+    indeg = {}
+    for _a, c in edges:
+        indeg[c] = indeg.get(c, 0) + 1
+    shared = sum(1 for k in ip_ids if indeg.get(k, 0) > 1)
+    return {
+        "nodes": list(nodes.values()),
+        "edges": edges,
+        "stats": {"campaigns": sum(1 for n in nodes.values() if n["type"] == "campaign"),
+                  "subdomains": sum(1 for n in nodes.values() if n["type"] == "subdomain"),
+                  "ips": len(ip_ids), "shared_ips": shared},
+    }
 
 try:
     import logs as _audit_log          # trilha de auditoria (RFC 5424, audit.log)
@@ -147,6 +406,15 @@ def create_app():
     def list_findings():
         try:
             return jsonify(F.snapshot())
+        except Exception as exc:
+            return jsonify(ok=False, error=str(exc)), 500
+
+    @app.get("/api/correlation")
+    def correlation():
+        try:
+            g = correlation_graph()
+            g["ok"] = True
+            return jsonify(g)
         except Exception as exc:
             return jsonify(ok=False, error=str(exc)), 500
 
