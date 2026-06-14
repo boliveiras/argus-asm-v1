@@ -4025,11 +4025,12 @@ _CORR_SCRIPT = r"""<script>
   var SEV={CRITICO:'#f43f5e',ALTO:'#fb923c',MEDIO:'#fbbf24',BAIXO:'#34d399',INFO:'#8a99b4'};
   var TLBL={campaign:'Campanha',domain:'Domínio',subdomain:'Subdomínio',ip:'IP',
             email:'Achado · postura de e-mail',cred:'Achado · credenciais',typo:'Achado · typosquat'};
-  var RAD={campaign:14,domain:11,subdomain:8,ip:8,email:7,cred:7,typo:7};
-  var N={}, ADJ={}, INDEG={}, open={}, POS={}, sel=null;
+  var RAD={campaign:14,domain:11,subdomain:8,ip:9,email:9,cred:8,typo:9};
+  var N={}, ADJ={}, INDEG={}, open={}, POS={}, PIN={}, sel=null, _ids=[], _vis={};
+  var drag=null, dragMoved=false, ox=0, oy=0, sx=0, sy=0;
   function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
   function setTxt(id,v){var e=document.getElementById(id); if(e)e.textContent=v;}
-  function showOnly(id){['corr-empty','corr-off','corr-main'].forEach(function(x){var e=document.getElementById(x);if(e)e.style.display=(x===id?(x==='corr-main'?'block':'block'):'none');});}
+  function showOnly(id){['corr-empty','corr-off','corr-main'].forEach(function(x){var e=document.getElementById(x);if(e)e.style.display=(x===id?'block':'none');});}
   function start(){
     fetch('/api/correlation',{cache:'no-store'}).then(function(r){return r.ok?r.json():null;}).then(function(j){
       if(!j||!j.ok){ showOnly('corr-off'); return; }
@@ -4037,7 +4038,7 @@ _CORR_SCRIPT = r"""<script>
       N={}; ADJ={}; INDEG={};
       j.nodes.forEach(function(n){N[n.id]=n;});
       (j.edges||[]).forEach(function(e){ (ADJ[e[0]]=ADJ[e[0]]||[]).push(e[1]); INDEG[e[1]]=(INDEG[e[1]]||0)+1; });
-      showOnly('corr-main');
+      showOnly('corr-main'); bindDrag();
       var st=j.stats||{}; setTxt('corr-nsub',st.subdomains||0); setTxt('corr-nip',st.ips||0); setTxt('corr-nshared',st.shared_ips||0);
       var camps=j.nodes.filter(function(n){return n.type==='campaign';}).map(function(n){return n.label;}).sort();
       var s=document.getElementById('corr-camp'); s.innerHTML='';
@@ -4062,27 +4063,45 @@ _CORR_SCRIPT = r"""<script>
     for(var it=0;it<iters;it++){
       for(var i=0;i<ids.length;i++)for(var j=i+1;j<ids.length;j++){ var a=POS[ids[i]],b=POS[ids[j]],dx=a.x-b.x,dy=a.y-b.y,d2=dx*dx+dy*dy||0.01,d=Math.sqrt(d2),f=2300/d2,fx=dx/d*f,fy=dy/d*f; a.vx+=fx;a.vy+=fy;b.vx-=fx;b.vy-=fy; }
       ids.forEach(function(s){ (ADJ[s]||[]).forEach(function(t){ if(!POS[t])return; var a=POS[s],b=POS[t],dx=b.x-a.x,dy=b.y-a.y,d=Math.sqrt(dx*dx+dy*dy)||0.01,f=(d-86)*0.045,fx=dx/d*f,fy=dy/d*f; a.vx+=fx;a.vy+=fy;b.vx-=fx;b.vy-=fy; }); });
-      ids.forEach(function(id){ var p=POS[id]; p.vx+=(W/2-p.x)*0.006; p.vy+=(H/2-p.y)*0.006; p.x+=Math.max(-14,Math.min(14,p.vx))*0.85; p.y+=Math.max(-14,Math.min(14,p.vy))*0.85; p.vx*=0.85;p.vy*=0.85; });
+      ids.forEach(function(id){ if(PIN[id])return; var p=POS[id]; p.vx+=(W/2-p.x)*0.006; p.vy+=(H/2-p.y)*0.006; p.x+=Math.max(-14,Math.min(14,p.vx))*0.85; p.y+=Math.max(-14,Math.min(14,p.vy))*0.85; p.vx*=0.85;p.vy*=0.85; });
     }
-    ids.forEach(function(id){ var p=POS[id]; p.x=Math.max(36,Math.min(W-36,p.x)); p.y=Math.max(30,Math.min(H-30,p.y)); });
+    ids.forEach(function(id){ if(PIN[id])return; var p=POS[id]; p.x=Math.max(36,Math.min(W-36,p.x)); p.y=Math.max(30,Math.min(H-30,p.y)); });
+  }
+  function shapeEl(type,x,y,r,fill,stroke,sw){
+    var c=' fill="'+fill+'" stroke="'+stroke+'" stroke-width="'+sw+'"/>';
+    if(type==='ip'){ return '<polygon points="'+x+','+(y-r)+' '+(x+r)+','+y+' '+x+','+(y+r)+' '+(x-r)+','+y+'"'+c; }
+    if(type==='email'){ return '<polygon points="'+x+','+(y-r)+' '+(x+r*0.92).toFixed(1)+','+(y+r*0.72).toFixed(1)+' '+(x-r*0.92).toFixed(1)+','+(y+r*0.72).toFixed(1)+'"'+c; }
+    if(type==='cred'){ var hh=(r*0.9); return '<rect x="'+(x-hh).toFixed(1)+'" y="'+(y-hh).toFixed(1)+'" width="'+(2*hh).toFixed(1)+'" height="'+(2*hh).toFixed(1)+'" rx="2"'+c; }
+    if(type==='typo'){ var pts=[]; for(var i=0;i<6;i++){var a=Math.PI/180*(60*i-30); pts.push((x+r*Math.cos(a)).toFixed(1)+','+(y+r*Math.sin(a)).toFixed(1));} return '<polygon points="'+pts.join(' ')+'"'+c; }
+    return '<circle cx="'+x+'" cy="'+y+'" r="'+r+'"'+c;
+  }
+  function paint(){
+    var svg=document.getElementById('corr-svg'); if(!svg)return; var h='';
+    Object.keys(_vis).forEach(function(s){ if(!open[s])return; (ADJ[s]||[]).forEach(function(t){ if(!_vis[t])return; var a=POS[s],b=POS[t],sh=(INDEG[t]||0)>1;
+      h+='<line x1="'+a.x.toFixed(0)+'" y1="'+a.y.toFixed(0)+'" x2="'+b.x.toFixed(0)+'" y2="'+b.y.toFixed(0)+'" stroke="'+(sh?'#fb923c':'var(--border-2)')+'" stroke-width="'+(sh?1.6:0.7)+'"/>'; }); });
+    _ids.forEach(function(id){ var n=N[id],p=POS[id],x=+p.x.toFixed(0),y=+p.y.toFixed(0),r=RAD[n.type]||8,c=SEV[n.risk]||'#8a99b4',sh=(n.type==='ip'&&(INDEG[id]||0)>1),ring=(kids(id)&&!open[id]);
+      h+='<g class="corr-node" tabindex="0" role="button" aria-label="'+esc(n.label)+', '+esc(TLBL[n.type]||n.type)+', risco '+esc(n.risk)+'" data-id="'+esc(id)+'">';
+      h+='<title>'+esc(n.label)+' — '+esc(TLBL[n.type]||n.type)+'</title>';
+      if(ring) h+='<circle cx="'+x+'" cy="'+y+'" r="'+(r+4)+'" fill="none" stroke="'+c+'" stroke-width="0.7" stroke-dasharray="2 2"/>';
+      if(sh)   h+='<circle cx="'+x+'" cy="'+y+'" r="'+(r+4)+'" fill="none" stroke="#fb923c" stroke-width="1.6"/>';
+      h+=shapeEl(n.type,x,y,r,c,(id===sel?'var(--text)':c),(id===sel?2.2:1));
+      if(n.type==='campaign'||n.type==='domain'||sh){ var lbl=n.label.length>26?n.label.slice(0,25)+'…':n.label;
+        h+='<text x="'+x+'" y="'+(y+r+12)+'" text-anchor="middle" font-size="11" fill="var(--muted)">'+esc(lbl)+'</text>'; }
+      h+='</g>';
+    });
+    svg.innerHTML=h;
   }
   function render(camp){
     var rts=roots(camp); rts.forEach(function(r){ if(!(r in open)) open[r]=true; });
-    var vis=visible(rts), ids=Object.keys(vis); layout(ids,960,600);
-    var svg=document.getElementById('corr-svg'); var h='';
-    Object.keys(vis).forEach(function(s){ if(!open[s])return; (ADJ[s]||[]).forEach(function(t){ if(!vis[t])return; var a=POS[s],b=POS[t],sh=(INDEG[t]||0)>1;
-      h+='<line x1="'+a.x.toFixed(0)+'" y1="'+a.y.toFixed(0)+'" x2="'+b.x.toFixed(0)+'" y2="'+b.y.toFixed(0)+'" stroke="'+(sh?'#fb923c':'var(--border-2)')+'" stroke-width="'+(sh?1.6:0.7)+'"/>'; }); });
-    ids.forEach(function(id){ var n=N[id],p=POS[id],r=RAD[n.type]||8,c=SEV[n.risk]||'#8a99b4',sh=(n.type==='ip'&&(INDEG[id]||0)>1),ring=(kids(id)&&!open[id]);
-      h+='<g class="corr-node" tabindex="0" role="button" aria-label="'+esc(n.label)+', '+esc(TLBL[n.type]||n.type)+', risco '+esc(n.risk)+'" data-id="'+esc(id)+'">';
-      h+='<title>'+esc(n.label)+' — '+esc(TLBL[n.type]||n.type)+'</title>';
-      if(ring) h+='<circle cx="'+p.x.toFixed(0)+'" cy="'+p.y.toFixed(0)+'" r="'+(r+4)+'" fill="none" stroke="'+c+'" stroke-width="0.7" stroke-dasharray="2 2"/>';
-      if(sh)   h+='<circle cx="'+p.x.toFixed(0)+'" cy="'+p.y.toFixed(0)+'" r="'+(r+3)+'" fill="none" stroke="#fb923c" stroke-width="1.6"/>';
-      h+='<circle cx="'+p.x.toFixed(0)+'" cy="'+p.y.toFixed(0)+'" r="'+r+'" fill="'+c+'" stroke="'+(id===sel?'var(--text)':c)+'" stroke-width="'+(id===sel?2.2:1)+'"/>';
-      if(n.type==='campaign'||n.type==='domain'||sh){ var lbl=n.label.length>26?n.label.slice(0,25)+'…':n.label;
-        h+='<text x="'+p.x.toFixed(0)+'" y="'+(p.y+r+12).toFixed(0)+'" text-anchor="middle" font-size="11" fill="var(--muted)">'+esc(lbl)+'</text>'; }
-      h+='</g>';
-    });
-    svg.innerHTML=h; buildList();
+    _vis=visible(rts); _ids=Object.keys(_vis); layout(_ids,960,600); paint(); buildList();
+  }
+  function toSvg(cx,cy){ var svg=document.getElementById('corr-svg'); if(!svg||!svg.createSVGPoint)return null; var pt=svg.createSVGPoint(); pt.x=cx; pt.y=cy; var m=svg.getScreenCTM(); if(!m)return null; return pt.matrixTransform(m.inverse()); }
+  function bindDrag(){
+    var svg=document.getElementById('corr-svg'); if(!svg||svg.__bound)return; svg.__bound=true; svg.style.touchAction='none';
+    svg.addEventListener('pointerdown',function(e){ var g=e.target.closest&&e.target.closest('g.corr-node[data-id]'); if(!g)return; var id=g.getAttribute('data-id'); var p=toSvg(e.clientX,e.clientY); if(!p||!POS[id])return; drag=id; dragMoved=false; sx=p.x; sy=p.y; ox=p.x-POS[id].x; oy=p.y-POS[id].y; try{svg.setPointerCapture(e.pointerId);}catch(_){} e.preventDefault(); });
+    svg.addEventListener('pointermove',function(e){ if(!drag)return; var p=toSvg(e.clientX,e.clientY); if(!p)return; if(Math.abs(p.x-sx)>3||Math.abs(p.y-sy)>3)dragMoved=true; POS[drag].x=p.x-ox; POS[drag].y=p.y-oy; PIN[drag]=true; paint(); });
+    function end(){ if(!drag)return; var id=drag; drag=null; if(!dragMoved) selectNode(id); }
+    svg.addEventListener('pointerup',end); svg.addEventListener('pointercancel',end);
   }
   function selectNode(id){ var n=N[id]; if(!n)return; if(kids(id))open[id]=!open[id]; sel=id;
     var cur=document.getElementById('corr-camp'); render(cur?cur.value:'*'); detail(id);
@@ -4105,7 +4124,6 @@ _CORR_SCRIPT = r"""<script>
     });
     html+='</tbody></table>'; el.innerHTML=html;
   }
-  document.addEventListener('click',function(e){ var g=e.target.closest&&e.target.closest('g.corr-node[data-id]'); if(g)selectNode(g.getAttribute('data-id')); });
   document.addEventListener('keydown',function(e){ if(e.key!=='Enter'&&e.key!==' ')return; var g=e.target.closest&&e.target.closest('g.corr-node[data-id]'); if(g){e.preventDefault();selectNode(g.getAttribute('data-id'));} });
   if(document.readyState!=='loading') start(); else document.addEventListener('DOMContentLoaded',start);
 })();
@@ -4150,6 +4168,15 @@ def build_correlation_page() -> str:
         '<span><span class="dot" style="background:#34d399"></span>baixo</span>'
         '<span><span class="dot" style="background:#8a99b4"></span>info</span>'
         '<span style="color:#fb923c">&#9711; anel = IP compartilhado</span></div></div>'
+        # Legenda de FORMAS por tipo (a cor já indica criticidade).
+        '<div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;font-size:12px;color:var(--muted);margin:2px 0 10px">'
+        '<span>forma = tipo:</span>'
+        '<span style="color:var(--steel-2)"><svg width="13" height="13" viewBox="0 0 14 14" style="vertical-align:-2px"><circle cx="7" cy="7" r="5.5" fill="currentColor"/></svg> esfera = campanha/domínio/subdomínio</span>'
+        '<span style="color:var(--steel-2)"><svg width="13" height="13" viewBox="0 0 14 14" style="vertical-align:-2px"><polygon points="7,1 13,7 7,13 1,7" fill="currentColor"/></svg> losango = IP</span>'
+        '<span style="color:var(--steel-2)"><svg width="13" height="13" viewBox="0 0 14 14" style="vertical-align:-2px"><polygon points="7,1.5 13,12 1,12" fill="currentColor"/></svg> triângulo = e-mail</span>'
+        '<span style="color:var(--steel-2)"><svg width="13" height="13" viewBox="0 0 14 14" style="vertical-align:-2px"><rect x="2" y="2" width="10" height="10" rx="1.5" fill="currentColor"/></svg> quadrado = credenciais</span>'
+        '<span style="color:var(--steel-2)"><svg width="13" height="13" viewBox="0 0 14 14" style="vertical-align:-2px"><polygon points="7,1 12.2,4 12.2,10 7,13 1.8,10 1.8,4" fill="currentColor"/></svg> hexágono = typosquat</span>'
+        '</div>'
         '<div class="kpi-grid" style="max-width:540px;margin-bottom:14px">'
         '<div class="kpi"><div class="v" id="corr-nsub">&mdash;</div><div class="l">Subdomínios</div></div>'
         '<div class="kpi"><div class="v" id="corr-nip">&mdash;</div><div class="l">IPs únicos</div></div>'
@@ -4157,8 +4184,9 @@ def build_correlation_page() -> str:
         '<div id="corr-wrap"><svg id="corr-svg" viewBox="0 0 960 600" role="img" '
         'aria-label="Grafo de correlação entre campanhas, subdomínios e IPs. Use a lista acessível abaixo para os detalhes."></svg></div>'
         '<p class="page-sub" style="margin-top:8px">Clique em um nó para <b>expandir</b> (campanha &rarr; domínios &rarr; '
-        'subdomínios e achados &rarr; IPs) e ver os <b>detalhes do enriquecimento</b>. Anel pontilhado = pode expandir; '
-        'IP com anel <span style="color:#fb923c">laranja</span> é servido por vários subdomínios (raio de explosão).</p>'
+        'subdomínios e achados &rarr; IPs) e ver os <b>detalhes do enriquecimento</b>. <b>Arraste</b> os nós para '
+        'reorganizar livremente. Anel pontilhado = pode expandir; IP com anel <span style="color:#fb923c">laranja</span> '
+        'é servido por vários subdomínios (raio de explosão).</p>'
         '<div id="corr-detail" class="panel panel-pad"></div>'
         '<details style="margin-top:14px"><summary style="cursor:pointer;color:var(--muted);font-weight:600">'
         'Lista acessível (subdomínio &rarr; IP)</summary>'

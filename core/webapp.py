@@ -117,21 +117,22 @@ def correlation_graph(base: str | None = None) -> dict:
     são simplesmente ignorados."""
     b = Path(base or _argus_base())
     subs = _ro_rows(str(b / "submonitor" / "submonitor.db"),
-                    f"SELECT campanha,hostname,ip,asn,ip_type,environment,risk,http_status,ssl_status,origem "
-                    f"FROM subdomains WHERE status IN {_ACTIVE}")
+                    f"SELECT campanha,hostname,ip,cname,asn,ip_type,environment,risk,http_status,dnssec,"
+                    f"ssl_status,ssl_expiry,origem,whois_status,whois_age_days,whois_creation,whois_expiry,"
+                    f"whois_registrar FROM subdomains WHERE status IN {_ACTIVE}")
     mons = _ro_rows(str(b / "monitor" / "monitor.db"),
                     f"SELECT campanha,ip,port,protocol,service,asn,risk,abuse_score,abuse_country,abuse_isp,"
-                    f"abuse_tor,idb_vuln_count,idb_vulns,kev_count,kev_cves,nvd_max_score,nvd_severity "
-                    f"FROM scans WHERE status IN {_ACTIVE}")
+                    f"abuse_tor,abuse_reports,abuse_last,idb_vuln_count,idb_vulns,idb_tags,kev_count,kev_cves,"
+                    f"nvd_max_score,nvd_severity,nvd_scores FROM scans WHERE status IN {_ACTIVE}")
     creds = _ro_rows(str(b / "credentials" / "credentials.db"),
-                     f"SELECT campanha,domain,total,employees,users,third_parties,risk "
+                     f"SELECT campanha,domain,total,employees,users,third_parties,top_url,risk "
                      f"FROM domains WHERE status IN {_ACTIVE} AND total>0")
     mails = _ro_rows(str(b / "email" / "email.db"),
-                     f"SELECT campanha,domain,spf_status,dmarc_status,dkim_status,risk,issues,has_mx "
-                     f"FROM domains WHERE status IN {_ACTIVE}")
+                     f"SELECT campanha,domain,spf_status,dmarc_status,dkim_status,dkim_selector,risk,issues,"
+                     f"has_mx,mx FROM domains WHERE status IN {_ACTIVE}")
     typos = _ro_rows(str(b / "typosquat" / "typosquat.db"),
-                     f"SELECT campanha,base_domain,domain,fuzzer,risk,whois_status,mx "
-                     f"FROM lookalikes WHERE status IN {_ACTIVE}")
+                     f"SELECT campanha,base_domain,domain,fuzzer,ip,risk,whois_status,whois_age_days,"
+                     f"whois_creation,mx FROM lookalikes WHERE status IN {_ACTIVE}")
 
     # Agrega o enriquecimento por IP (vindo do monitor de portas).
     ipagg: dict[str, dict] = {}
@@ -141,21 +142,28 @@ def correlation_graph(base: str | None = None) -> dict:
             continue
         a = ipagg.setdefault(ip, {"ports": set(), "asn": "", "risk": "INFO", "cve": 0, "kev": 0,
                                   "cvss": 0.0, "abuse": -1, "country": "", "isp": "", "tor": 0,
-                                  "kev_cves": set()})
+                                  "reports": 0, "last": "", "kev_cves": set(), "cves": set(),
+                                  "tags": set(), "services": set()})
         if r.get("port"):
             a["ports"].add(f"{r.get('port')}/{r.get('protocol') or 'tcp'}")
+        if r.get("service"):
+            a["services"].add(str(r.get("service")))
         a["asn"] = a["asn"] or (r.get("asn") or "")
         a["risk"] = _worse(a["risk"], r.get("risk") or "INFO")
         a["cve"] = max(a["cve"], int(r.get("idb_vuln_count") or 0))
         a["kev"] = max(a["kev"], int(r.get("kev_count") or 0))
         a["cvss"] = max(a["cvss"], float(r.get("nvd_max_score") or 0))
         for c in (r.get("kev_cves") or "").split(","):
-            if c.strip():
-                a["kev_cves"].add(c.strip())
+            if c.strip(): a["kev_cves"].add(c.strip())
+        for c in (r.get("idb_vulns") or "").split(","):
+            if c.strip(): a["cves"].add(c.strip())
+        for t in (r.get("idb_tags") or "").split(","):
+            if t.strip(): a["tags"].add(t.strip())
         sc = r.get("abuse_score")
         if sc is not None and sc >= 0 and sc > a["abuse"]:
             a["abuse"] = int(sc); a["country"] = r.get("abuse_country") or ""
             a["isp"] = r.get("abuse_isp") or ""; a["tor"] = int(r.get("abuse_tor") or 0)
+            a["reports"] = int(r.get("abuse_reports") or 0); a["last"] = r.get("abuse_last") or ""
 
     # Domínios-base conhecidos (de credenciais/e-mail/typosquat) p/ ancorar subdomínios.
     known_domains = set()
@@ -200,15 +208,28 @@ def correlation_graph(base: str | None = None) -> dict:
         did = dom_node(camp, dom)
         sid = "sub:" + camp + ":" + host
         srisk = r.get("risk") or "INFO"
-        node(sid, "subdomain", host, srisk, [
-            ["Ambiente", r.get("environment") or "—"],
-            ["HTTP", r.get("http_status") or "—"],
-            ["SSL", r.get("ssl_status") or "—"],
-            ["Origem", r.get("origem") or "—"],
+        _wage = r.get("whois_age_days")
+        _wage_txt = (f"{_wage} dia(s)" if isinstance(_wage, int) and _wage >= 0 else "—")
+        _ssl = r.get("ssl_status") or "—"
+        if r.get("ssl_expiry"):
+            _ssl += f" (expira {r.get('ssl_expiry')})"
+        sdet = [
             ["IP", r.get("ip") or "—"],
             ["ASN", r.get("asn") or "—"],
+            ["Ambiente", r.get("environment") or "—"],
+            ["Tipo de IP", r.get("ip_type") or "—"],
+            ["HTTP", r.get("http_status") or "—"],
+            ["CNAME", (r.get("cname") if r.get("cname") not in ("", "-", None) else "—")],
+            ["DNSSEC", r.get("dnssec") or "—"],
+            ["SSL", _ssl],
+            ["Origem", r.get("origem") or "—"],
+            ["Domínio (idade)", (r.get("whois_status") or "—") + (f" · {_wage_txt}" if _wage_txt != "—" else "")],
+            ["Domínio (registro)", r.get("whois_creation") or "—"],
+            ["Domínio (expira)", r.get("whois_expiry") or "—"],
+            ["Registrar", r.get("whois_registrar") or "—"],
             ["Risco", srisk],
-        ])
+        ]
+        node(sid, "subdomain", host, srisk, [kv for kv in sdet if kv[1] not in ("—", "")])
         node(did, "domain", dom, srisk)   # propaga severidade ao domínio/campanha
         node(camp_node(camp), "campaign", camp, srisk)
         edge(did, sid)
@@ -216,18 +237,31 @@ def correlation_graph(base: str | None = None) -> dict:
         if ip:
             ag = ipagg.get(ip, {})
             iprisk = _worse(ag.get("risk", "INFO"), srisk)
-            det = [["ASN", ag.get("asn") or r.get("asn") or "—"]]
+            det = [["ASN", ag.get("asn") or r.get("asn") or "—"],
+                   ["Tipo de IP", r.get("ip_type") or "—"]]
             if ag.get("abuse", -1) >= 0:
-                det.append(["Reputação (AbuseIPDB)",
-                            f"{ag['abuse']}%" + (f" · {ag.get('isp')}" if ag.get("isp") else "")
+                det.append(["Reputação (AbuseIPDB)", f"{ag['abuse']}%"
                             + (" · TOR" if ag.get("tor") else "")])
+                if ag.get("isp"):     det.append(["Provedor (ISP)", ag["isp"]])
+                if ag.get("country"): det.append(["País", ag["country"]])
+                if ag.get("reports"): det.append(["Denúncias", str(ag["reports"])
+                                                  + (f" · última {ag['last'][:10]}" if ag.get("last") else "")])
             else:
                 det.append(["Reputação (AbuseIPDB)", "sem dados"])
+            if ag.get("services"):
+                det.append(["Serviços", ", ".join(sorted(ag["services"]))])
             det.append(["Portas abertas", ", ".join(sorted(ag.get("ports", []))) or "—"])
-            det.append(["CVEs", str(ag.get("cve", 0)) + (f" · KEV {ag['kev']}" if ag.get("kev") else "")])
+            _cves = sorted(ag.get("cves", []))
+            if _cves:
+                det.append(["CVEs (" + str(len(_cves)) + ")", ", ".join(_cves[:12]) + (" …" if len(_cves) > 12 else "")])
+            else:
+                det.append(["CVEs", "—"])
+            if ag.get("kev"):
+                det.append(["Explorada in-the-wild (KEV)", ", ".join(sorted(ag.get("kev_cves", []))) or "sim"])
             if ag.get("cvss", 0):
-                det.append(["CVSS máx", f"{ag['cvss']:.1f}"])
-            det.append(["Tipo de IP", r.get("ip_type") or "—"])
+                det.append(["CVSS máx (NVD)", f"{ag['cvss']:.1f}"])
+            if ag.get("tags"):
+                det.append(["Tags (Shodan)", ", ".join(sorted(ag["tags"]))])
             node("ip:" + ip, "ip", ip, iprisk, det)
             edge(sid, "ip:" + ip)
 
@@ -240,11 +274,16 @@ def correlation_graph(base: str | None = None) -> dict:
         did = dom_node(camp, dom)
         risk = r.get("risk") or "INFO"
         eid = "email:" + camp + ":" + dom
+        _dkim = r.get("dkim_status") or "—"
+        if r.get("dkim_selector"):
+            _dkim += f" (seletor {r.get('dkim_selector')})"
         node(eid, "email", "postura de e-mail", risk, [
+            ["Domínio", dom],
             ["SPF", r.get("spf_status") or "—"],
             ["DMARC", r.get("dmarc_status") or "—"],
-            ["DKIM", r.get("dkim_status") or "—"],
-            ["MX", "sim" if r.get("has_mx") else "não"],
+            ["DKIM", _dkim],
+            ["Tem MX?", "sim" if r.get("has_mx") else "não"],
+            ["Servidor MX", r.get("mx") or "—"],
             ["Problemas", r.get("issues") or "—"],
             ["Risco", risk],
         ])
@@ -262,10 +301,13 @@ def correlation_graph(base: str | None = None) -> dict:
         risk = r.get("risk") or "INFO"
         cid = "cred:" + camp + ":" + dom
         node(cid, "cred", "credenciais vazadas", risk, [
-            ["Total", str(r.get("total") or 0)],
+            ["Domínio", dom],
+            ["Total exposições", str(r.get("total") or 0)],
             ["Funcionários", str(r.get("employees") or 0)],
             ["Usuários", str(r.get("users") or 0)],
             ["Terceiros", str(r.get("third_parties") or 0)],
+            ["URL mais exposta", r.get("top_url") or "—"],
+            ["Fonte", "infostealer (Hudson Rock)"],
             ["Risco", risk],
         ])
         node(did, "domain", dom, risk)
@@ -282,11 +324,17 @@ def correlation_graph(base: str | None = None) -> dict:
         did = dom_node(camp, base_d)
         risk = r.get("risk") or "INFO"
         tid = "typo:" + camp + ":" + look
+        _twage = r.get("whois_age_days")
+        _tage = (r.get("whois_status") or "—")
+        if isinstance(_twage, int) and _twage >= 0:
+            _tage += f" · {_twage} dia(s)"
         node(tid, "typo", look, risk, [
-            ["Base", base_d],
+            ["Sósia de", base_d],
             ["Técnica", r.get("fuzzer") or "—"],
-            ["Idade (domínio)", r.get("whois_status") or "—"],
-            ["MX", "sim" if r.get("mx") else "não"],
+            ["IP", r.get("ip") or "—"],
+            ["Idade do domínio", _tage],
+            ["Registro", r.get("whois_creation") or "—"],
+            ["Tem MX? (pronto p/ phishing)", "sim" if r.get("mx") else "não"],
             ["Risco", risk],
         ])
         node(did, "domain", base_d, risk)
