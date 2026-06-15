@@ -214,7 +214,6 @@ def syslog_host(result: dict):
                  campanha    = str(result.get("campanha",    "")),
                  ip          = str(result.get("ip",          "")),
                  asn         = str(result.get("asn",         "")),
-                 environment = str(result.get("environment", "")),
                  risk        = risk,
                  http_status = str(result.get("http_status", "")),
                  dnssec      = str(result.get("dnssec",      "DESABILITADO")),
@@ -266,7 +265,6 @@ def init_database():
             cname       TEXT,
             asn         TEXT,
             ip_type     TEXT,
-            environment TEXT,
             http_status TEXT,
             risk        TEXT,
             first_seen  TEXT,
@@ -286,7 +284,7 @@ def init_database():
                      ("whois_registrar","TEXT DEFAULT ''")]:
         try: cursor.execute(f"ALTER TABLE subdomains ADD COLUMN {col} {dfn}")
         except sqlite3.OperationalError: pass
-    for col in ("title", "waf"):
+    for col in ("title", "waf", "environment"):
         try: cursor.execute(f"ALTER TABLE subdomains DROP COLUMN {col}")
         except sqlite3.OperationalError: pass
     conn.commit(); conn.close()
@@ -400,24 +398,17 @@ async def resolve_asn_bulk(session: aiohttp.ClientSession, results: list[dict]) 
         for idx in indices: results[idx]["asn"] = resolved
 
 # ============================================================
-# ENVIRONMENT / RISK
+# RISCO
 # ============================================================
 
-def detect_environment(hostname: str) -> str:
-    h = hostname.lower()
-    if "dev" in h: return "DEV"
-    if any(x in h for x in ("hml","hom","homolog")): return "HML"
-    return "PROD"
-
-def calculate_base_risk(hostname: str, ip_type: str = "PUBLICO",
-                        environment: str = "PROD") -> str:
-    # Risco base sem WAF (detecção passiva de WAF foi removida por gerar falso
-    # positivo): todo subdomínio em IP público está exposto. DEV/HML expostos são
-    # CRÍTICOS; demais públicos, ALTO; IP privado, BAIXO.
-    is_exposed = ip_type == "PUBLICO"
-    if is_exposed and environment in ("DEV","HML"): return "CRITICO"
-    if is_exposed: return "ALTO"
-    return "BAIXO"
+def calculate_base_risk(ip_type: str = "PUBLICO") -> str:
+    # Risco base SEM suposições (ambiente dev/prod e WAF foram removidos por serem
+    # contexto da empresa / falso-positivo). A base reflete só a exposição:
+    #   IP público  -> MÉDIO (está na superfície externa — vale revisar)
+    #   IP privado  -> BAIXO (fora da superfície externa)
+    # A partir daí, o risco SOBE POR EVIDÊNCIA (reputação AbuseIPDB, CVE do Shodan,
+    # exploração in-the-wild da CISA KEV e CVSS da NVD) nas camadas seguintes.
+    return "MEDIO" if ip_type == "PUBLICO" else "BAIXO"
 
 # ============================================================
 # DNS / HTTP
@@ -620,7 +611,7 @@ async def resolve_subdomain(resolver: aiodns.DNSResolver, hostname: str,
         cname   = await resolve_cname(resolver, hostname)
         ip_type = get_ip_type(ip)
         return {"campanha":campanha,"hostname":hostname,"ip":ip,"cname":cname,
-                "ip_type":ip_type,"environment":detect_environment(hostname),
+                "ip_type":ip_type,
                 "asn":"REDE PRIVADA" if ip_type=="PRIVADO" else "ASN desconhecido",
                 "origem":origem,"abuse":None}
 
@@ -629,7 +620,7 @@ async def probe_subdomain(session: aiohttp.ClientSession, entry: dict,
                           resolver: aiodns.DNSResolver) -> dict:
     async with http_sem:
         http_status, _hdrs = await fetch_headers(session, entry["hostname"])
-    risk = calculate_base_risk(entry["hostname"], entry["ip_type"], entry["environment"])
+    risk = calculate_base_risk(entry["ip_type"])
 
     # DNSSEC — verifica se a zona está assinada
     dnssec = await check_dnssec(resolver, entry["hostname"])
@@ -775,9 +766,9 @@ def process_results(results: list[dict]):
             new_status = "RESSURGIDO" if existing[1] == "CORRIGIDO" else "REINCIDENTE"
             result["status"] = new_status; reincidentes.append(result); syslog_host(result)
             cursor.execute(
-                "UPDATE subdomains SET campanha=?,ip=?,cname=?,asn=?,ip_type=?,environment=?,http_status=?,risk=?,dnssec=?,ssl_status=?,ssl_expiry=?,origem=?,whois_creation=?,whois_expiry=?,whois_age_days=?,whois_status=?,whois_registrar=?,last_seen=?,status=? WHERE id=?",
+                "UPDATE subdomains SET campanha=?,ip=?,cname=?,asn=?,ip_type=?,http_status=?,risk=?,dnssec=?,ssl_status=?,ssl_expiry=?,origem=?,whois_creation=?,whois_expiry=?,whois_age_days=?,whois_status=?,whois_registrar=?,last_seen=?,status=? WHERE id=?",
                 (result["campanha"],result["ip"],result["cname"],result["asn"],result["ip_type"],
-                 result["environment"],result["http_status"],result["risk"],
+                 result["http_status"],result["risk"],
                  result.get("dnssec","DESABILITADO"),
                  (result.get("ssl") or {}).get("status","SEM CERTIFICADO"),
                  (result.get("ssl") or {}).get("expiry_date",""),
@@ -791,9 +782,9 @@ def process_results(results: list[dict]):
         else:
             result["status"] = "NOVO"; novos.append(result); syslog_host(result)
             cursor.execute(
-                "INSERT INTO subdomains (campanha,hostname,ip,cname,asn,ip_type,environment,http_status,risk,dnssec,ssl_status,ssl_expiry,origem,whois_creation,whois_expiry,whois_age_days,whois_status,whois_registrar,first_seen,last_seen,status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO subdomains (campanha,hostname,ip,cname,asn,ip_type,http_status,risk,dnssec,ssl_status,ssl_expiry,origem,whois_creation,whois_expiry,whois_age_days,whois_status,whois_registrar,first_seen,last_seen,status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (result["campanha"],result["hostname"],result["ip"],result["cname"],result["asn"],
-                 result["ip_type"],result["environment"],result["http_status"],
+                 result["ip_type"],result["http_status"],
                  result["risk"],
                  result.get("dnssec","DESABILITADO"),
                  (result.get("ssl") or {}).get("status","SEM CERTIFICADO"),
@@ -813,7 +804,7 @@ def process_results(results: list[dict]):
     for row_id, old_hostname, old_ip, old_campanha in cursor.fetchall():
         if old_hostname not in current_hosts:
             entry = {"hostname":old_hostname,"ip":old_ip or "","campanha":old_campanha or "",
-                     "risk":"INFO","status":"CORRIGIDO","asn":"","environment":"",
+                     "risk":"INFO","status":"CORRIGIDO","asn":"",
                      "http_status":"","abuse":None,
                      "dnssec":"DESABILITADO","origem":"wordlist",
                      "ssl":{"status":"SEM CERTIFICADO","expiry_date":""},
@@ -980,7 +971,7 @@ def main():
             print()
             _ti_enrich(results)
             for r in results:
-                base = calculate_base_risk(r["hostname"], r["ip_type"], r["environment"])
+                base = calculate_base_risk(r["ip_type"])
                 r["risk"] = _ti_risk(base, r["ip_type"], r.get("abuse"))
 
             # Shodan InternetDB (vulnerabilidades/CVE) — enriquece e eleva (leve)
@@ -1029,7 +1020,7 @@ def main():
                     severity_of=lambda r: r.get("risk", "INFO"),
                     title_of=lambda r: r.get("hostname", ""),
                     campanha_of=lambda r: r.get("campanha", ""),
-                    details_of=lambda r: {"ip": r.get("ip",""), "environment": r.get("environment",""),
+                    details_of=lambda r: {"ip": r.get("ip",""),
                                           "http_status": r.get("http_status","")},
                     corrected=removidos,
                     resurged=[r for r in reincidentes if r.get("status") == "RESSURGIDO"],

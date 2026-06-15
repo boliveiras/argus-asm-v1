@@ -117,7 +117,7 @@ def correlation_graph(base: str | None = None) -> dict:
     são simplesmente ignorados."""
     b = Path(base or _argus_base())
     subs = _ro_rows(str(b / "submonitor" / "submonitor.db"),
-                    f"SELECT campanha,hostname,ip,cname,asn,ip_type,environment,risk,http_status,dnssec,"
+                    f"SELECT campanha,hostname,ip,cname,asn,ip_type,risk,http_status,dnssec,"
                     f"ssl_status,ssl_expiry,origem,whois_status,whois_age_days,whois_creation,whois_expiry,"
                     f"whois_registrar FROM subdomains WHERE status IN {_ACTIVE}")
     mons = _ro_rows(str(b / "monitor" / "monitor.db"),
@@ -216,7 +216,6 @@ def correlation_graph(base: str | None = None) -> dict:
         sdet = [
             ["IP", r.get("ip") or "—"],
             ["ASN", r.get("asn") or "—"],
-            ["Ambiente", r.get("environment") or "—"],
             ["Tipo de IP", r.get("ip_type") or "—"],
             ["HTTP", r.get("http_status") or "—"],
             ["CNAME", (r.get("cname") if r.get("cname") not in ("", "-", None) else "—")],

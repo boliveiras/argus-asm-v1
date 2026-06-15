@@ -28,6 +28,11 @@ Cada coisa encontrada vira um **achado** com uma criticidade (Crítico → Info)
 quando você trata um achado, ele **não volta como novo** na rodada seguinte — o Argus
 lembra do que já foi resolvido.
 
+A criticidade vem de **evidência, não de chute**: o Argus olha se o ativo está exposto,
+se o IP tem má reputação, se existe vulnerabilidade conhecida e se ela **já está sendo
+explorada lá fora**. O que é particular da sua empresa — como saber se um host é de
+produção ou de testes — fica pra **você validar**; o Argus não adivinha o seu contexto.
+
 ## Como funciona?
 
 Você aponta os alvos, os scanners descobrem o que está exposto, a inteligência de

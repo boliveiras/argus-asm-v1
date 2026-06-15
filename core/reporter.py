@@ -922,13 +922,14 @@ def _exec_submonitor(all_results: list) -> str:
              (f"<b>{tc} crítico(s)</b> e {ta} de alto risco exigem atenção."
               if (tc or ta) else "Nenhuma exposição crítica ou de alto risco nesta execução."))
     def fmt(r):
-        return f'{_h(r.get("hostname"))} ({_h(r.get("environment"))})'
+        ip = r.get("ip", "")
+        return f'{_h(r.get("hostname"))}' + (f' ({_h(ip)})' if ip else '')
     risks = _top_risks(cur, fmt)
     recs = []
     def add(c):
         if c not in recs: recs.append(c)
-    if any(r.get("risk") == "CRITICO" for r in cur): add("Ambientes dev/homolog expostos na internet — remova do acesso público ou proteja por VPN.")
-    if any(r.get("risk") == "ALTO" for r in cur): add("Apps de produção expostos — restrinja a superfície e revise o que precisa estar público.")
+    if any(r.get("risk") == "CRITICO" for r in cur): add("Subdomínios críticos — IPs com CVE explorada in-the-wild (KEV), CVSS alto ou reputação péssima. Priorize a correção/retirada.")
+    if any(r.get("risk") == "ALTO" for r in cur): add("Subdomínios de alto risco — IPs com vulnerabilidade conhecida ou reputação ruim. Valide e trate.")
     if any((r.get("whois") or {}).get("status") == "NOVO" for r in cur): add("Domínios recém-registrados detectados — verifique legitimidade (possível phishing/typosquatting).")
     if any((r.get("ssl") or {}).get("status", "").startswith("EXPIRA") for r in cur): add("Certificados TLS vencidos ou próximos do vencimento — renove.")
     if any((r.get("urlscan") or {}).get("seen") for r in cur): add("Subdomínios aparecem em scans públicos (urlscan) — revise a exposição.")
@@ -1536,7 +1537,6 @@ def _submonitor_rows_to_js(rows: list[dict]) -> str:
             "asn":         str(r.get("asn",         "")),
             "ip_type":     str(r.get("ip_type",     "")),
             "http_status": str(r.get("http_status", "")),
-            "environment": str(r.get("environment", "")),
             "risk":        str(r.get("risk",        "INFO")),
             "status":      str(r.get("status",      "")),
             "ack_reason":  str(r.get("ack_reason",  "")),
@@ -1619,8 +1619,7 @@ def generate_submonitor_report(
     # Linhas compactas p/ o módulo de Correlação (subdomínio -> IP).
     corr_rows = json.dumps([
         {"h": str(r.get("hostname", "")), "ip": str(r.get("ip", "")),
-         "camp": str(r.get("campanha", "")), "risk": r.get("risk", "INFO"),
-         "env": str(r.get("environment", ""))}
+         "camp": str(r.get("campanha", "")), "risk": r.get("risk", "INFO")}
         for r in all_results if r.get("hostname") and r.get("ip")
     ], ensure_ascii=False).replace("<", "\\u003c")
 
@@ -1673,10 +1672,6 @@ def generate_submonitor_report(
 <div class="toolbar no-print">
   <input type="text" id="q" aria-label="Buscar na tabela" placeholder="&#x1F50D;  Busca (hostname, IP, ASN, ISP...)" oninput="applyFilters()">
   <select id="f-camp"   onchange="applyFilters()"><option value="">Todas as Campanhas</option></select>
-  <select id="f-env"    onchange="applyFilters()">
-    <option value="">Todos Ambientes</option>
-    <option>PROD</option><option>HML</option><option>DEV</option>
-  </select>
   <select id="f-risk"   onchange="applyFilters()">
     <option value="">Todos os Riscos</option>
     <option>CRITICO</option><option>ALTO</option><option>MEDIO</option><option>BAIXO</option>
@@ -1784,7 +1779,6 @@ function switchTab(t){{
 function applyFilters(){{
   const q=document.getElementById('q').value.toLowerCase();
   const camp=document.getElementById('f-camp').value;
-  const env=document.getElementById('f-env').value;
   const risk=document.getElementById('f-risk').value;
   const ipt=document.getElementById('f-ipt').value;
   const st=document.getElementById('f-status').value;
@@ -1796,7 +1790,6 @@ function applyFilters(){{
   const fwhois=(document.getElementById('f-whois')||{{value:''}}).value;
   filtered=DATA[tab].filter(x=>{{
     if(camp&&x.campanha!==camp)return false;
-    if(env&&x.environment!==env)return false;
     if(risk&&x.risk!==risk)return false;
     if(ipt&&x.ip_type!==ipt)return false;
     if(st&&x.status!==st)return false;
@@ -1822,7 +1815,7 @@ function applyFilters(){{
   }});
   page=1;applySort();
 }}
-function clearFilters(){{['q','f-camp','f-env','f-risk','f-ipt','f-status','f-http','f-abuse','f-dnssec','f-ssl','f-origem','f-whois'].forEach(id=>{{const e=document.getElementById(id);if(e)e.value='';}});applyFilters();}}
+function clearFilters(){{['q','f-camp','f-risk','f-ipt','f-status','f-http','f-abuse','f-dnssec','f-ssl','f-origem','f-whois'].forEach(id=>{{const e=document.getElementById(id);if(e)e.value='';}});applyFilters();}}
 function doSort(k){{
   if(sortKey===k)sortAsc=!sortAsc;else{{sortKey=k;sortAsc=true;}}
   document.querySelectorAll('.si').forEach(e=>e.textContent='\\u21C5');
@@ -1916,7 +1909,7 @@ function render(){{
   renderPagination(pgDiv,page,pages,total,start,slice.length,'gotoPage');
 }}
 function exportCSV(){{
-  const base=['campanha','hostname','ip','ip_type','cname','asn','http_status','environment','origem','risk','status','ack_reason','dnssec','ssl_status','ssl_expiry','whois_status','whois_creation','whois_expiry','whois_age_days','whois_registrar'];
+  const base=['campanha','hostname','ip','ip_type','cname','asn','http_status','origem','risk','status','ack_reason','dnssec','ssl_status','ssl_expiry','whois_status','whois_creation','whois_expiry','whois_age_days','whois_registrar'];
   const abCol=['score','country','isp','usage_type','is_tor','total_reports','last_reported_at'];
   const usCol=['seen','server','ip','asnname','country','scan_uuid','report_url'];
   const hdr=[...base,...abCol.map(c=>'abuse_'+c),...usCol.map(c=>'urlscan_'+c)].join(',');
@@ -3488,7 +3481,7 @@ def build_index() -> str:
         ("monitor",    "/monitor_report.html",    "Monitor de Portas",
          "Superfície exposta — IPs e portas abertas, com risco e reputação AbuseIPDB."),
         ("submonitor", "/submonitor_report.html", "Monitor de Subdomínios",
-         "Subdomínios ativos, ambiente, SSL, urlscan.io e RDAP/WHOIS."),
+         "Subdomínios ativos, IP/ASN, SSL, urlscan.io e RDAP/WHOIS."),
         ("credentials","/credentials_report.html","Exposição de Credenciais",
          "Exposição de credenciais em logs de infostealer (Hudson Rock)."),
         ("email",      "/email_report.html",      "Postura de E-mail",
@@ -3802,15 +3795,17 @@ def build_risk_guide() -> str:
         return f'<div class="panel panel-pad sect"{idattr} style="margin-bottom:16px"><h2>{title}{top}</h2>{inner}</div>'
 
     overview = panel("Visão Geral",
-        '<p>O Argus usa um <b>Risk Engine</b> em duas camadas. A primeira avalia o '
-        'contexto técnico (porta/serviço, ambiente, tipo de IP). A segunda enriquece com '
-        'reputação do AbuseIPDB. <b>O risco nunca é rebaixado</b> — só pode ser elevado.</p>'
+        '<p>O Argus classifica risco por <b>evidência</b>, não por suposição. Ele começa de uma '
+        '<b>base de exposição</b> (porta/serviço exposto, IP público vs. privado) e <b>eleva</b> conforme as '
+        'evidências objetivas: reputação do <b>AbuseIPDB</b>, vulnerabilidade conhecida (<b>Shodan/CVE</b>), '
+        'exploração confirmada in-the-wild (<b>CISA KEV</b>) e nota <b>CVSS</b> (NVD). '
+        '<b>O risco nunca é rebaixado</b> — só elevado. Contexto interno (ambiente, etc.) é validado pelo analista.</p>'
         '<div class="flow">'
-        '<div class="flow-step"><div class="l">Porta / Host</div><div class="v">Risco base</div></div>'
+        '<div class="flow-step"><div class="l">Exposição</div><div class="v">Porta / IP público</div></div>'
         '<div class="flow-arrow">+</div>'
-        '<div class="flow-step"><div class="l">Contexto</div><div class="v">IP / Ambiente</div></div>'
+        '<div class="flow-step"><div class="l">Reputação</div><div class="v">AbuseIPDB</div></div>'
         '<div class="flow-arrow">+</div>'
-        '<div class="flow-step"><div class="l">AbuseIPDB</div><div class="v">Score + TOR</div></div>'
+        '<div class="flow-step"><div class="l">Vulnerabilidade</div><div class="v">CVE · KEV · CVSS</div></div>'
         '<div class="flow-arrow">&#x2192;</div>'
         '<div class="flow-step res"><div class="l">Resultado</div><div class="v">Risco final</div></div></div>',
         aid="rg-overview", toc_label="Visão geral")
@@ -3851,15 +3846,20 @@ def build_risk_guide() -> str:
         aid="rg-udp", toc_label="Portas UDP")
 
     subs = panel("&#x1F310; Monitor de Subdomínios",
-        '<table class="risk-table"><thead><tr><th>Condição</th><th>Risco</th><th>Exemplo</th></tr></thead><tbody>'
-        '<tr><td>IP público + DEV/HML</td><td class="r-critico">CRÍTICO</td><td>dev.empresa.com.br</td></tr>'
-        '<tr><td>IP público + PROD</td><td class="r-alto">ALTO</td><td>api.empresa.com.br</td></tr>'
-        '<tr><td>IP privado</td><td class="r-baixo">BAIXO</td><td>intranet.empresa.com.br</td></tr>'
+        '<table class="risk-table"><thead><tr><th>Base (exposição)</th><th>Risco base</th><th>Exemplo</th></tr></thead><tbody>'
+        '<tr><td>Subdomínio em IP <b>público</b></td><td class="r-medio">MÉDIO</td><td>api.empresa.com.br</td></tr>'
+        '<tr><td>Subdomínio em IP <b>privado</b></td><td class="r-baixo">BAIXO</td><td>intranet.empresa.com.br</td></tr>'
         '</tbody></table>'
-        '<p style="margin-top:10px">Todo subdomínio em <b>IP público</b> é tratado como exposto. '
-        'A detecção passiva de WAF foi <b>removida</b> por gerar falso positivo (a presença de '
-        'CDN não garante WAF ativo, e confirmar exigiria sonda comportamental intrusiva) — '
-        'o risco é então elevado pelas camadas de reputação (AbuseIPDB) e vulnerabilidade (CVE/CVSS).</p>',
+        '<p style="margin-top:10px">O risco base reflete só a <b>exposição</b>: estar em IP público é a superfície '
+        'externa (MÉDIO — vale revisar); IP privado fica de fora (BAIXO). <b>Não há mais suposição</b> sobre ambiente '
+        '(dev/prod) nem WAF — isso é contexto da empresa, que o analista valida. O risco então sobe por '
+        '<b>evidência</b>:</p>'
+        '<table class="risk-table" style="margin-top:8px"><thead><tr><th>Evidência</th><th>Efeito no risco</th></tr></thead><tbody>'
+        '<tr><td>Reputação ruim no AbuseIPDB</td><td class="r-alto">eleva (até CRÍTICO)</td></tr>'
+        '<tr><td><span class="b-crit">CVE</span> conhecida (Shodan)</td><td class="r-alto">no mínimo ALTO</td></tr>'
+        '<tr><td>CVE <b>explorada in-the-wild</b> (CISA KEV)</td><td class="r-critico">CRÍTICO</td></tr>'
+        '<tr><td>CVSS alto (NVD)</td><td class="r-alto">ALTO / CRÍTICO conforme a nota</td></tr>'
+        '</tbody></table>',
         aid="rg-subs", toc_label="Subdomínios")
 
     abuse = panel("&#x1F6E1; Elevação por AbuseIPDB",
