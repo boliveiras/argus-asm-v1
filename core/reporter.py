@@ -1345,24 +1345,15 @@ def generate_monitor_report(
 <div class="tbl-wrap">
 <table>
   <thead><tr>
-    <th onclick="doSort('campanha')"      >Campanha     <span class="si" id="si-campanha"      >&#x21C5;</span></th>
-    <th onclick="doSort('ip')"            >IP           <span class="si" id="si-ip"            >&#x21C5;</span></th>
-    <th onclick="doSort('ip_type')"       >Tipo         <span class="si" id="si-ip_type"       >&#x21C5;</span></th>
-    <th onclick="doSort('target')"        >Target       <span class="si" id="si-target"        >&#x21C5;</span></th>
-    <th onclick="doSort('port')"          >Porta        <span class="si" id="si-port"          >&#x21C5;</span></th>
-    <th onclick="doSort('protocol')"      >Proto        <span class="si" id="si-protocol"      >&#x21C5;</span></th>
-    <th onclick="doSort('service')"       >Servico      <span class="si" id="si-service"       >&#x21C5;</span></th>
-    <th onclick="doSort('banner')"        >Banner       <span class="si" id="si-banner"        >&#x21C5;</span></th>
-    <th onclick="doSort('asn')"           >ASN          <span class="si" id="si-asn"           >&#x21C5;</span></th>
-    <th onclick="doSort('risk')"          >Risco        <span class="si" id="si-risk"          >&#x21C5;</span></th>
-    <th onclick="doSort('idb_vulns')"     >CVEs         <span class="si" id="si-idb_vulns"     >&#x21C5;</span></th>
-    <th onclick="doSort('status')"        >Status       <span class="si" id="si-status"        >&#x21C5;</span></th>
-    <th onclick="doSort('ack_reason')"    >Motivo       <span class="si" id="si-ack_reason"    >&#x21C5;</span></th>
-    <th onclick="doSort('abuse_score')"   >Abuso %      <span class="si" id="si-abuse_score"   >&#x21C5;</span></th>
-    <th onclick="doSort('abuse_country')" >Pais         <span class="si" id="si-abuse_country" >&#x21C5;</span></th>
-    <th onclick="doSort('abuse_isp')"     >ISP          <span class="si" id="si-abuse_isp"     >&#x21C5;</span></th>
-    <th onclick="doSort('abuse_reports')" >Reports      <span class="si" id="si-abuse_reports" >&#x21C5;</span></th>
-    <th onclick="doSort('abuse_last')"    >Ult. Reporte <span class="si" id="si-abuse_last"    >&#x21C5;</span></th>
+    <th onclick="doSort('ip')"            >IP      <span class="si" id="si-ip"            >&#x21C5;</span></th>
+    <th onclick="doSort('ip_type')"       >Tipo    <span class="si" id="si-ip_type"       >&#x21C5;</span></th>
+    <th onclick="doSort('port')"          >Porta   <span class="si" id="si-port"          >&#x21C5;</span></th>
+    <th onclick="doSort('protocol')"      >Proto   <span class="si" id="si-protocol"      >&#x21C5;</span></th>
+    <th onclick="doSort('service')"       >Serviço <span class="si" id="si-service"       >&#x21C5;</span></th>
+    <th onclick="doSort('asn')"           >ASN     <span class="si" id="si-asn"           >&#x21C5;</span></th>
+    <th onclick="doSort('abuse_country')" >País    <span class="si" id="si-abuse_country" >&#x21C5;</span></th>
+    <th onclick="doSort('risk')"          >Risco   <span class="si" id="si-risk"          >&#x21C5;</span></th>
+    <th onclick="doSort('abuse_score')"   >Abuso   <span class="si" id="si-abuse_score"   >&#x21C5;</span></th>
   </tr></thead>
   <tbody id="tbody"></tbody>
 </table>
@@ -1471,24 +1462,15 @@ function render(){{
       ?`<span class="cve-badge" title="${{esc(cveTitle)}}${{(idb.vulns||[]).length<vc?' …':''}}">${{vc}} CVE${{vc>1?'s':''}}</span>`+cvssBadge+kevBadge
       :'<span class="ssl-none">&#8212;</span>';
     html+=`<tr class="r-${{esc(r.risk)}}${{r.status==='RECONHECIDO'?' ack':''}}">
-      <td><span class="camp-badge">${{esc(r.campanha)}}</span></td>
       <td><code>${{esc(r.ip)}}</code></td>
       <td><span class="ip-${{esc(r.ip_type)}}">${{esc(r.ip_type)}}</span></td>
-      <td title="${{esc(r.target)}}">${{esc(r.target)}}</td>
       <td><b>${{esc(r.port)}}</b></td>
       <td>${{esc(r.protocol)}}</td>
       <td>${{esc(r.service)}}</td>
-      <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${{esc(r.banner)}}">${{esc(r.banner)}}</td>
       <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${{esc(r.asn)}}">${{esc(r.asn)}}</td>
-      <td class="risk-${{esc(r.risk)}}">${{esc(r.risk)}}</td>
-      <td>${{cveCell}}</td>
-      <td><span class="status-${{esc(r.status)}}" title="${{esc(ackR)}}">${{esc(r.status)}}</span></td>
-      <td>${{ackR?`<span class="ack-reason" title="${{esc(ackR)}}">${{esc(ackR)}}</span>`:''}}</td>
-      <td><span class="${{scoreClass(score)}}">${{scoreLabel(score)}}</span>${{torBadge}}</td>
       <td>${{esc(ab.country||'')}}</td>
-      <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${{esc(ab.isp||'')}}">${{esc(ab.isp||'')}}</td>
-      <td>${{score>=0?esc(String(ab.total_reports||0)):''}}</td>
-      <td>${{esc(lastRpt)}}</td>
+      <td class="risk-${{esc(r.risk)}}">${{esc(r.risk)}}</td>
+      <td><span class="${{scoreClass(score)}}">${{scoreLabel(score)}}</span>${{torBadge}}</td>
     </tr>`;
   }});
   tbody.innerHTML=html;
@@ -1764,30 +1746,14 @@ def generate_submonitor_report(
 <div class="tbl-wrap">
 <table>
   <thead><tr>
-    <th onclick="doSort('campanha')"        >Campanha         <span class="si" id="si-campanha"       >&#x21C5;</span></th>
-    <th onclick="doSort('hostname')"        >Hostname         <span class="si" id="si-hostname"       >&#x21C5;</span></th>
-    <th onclick="doSort('ip')"              >IP               <span class="si" id="si-ip"             >&#x21C5;</span></th>
-    <th onclick="doSort('ip_type')"         >Tipo             <span class="si" id="si-ip_type"        >&#x21C5;</span></th>
-    <th onclick="doSort('asn')"             >ASN              <span class="si" id="si-asn"            >&#x21C5;</span></th>
-    <th onclick="doSort('http_status')"     >HTTP             <span class="si" id="si-http_status"    >&#x21C5;</span></th>
-    <th onclick="doSort('environment')"     >Ambiente         <span class="si" id="si-environment"    >&#x21C5;</span></th>
-    <th onclick="doSort('origem')"           >Origem           <span class="si" id="si-origem"         >&#x21C5;</span></th>
-    <th onclick="doSort('risk')"            >Risco            <span class="si" id="si-risk"           >&#x21C5;</span></th>
-    <th onclick="doSort('idb_vulns')"       >CVEs             <span class="si" id="si-idb_vulns"      >&#x21C5;</span></th>
-    <th onclick="doSort('status')"          >Status           <span class="si" id="si-status"         >&#x21C5;</span></th>
-    <th onclick="doSort('ack_reason')"      >Motivo           <span class="si" id="si-ack_reason"     >&#x21C5;</span></th>
-    <th onclick="doSort('dnssec')"          >DNSSEC           <span class="si" id="si-dnssec"         >&#x21C5;</span></th>
-    <th onclick="doSort('ssl_status')"      >Cert SSL         <span class="si" id="si-ssl_status"     >&#x21C5;</span></th>
-    <th onclick="doSort('ssl_expiry')"      >Validade SSL     <span class="si" id="si-ssl_expiry"     >&#x21C5;</span></th>
-    <th onclick="doSort('whois_status')"    >Domínio          <span class="si" id="si-whois_status"   >&#x21C5;</span></th>
-    <th onclick="doSort('whois_age_days')"  >Idade (dias)     <span class="si" id="si-whois_age_days" >&#x21C5;</span></th>
-    <th onclick="doSort('whois_expiry')"    >Expira em        <span class="si" id="si-whois_expiry"   >&#x21C5;</span></th>
-    <th onclick="doSort('abuse_score')"     >Abuso %          <span class="si" id="si-abuse_score"    >&#x21C5;</span></th>
-    <th onclick="doSort('abuse_country')"   >Pais             <span class="si" id="si-abuse_country"  >&#x21C5;</span></th>
-    <th onclick="doSort('abuse_isp')"       >ISP              <span class="si" id="si-abuse_isp"      >&#x21C5;</span></th>
-    <th onclick="doSort('abuse_reports')"   >Reports          <span class="si" id="si-abuse_reports"  >&#x21C5;</span></th>
-    <th onclick="doSort('abuse_last')"      >Ult. Reporte     <span class="si" id="si-abuse_last"     >&#x21C5;</span></th>
-    <th onclick="doSort('urlscan_seen')"    >urlscan          <span class="si" id="si-urlscan_seen"  >&#x21C5;</span></th>
+    <th onclick="doSort('campanha')"        >Campanha <span class="si" id="si-campanha"       >&#x21C5;</span></th>
+    <th onclick="doSort('hostname')"        >Hostname <span class="si" id="si-hostname"       >&#x21C5;</span></th>
+    <th onclick="doSort('ip')"              >IP       <span class="si" id="si-ip"             >&#x21C5;</span></th>
+    <th onclick="doSort('asn')"             >ASN      <span class="si" id="si-asn"            >&#x21C5;</span></th>
+    <th onclick="doSort('http_status')"     >HTTP     <span class="si" id="si-http_status"    >&#x21C5;</span></th>
+    <th onclick="doSort('origem')"          >Origem   <span class="si" id="si-origem"         >&#x21C5;</span></th>
+    <th onclick="doSort('risk')"            >Risco    <span class="si" id="si-risk"           >&#x21C5;</span></th>
+    <th onclick="doSort('status')"          >Status   <span class="si" id="si-status"         >&#x21C5;</span></th>
   </tr></thead>
   <tbody id="tbody"></tbody>
 </table>
@@ -1939,27 +1905,11 @@ function render(){{
       <td><span class="camp-badge">${{esc(r.campanha)}}</span></td>
       <td style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${{esc(r.hostname)}}">${{esc(r.hostname)}}</td>
       <td><code>${{esc(r.ip)}}</code></td>
-      <td><span class="ip-${{esc(r.ip_type)}}">${{esc(r.ip_type)}}</span></td>
       <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${{esc(r.asn)}}">${{esc(r.asn)}}</td>
       <td>${{esc(r.http_status)}}</td>
-      <td>${{esc(r.environment)}}</td>
       <td>${{origemBadge}}</td>
       <td class="risk-${{esc(r.risk)}}">${{esc(r.risk)}}</td>
-      <td>${{cveCell}}</td>
       <td><span class="status-${{esc(r.status)}}" title="${{esc(ackR)}}">${{esc(r.status)}}</span></td>
-      <td>${{ackR?`<span class="ack-reason" title="${{esc(ackR)}}">${{esc(ackR)}}</span>`:''}}</td>
-      <td>${{dnssecBadge}}</td>
-      <td>${{sslBadge}}</td>
-      <td>${{esc(r.ssl_expiry||'')}}</td>
-      <td>${{whoisBadge}}</td>
-      <td>${{ageVal}}</td>
-      <td>${{esc(r.whois_expiry||'')}}</td>
-      <td><span class="${{scoreClass(score)}}">${{scoreLabel(score)}}</span>${{torBadge}}</td>
-      <td>${{esc(ab.country||'')}}</td>
-      <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${{esc(ab.isp||'')}}">${{esc(ab.isp||'')}}</td>
-      <td>${{score>=0?esc(String(ab.total_reports||0)):''}}</td>
-      <td>${{esc(lastRpt)}}</td>
-      <td>${{usCell}}</td>
     </tr>`;
   }});
   tbody.innerHTML=html;
@@ -4027,7 +3977,7 @@ _CORR_SCRIPT = r"""<script>
             email:'Achado · postura de e-mail',cred:'Achado · credenciais',typo:'Achado · typosquat'};
   var RAD={campaign:14,domain:11,subdomain:8,ip:9,email:9,cred:8,typo:9};
   var N={}, ADJ={}, INDEG={}, open={}, POS={}, PIN={}, sel=null, _ids=[], _vis={};
-  var drag=null, dragMoved=false, ox=0, oy=0, sx=0, sy=0;
+  var drag=null, dragMoved=false, ox=0, oy=0, sx=0, sy=0, vb={x:0,y:0,w:960,h:600}, pan=null;
   function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
   function setTxt(id,v){var e=document.getElementById(id); if(e)e.textContent=v;}
   function showOnly(id){['corr-empty','corr-off','corr-main'].forEach(function(x){var e=document.getElementById(x);if(e)e.style.display=(x===id?'block':'none');});}
@@ -4075,17 +4025,19 @@ _CORR_SCRIPT = r"""<script>
     if(type==='typo'){ var pts=[]; for(var i=0;i<6;i++){var a=Math.PI/180*(60*i-30); pts.push((x+r*Math.cos(a)).toFixed(1)+','+(y+r*Math.sin(a)).toFixed(1));} return '<polygon points="'+pts.join(' ')+'"'+c; }
     return '<circle cx="'+x+'" cy="'+y+'" r="'+r+'"'+c;
   }
+  function neighbors(id){ var s={}; s[id]=1; (ADJ[id]||[]).forEach(function(c){s[c]=1;}); Object.keys(ADJ).forEach(function(p){ if((ADJ[p]||[]).indexOf(id)>=0)s[p]=1; }); return s; }
   function paint(){
     var svg=document.getElementById('corr-svg'); if(!svg)return; var h='';
-    Object.keys(_vis).forEach(function(s){ if(!open[s])return; (ADJ[s]||[]).forEach(function(t){ if(!_vis[t])return; var a=POS[s],b=POS[t],sh=(INDEG[t]||0)>1;
-      h+='<line x1="'+a.x.toFixed(0)+'" y1="'+a.y.toFixed(0)+'" x2="'+b.x.toFixed(0)+'" y2="'+b.y.toFixed(0)+'" stroke="'+(sh?'#fb923c':'var(--border-2)')+'" stroke-width="'+(sh?1.6:0.7)+'"/>'; }); });
-    _ids.forEach(function(id){ var n=N[id],p=POS[id],x=+p.x.toFixed(0),y=+p.y.toFixed(0),r=RAD[n.type]||8,c=SEV[n.risk]||'#8a99b4',sh=(n.type==='ip'&&(INDEG[id]||0)>1),ring=(kids(id)&&!open[id]);
-      h+='<g class="corr-node" tabindex="0" role="button" aria-label="'+esc(n.label)+', '+esc(TLBL[n.type]||n.type)+', risco '+esc(n.risk)+'" data-id="'+esc(id)+'">';
+    var hl=sel?neighbors(sel):null;   // ao selecionar, acende só o item + relacionados
+    Object.keys(_vis).forEach(function(s){ if(!open[s])return; (ADJ[s]||[]).forEach(function(t){ if(!_vis[t])return; var a=POS[s],b=POS[t],sh=(INDEG[t]||0)>1; var eo=hl?((s===sel||t===sel)?1:0.08):1;
+      h+='<line x1="'+a.x.toFixed(0)+'" y1="'+a.y.toFixed(0)+'" x2="'+b.x.toFixed(0)+'" y2="'+b.y.toFixed(0)+'" stroke="'+(sh?'#fb923c':'var(--border-2)')+'" stroke-width="'+(sh?1.6:0.7)+'" opacity="'+eo+'"/>'; }); });
+    _ids.forEach(function(id){ var n=N[id],p=POS[id],x=+p.x.toFixed(0),y=+p.y.toFixed(0),r=RAD[n.type]||8,c=SEV[n.risk]||'#8a99b4',sh=(n.type==='ip'&&(INDEG[id]||0)>1),ring=(kids(id)&&!open[id]); var no=hl?(hl[id]?1:0.13):1;
+      h+='<g class="corr-node" tabindex="0" role="button" opacity="'+no+'" aria-label="'+esc(n.label)+', '+esc(TLBL[n.type]||n.type)+', risco '+esc(n.risk)+'" data-id="'+esc(id)+'">';
       h+='<title>'+esc(n.label)+' — '+esc(TLBL[n.type]||n.type)+'</title>';
       if(ring) h+='<circle cx="'+x+'" cy="'+y+'" r="'+(r+4)+'" fill="none" stroke="'+c+'" stroke-width="0.7" stroke-dasharray="2 2"/>';
       if(sh)   h+='<circle cx="'+x+'" cy="'+y+'" r="'+(r+4)+'" fill="none" stroke="#fb923c" stroke-width="1.6"/>';
       h+=shapeEl(n.type,x,y,r,c,(id===sel?'var(--text)':c),(id===sel?2.2:1));
-      if(n.type==='campaign'||n.type==='domain'||sh){ var lbl=n.label.length>26?n.label.slice(0,25)+'…':n.label;
+      if(n.type==='campaign'||n.type==='domain'||sh||id===sel){ var lbl=n.label.length>26?n.label.slice(0,25)+'…':n.label;
         h+='<text x="'+x+'" y="'+(y+r+12)+'" text-anchor="middle" font-size="11" fill="var(--muted)">'+esc(lbl)+'</text>'; }
       h+='</g>';
     });
@@ -4096,12 +4048,22 @@ _CORR_SCRIPT = r"""<script>
     _vis=visible(rts); _ids=Object.keys(_vis); layout(_ids,960,600); paint(); buildList();
   }
   function toSvg(cx,cy){ var svg=document.getElementById('corr-svg'); if(!svg||!svg.createSVGPoint)return null; var pt=svg.createSVGPoint(); pt.x=cx; pt.y=cy; var m=svg.getScreenCTM(); if(!m)return null; return pt.matrixTransform(m.inverse()); }
+  function applyVB(){ var svg=document.getElementById('corr-svg'); if(svg)svg.setAttribute('viewBox',vb.x.toFixed(1)+' '+vb.y.toFixed(1)+' '+vb.w.toFixed(1)+' '+vb.h.toFixed(1)); }
+  function zoomAt(mx,my,f){ var nw=Math.max(140,Math.min(2200,vb.w*f)), nh=nw*(600/960); vb.x=mx-(mx-vb.x)*(nw/vb.w); vb.y=my-(my-vb.y)*(nh/vb.h); vb.w=nw; vb.h=nh; applyVB(); }
+  window.__corrZoom=function(k){ if(k==='r'){vb={x:0,y:0,w:960,h:600};applyVB();} else zoomAt(vb.x+vb.w/2,vb.y+vb.h/2,k<0?1.25:0.8); };
   function bindDrag(){
-    var svg=document.getElementById('corr-svg'); if(!svg||svg.__bound)return; svg.__bound=true; svg.style.touchAction='none';
-    svg.addEventListener('pointerdown',function(e){ var g=e.target.closest&&e.target.closest('g.corr-node[data-id]'); if(!g)return; var id=g.getAttribute('data-id'); var p=toSvg(e.clientX,e.clientY); if(!p||!POS[id])return; drag=id; dragMoved=false; sx=p.x; sy=p.y; ox=p.x-POS[id].x; oy=p.y-POS[id].y; try{svg.setPointerCapture(e.pointerId);}catch(_){} e.preventDefault(); });
-    svg.addEventListener('pointermove',function(e){ if(!drag)return; var p=toSvg(e.clientX,e.clientY); if(!p)return; if(Math.abs(p.x-sx)>3||Math.abs(p.y-sy)>3)dragMoved=true; POS[drag].x=p.x-ox; POS[drag].y=p.y-oy; PIN[drag]=true; paint(); });
-    function end(){ if(!drag)return; var id=drag; drag=null; if(!dragMoved) selectNode(id); }
+    var svg=document.getElementById('corr-svg'); if(!svg||svg.__bound)return; svg.__bound=true; svg.style.touchAction='none'; svg.style.cursor='grab';
+    svg.addEventListener('pointerdown',function(e){ var g=e.target.closest&&e.target.closest('g.corr-node[data-id]');
+      if(g){ var id=g.getAttribute('data-id'); var p=toSvg(e.clientX,e.clientY); if(!p||!POS[id])return; drag=id; dragMoved=false; sx=p.x; sy=p.y; ox=p.x-POS[id].x; oy=p.y-POS[id].y; }
+      else { pan={cx:e.clientX,cy:e.clientY,vx:vb.x,vy:vb.y,moved:false}; svg.style.cursor='grabbing'; }
+      try{svg.setPointerCapture(e.pointerId);}catch(_){} e.preventDefault(); });
+    svg.addEventListener('pointermove',function(e){
+      if(drag){ var p=toSvg(e.clientX,e.clientY); if(!p)return; if(Math.abs(p.x-sx)>3||Math.abs(p.y-sy)>3)dragMoved=true; POS[drag].x=p.x-ox; POS[drag].y=p.y-oy; PIN[drag]=true; paint(); }
+      else if(pan){ var rect=svg.getBoundingClientRect(); var dx=e.clientX-pan.cx, dy=e.clientY-pan.cy; if(Math.abs(dx)>3||Math.abs(dy)>3)pan.moved=true; vb.x=pan.vx-dx*(vb.w/rect.width); vb.y=pan.vy-dy*(vb.h/rect.height); applyVB(); } });
+    function end(){ if(drag){ var id=drag; drag=null; if(!dragMoved) selectNode(id); }
+      else if(pan){ var pm=pan.moved; pan=null; svg.style.cursor='grab'; if(!pm && sel){ sel=null; var d=document.getElementById('corr-detail'); if(d)d.style.display='none'; paint(); } } }
     svg.addEventListener('pointerup',end); svg.addEventListener('pointercancel',end);
+    svg.addEventListener('wheel',function(e){ e.preventDefault(); var p=toSvg(e.clientX,e.clientY); if(!p)return; zoomAt(p.x,p.y,e.deltaY<0?0.85:1.176); },{passive:false});
   }
   function selectNode(id){ var n=N[id]; if(!n)return; if(kids(id))open[id]=!open[id]; sel=id;
     var cur=document.getElementById('corr-camp'); render(cur?cur.value:'*'); detail(id);
@@ -4181,12 +4143,18 @@ def build_correlation_page() -> str:
         '<div class="kpi"><div class="v" id="corr-nsub">&mdash;</div><div class="l">Subdomínios</div></div>'
         '<div class="kpi"><div class="v" id="corr-nip">&mdash;</div><div class="l">IPs únicos</div></div>'
         '<div class="kpi sev-abus"><div class="v" id="corr-nshared">&mdash;</div><div class="l">IPs compartilhados</div></div></div>'
+        # Controles de zoom (a roda do mouse também dá zoom; arrastar o fundo faz pan).
+        '<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">'
+        '<button class="btn btn-clr" type="button" onclick="window.__corrZoom&&window.__corrZoom(-1)" aria-label="Aproximar" title="Aproximar (zoom +)">&#x2795;</button>'
+        '<button class="btn btn-clr" type="button" onclick="window.__corrZoom&&window.__corrZoom(1)" aria-label="Afastar" title="Afastar (zoom -)">&#x2796;</button>'
+        '<button class="btn btn-clr" type="button" onclick="window.__corrZoom&&window.__corrZoom(\'r\')" aria-label="Reajustar zoom" title="Reajustar (100%)">&#x21BB; ajustar</button>'
+        '<span class="page-sub" style="margin:0 0 0 4px">roda = zoom · arraste o fundo = mover</span></div>'
         '<div id="corr-wrap"><svg id="corr-svg" viewBox="0 0 960 600" role="img" '
         'aria-label="Grafo de correlação entre campanhas, subdomínios e IPs. Use a lista acessível abaixo para os detalhes."></svg></div>'
-        '<p class="page-sub" style="margin-top:8px">Clique em um nó para <b>expandir</b> (campanha &rarr; domínios &rarr; '
-        'subdomínios e achados &rarr; IPs) e ver os <b>detalhes do enriquecimento</b>. <b>Arraste</b> os nós para '
-        'reorganizar livremente. Anel pontilhado = pode expandir; IP com anel <span style="color:#fb923c">laranja</span> '
-        'é servido por vários subdomínios (raio de explosão).</p>'
+        '<p class="page-sub" style="margin-top:8px">Clique em um nó para <b>expandir</b> e <b>destacar</b> só ele e os '
+        'itens relacionados (o resto esmaece); clique no fundo para limpar. <b>Arraste</b> os nós para reorganizar e '
+        'use a <b>roda do mouse</b> (ou os botões) para dar <b>zoom</b>. Anel pontilhado = pode expandir; IP com anel '
+        '<span style="color:#fb923c">laranja</span> é servido por vários subdomínios (raio de explosão).</p>'
         '<div id="corr-detail" class="panel panel-pad"></div>'
         '<details style="margin-top:14px"><summary style="cursor:pointer;color:var(--muted);font-weight:600">'
         'Lista acessível (subdomínio &rarr; IP)</summary>'
