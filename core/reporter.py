@@ -3976,7 +3976,7 @@ _CORR_SCRIPT = r"""<script>
   var TLBL={campaign:'Campanha',domain:'Domínio',subdomain:'Subdomínio',ip:'IP',
             email:'Achado · postura de e-mail',cred:'Achado · credenciais',typo:'Achado · typosquat'};
   var RAD={campaign:14,domain:11,subdomain:8,ip:9,email:9,cred:8,typo:9};
-  var N={}, ADJ={}, INDEG={}, open={}, POS={}, PIN={}, sel=null, _ids=[], _vis={};
+  var N={}, ADJ={}, INDEG={}, open={}, POS={}, PIN={}, sel=null, _ids=[], _vis={}, selRoots=null;
   var drag=null, dragMoved=false, ox=0, oy=0, sx=0, sy=0, vb={x:0,y:0,w:960,h:600}, pan=null;
   function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
   function setTxt(id,v){var e=document.getElementById(id); if(e)e.textContent=v;}
@@ -3995,11 +3995,11 @@ _CORR_SCRIPT = r"""<script>
       var o0=document.createElement('option'); o0.value='*'; o0.textContent='Todas as campanhas'; s.appendChild(o0);
       camps.forEach(function(c){var o=document.createElement('option');o.value=c;o.textContent=c;s.appendChild(o);});
       s.value=camps.length===1?camps[0]:'*';
-      s.onchange=function(){render(s.value);};
+      s.onchange=function(){ sel=null; selRoots=null; render(s.value); };
       render(s.value);
     }).catch(function(){ showOnly('corr-off'); });
   }
-  function roots(camp){ return Object.keys(N).filter(function(id){return N[id].type==='campaign' && (camp==='*'||N[id].label===camp);}); }
+  function roots(camp){ var rs=Object.keys(N).filter(function(id){return N[id].type==='campaign' && (camp==='*'||N[id].label===camp);}); if(selRoots){ Object.keys(selRoots).forEach(function(r){ if(rs.indexOf(r)<0)rs.push(r); }); } return rs; }
   function kids(id){ return (ADJ[id]||[]).length>0; }
   function visible(rts){
     var vis={}; rts.forEach(function(r){vis[r]=1;}); var ch=true;
@@ -4026,10 +4026,15 @@ _CORR_SCRIPT = r"""<script>
     return '<circle cx="'+x+'" cy="'+y+'" r="'+r+'"'+c;
   }
   function neighbors(id){ var s={}; s[id]=1; (ADJ[id]||[]).forEach(function(c){s[c]=1;}); Object.keys(ADJ).forEach(function(p){ if((ADJ[p]||[]).indexOf(id)>=0)s[p]=1; }); return s; }
+  function parentsOf(id){ var ps=[]; Object.keys(ADJ).forEach(function(p){ if((ADJ[p]||[]).indexOf(id)>=0)ps.push(p); }); return ps; }
+  function rootsOf(id){ var rs={},st=[id],seen={}; while(st.length){ var x=st.pop(); if(seen[x])continue; seen[x]=1; if(N[x]&&N[x].type==='campaign'){rs[x]=1;continue;} parentsOf(x).forEach(function(p){st.push(p);}); } return Object.keys(rs); }
+  function revealAncestors(id){ var st=parentsOf(id),seen={}; while(st.length){ var p=st.pop(); if(seen[p])continue; seen[p]=1; open[p]=true; parentsOf(p).forEach(function(g){st.push(g);}); } }
   function paint(){
     var svg=document.getElementById('corr-svg'); if(!svg)return; var h='';
     var hl=sel?neighbors(sel):null;   // ao selecionar, acende só o item + relacionados
-    Object.keys(_vis).forEach(function(s){ if(!open[s])return; (ADJ[s]||[]).forEach(function(t){ if(!_vis[t])return; var a=POS[s],b=POS[t],sh=(INDEG[t]||0)>1; var eo=hl?((s===sel||t===sel)?1:0.08):1;
+    // Desenha a aresta se AMBAS as pontas estão visíveis (não exige o pai expandido) —
+    // assim todo subdomínio visível que resolve para um IP compartilhado fica ligado a ele.
+    Object.keys(_vis).forEach(function(s){ (ADJ[s]||[]).forEach(function(t){ if(!_vis[t])return; var a=POS[s],b=POS[t],sh=(INDEG[t]||0)>1; var eo=hl?((s===sel||t===sel)?1:0.08):1;
       h+='<line x1="'+a.x.toFixed(0)+'" y1="'+a.y.toFixed(0)+'" x2="'+b.x.toFixed(0)+'" y2="'+b.y.toFixed(0)+'" stroke="'+(sh?'#fb923c':'var(--border-2)')+'" stroke-width="'+(sh?1.6:0.7)+'" opacity="'+eo+'"/>'; }); });
     _ids.forEach(function(id){ var n=N[id],p=POS[id],x=+p.x.toFixed(0),y=+p.y.toFixed(0),r=RAD[n.type]||8,c=SEV[n.risk]||'#8a99b4',sh=(n.type==='ip'&&(INDEG[id]||0)>1),ring=(kids(id)&&!open[id]); var no=hl?(hl[id]?1:0.13):1;
       h+='<g class="corr-node" tabindex="0" role="button" opacity="'+no+'" aria-label="'+esc(n.label)+', '+esc(TLBL[n.type]||n.type)+', risco '+esc(n.risk)+'" data-id="'+esc(id)+'">';
@@ -4061,11 +4066,17 @@ _CORR_SCRIPT = r"""<script>
       if(drag){ var p=toSvg(e.clientX,e.clientY); if(!p)return; if(Math.abs(p.x-sx)>3||Math.abs(p.y-sy)>3)dragMoved=true; POS[drag].x=p.x-ox; POS[drag].y=p.y-oy; PIN[drag]=true; paint(); }
       else if(pan){ var rect=svg.getBoundingClientRect(); var dx=e.clientX-pan.cx, dy=e.clientY-pan.cy; if(Math.abs(dx)>3||Math.abs(dy)>3)pan.moved=true; vb.x=pan.vx-dx*(vb.w/rect.width); vb.y=pan.vy-dy*(vb.h/rect.height); applyVB(); } });
     function end(){ if(drag){ var id=drag; drag=null; if(!dragMoved) selectNode(id); }
-      else if(pan){ var pm=pan.moved; pan=null; svg.style.cursor='grab'; if(!pm && sel){ sel=null; var d=document.getElementById('corr-detail'); if(d)d.style.display='none'; paint(); } } }
+      else if(pan){ var pm=pan.moved; pan=null; svg.style.cursor='grab'; if(!pm && sel){ sel=null; selRoots=null; var cur=document.getElementById('corr-camp'); var d=document.getElementById('corr-detail'); if(d)d.style.display='none'; render(cur?cur.value:'*'); } } }
     svg.addEventListener('pointerup',end); svg.addEventListener('pointercancel',end);
     svg.addEventListener('wheel',function(e){ e.preventDefault(); var p=toSvg(e.clientX,e.clientY); if(!p)return; zoomAt(p.x,p.y,e.deltaY<0?0.85:1.176); },{passive:false});
   }
   function selectNode(id){ var n=N[id]; if(!n)return; if(kids(id))open[id]=!open[id]; sel=id;
+    // Revela e liga TODOS os relacionados: abre os ancestrais de cada vizinho e
+    // garante que a(s) campanha(s) dele(s) entrem como raiz (vale mesmo entre campanhas).
+    var rel=neighbors(id); selRoots={};
+    Object.keys(rel).forEach(function(rid){ revealAncestors(rid); rootsOf(rid).forEach(function(rt){selRoots[rt]=1;});
+      if(rid!==id && (ADJ[rid]||[]).indexOf(id)>=0) open[rid]=true; });  // pai de id: abre p/ garantir id visível
+    rootsOf(id).forEach(function(rt){selRoots[rt]=1;});
     var cur=document.getElementById('corr-camp'); render(cur?cur.value:'*'); detail(id);
   }
   function detail(id){ var n=N[id],d=document.getElementById('corr-detail'); if(!d)return;
