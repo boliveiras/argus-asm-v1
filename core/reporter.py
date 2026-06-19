@@ -3973,21 +3973,26 @@ def build_risk_guide() -> str:
 _CORR_SCRIPT = r"""<script>
 (function(){
   var SEV={CRITICO:'#f43f5e',ALTO:'#fb923c',MEDIO:'#fbbf24',BAIXO:'#34d399',INFO:'#8a99b4'};
+  var SEVKEYS=['CRITICO','ALTO','MEDIO','BAIXO','INFO'];
   var TLBL={campaign:'Campanha',domain:'Domínio',subdomain:'Subdomínio',ip:'IP',
             email:'Achado · postura de e-mail',cred:'Achado · credenciais',typo:'Achado · typosquat'};
   var RAD={campaign:14,domain:11,subdomain:8,ip:9,email:9,cred:8,typo:9};
-  var N={}, ADJ={}, INDEG={}, open={}, POS={}, PIN={}, sel=null, _ids=[], _vis={}, selRoots=null;
-  var drag=null, dragMoved=false, ox=0, oy=0, sx=0, sy=0, vb={x:0,y:0,w:960,h:600}, pan=null;
+  var N={}, EDGES=[], EDGES_IP=[], ADJ={}, INDEG={}, open={}, POS={}, PIN={}, sel=null, _ids=[], _vis={}, selRoots=null;
+  var viewMode='sub', sevSet={CRITICO:1,ALTO:1,MEDIO:1,BAIXO:1,INFO:1};
+  var drag=null, dragMoved=false, ox=0, oy=0, sx=0, sy=0, vb={x:0,y:0,w:960,h:600}, pan=null, dragging=false;
   function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
   function setTxt(id,v){var e=document.getElementById(id); if(e)e.textContent=v;}
   function showOnly(id){['corr-empty','corr-off','corr-main'].forEach(function(x){var e=document.getElementById(x);if(e)e.style.display=(x===id?'block':'none');});}
+  function curCamp(){ var s=document.getElementById('corr-camp'); return s?s.value:'*'; }
+  // Monta a lista de adjacência da visão ATUAL (por subdomínio ou por IP).
+  function rebuildAdj(){ var E=(viewMode==='ip')?EDGES_IP:EDGES; ADJ={}; INDEG={};
+    E.forEach(function(e){ (ADJ[e[0]]=ADJ[e[0]]||[]).push(e[1]); INDEG[e[1]]=(INDEG[e[1]]||0)+1; }); }
   function start(){
     fetch('/api/correlation',{cache:'no-store'}).then(function(r){return r.ok?r.json():null;}).then(function(j){
       if(!j||!j.ok){ showOnly('corr-off'); return; }
       if(!j.nodes||!j.nodes.length){ showOnly('corr-empty'); return; }
-      N={}; ADJ={}; INDEG={};
-      j.nodes.forEach(function(n){N[n.id]=n;});
-      (j.edges||[]).forEach(function(e){ (ADJ[e[0]]=ADJ[e[0]]||[]).push(e[1]); INDEG[e[1]]=(INDEG[e[1]]||0)+1; });
+      N={}; j.nodes.forEach(function(n){N[n.id]=n;});
+      EDGES=j.edges||[]; EDGES_IP=j.edges_ip||j.edges||[]; viewMode='sub'; rebuildAdj();
       showOnly('corr-main'); bindDrag();
       var st=j.stats||{}; setTxt('corr-nsub',st.subdomains||0); setTxt('corr-nip',st.ips||0); setTxt('corr-nshared',st.shared_ips||0);
       var camps=j.nodes.filter(function(n){return n.type==='campaign';}).map(function(n){return n.label;}).sort();
@@ -3995,27 +4000,50 @@ _CORR_SCRIPT = r"""<script>
       var o0=document.createElement('option'); o0.value='*'; o0.textContent='Todas as campanhas'; s.appendChild(o0);
       camps.forEach(function(c){var o=document.createElement('option');o.value=c;o.textContent=c;s.appendChild(o);});
       s.value=camps.length===1?camps[0]:'*';
-      s.onchange=function(){ sel=null; selRoots=null; render(s.value); };
+      s.onchange=function(){ sel=null; selRoots=null; hideDetail(); render(s.value); };
+      var v=document.getElementById('corr-view'); if(v){ v.value='sub'; v.onchange=function(){ setView(v.value); }; }
+      syncSevButtons();
       render(s.value);
     }).catch(function(){ showOnly('corr-off'); });
   }
+  function hideDetail(){ var d=document.getElementById('corr-detail'); if(d)d.style.display='none'; }
+  // Troca a orientação do grafo (subdomínio↔IP): refaz adjacências e relança o layout.
+  function setView(m){ viewMode=m; rebuildAdj(); POS={}; PIN={}; open={}; sel=null; selRoots=null; hideDetail(); render(curCamp()); }
+  // Filtro de severidade (item 2): mostra só os níveis ligados (multi-seleção).
+  window.__corrSev=function(k){ if(k==='all'){ SEVKEYS.forEach(function(x){sevSet[x]=1;}); } else { sevSet[k]=sevSet[k]?0:1; }
+    sel=null; selRoots=null; hideDetail(); syncSevButtons(); render(curCamp()); };
+  function sevActive(){ return SEVKEYS.some(function(k){return !sevSet[k];}); }   // algum nível desligado?
+  function syncSevButtons(){ SEVKEYS.forEach(function(k){ var b=document.getElementById('sevb-'+k); if(b){ b.classList.toggle('off',!sevSet[k]); } }); }
   function roots(camp){ var rs=Object.keys(N).filter(function(id){return N[id].type==='campaign' && (camp==='*'||N[id].label===camp);}); if(selRoots){ Object.keys(selRoots).forEach(function(r){ if(rs.indexOf(r)<0)rs.push(r); }); } return rs; }
   function kids(id){ return (ADJ[id]||[]).length>0; }
-  function visible(rts){
-    var vis={}; rts.forEach(function(r){vis[r]=1;}); var ch=true;
-    while(ch){ ch=false; Object.keys(vis).forEach(function(id){ if(open[id]&&ADJ[id]) ADJ[id].forEach(function(c){ if(!vis[c]){vis[c]=1;ch=true;} }); }); }
-    return vis;
-  }
+  function parentsOf(id){ var ps=[]; Object.keys(ADJ).forEach(function(p){ if((ADJ[p]||[]).indexOf(id)>=0)ps.push(p); }); return ps; }
+  function rootsOf(id){ var rs={},st=[id],seen={}; while(st.length){ var x=st.pop(); if(seen[x])continue; seen[x]=1; if(N[x]&&N[x].type==='campaign'){rs[x]=1;continue;} parentsOf(x).forEach(function(p){st.push(p);}); } return Object.keys(rs); }
+  function revealAncestors(id){ var st=parentsOf(id),seen={}; while(st.length){ var p=st.pop(); if(seen[p])continue; seen[p]=1; open[p]=true; parentsOf(p).forEach(function(g){st.push(g);}); } }
+  function degOf(id){ var n=N[id]; return (n&&n.deg!=null)?n.deg:(INDEG[id]||0); }   // nº de subdomínios do IP
+  function isShared(id){ var n=N[id]; return !!(n&&n.type==='ip'&&degOf(id)>1); }
+  function isLeaf(id){ var n=N[id]; return !!(n&&['subdomain','ip','email','cred','typo'].indexOf(n.type)>=0); }
+  function neighbors(id){ var s={}; s[id]=1; (ADJ[id]||[]).forEach(function(c){s[c]=1;}); Object.keys(ADJ).forEach(function(p){ if((ADJ[p]||[]).indexOf(id)>=0)s[p]=1; }); return s; }
+  function expandVisible(rts){ var vis={}; rts.forEach(function(r){vis[r]=1;}); var ch=true;
+    while(ch){ ch=false; Object.keys(vis).forEach(function(id){ if(open[id]&&ADJ[id]) ADJ[id].forEach(function(c){ if(!vis[c]){vis[c]=1;ch=true;} }); }); } return vis; }
+  // Aplica o filtro de severidade: mantém folhas com nível ligado + seus contêineres
+  // ancestrais (campanha/domínio). Sobe SÓ por contêiner — nunca por outra folha — para
+  // um IP compartilhado mantido não arrastar um subdomínio-irmão de outro nível.
+  function sevFilter(vis){ var keep={}; Object.keys(vis).forEach(function(id){ if(isLeaf(id)&&sevSet[N[id].risk]) keep[id]=1; });
+    var ch=true; while(ch){ ch=false; Object.keys(keep).forEach(function(id){ parentsOf(id).forEach(function(p){ if(vis[p]&&!keep[p]&&!isLeaf(p)){keep[p]=1;ch=true;} }); }); } return keep; }
+  function visible(rts){ var v=expandVisible(rts); if(sevActive()) v=sevFilter(v); return v; }
   function layout(ids,W,H){
-    ids.forEach(function(id){ if(!POS[id]){ var p=null; Object.keys(ADJ).forEach(function(s){ if((ADJ[s]||[]).indexOf(id)>=0 && POS[s]) p=POS[s]; });
-      var bx=p?p.x:W/2, by=p?p.y:H/2; POS[id]={x:bx+(Math.random()*60-30),y:by+(Math.random()*60-30),vx:0,vy:0}; } POS[id].vx=0;POS[id].vy=0; });
+    var freshSet={}, fresh=[];
+    ids.forEach(function(id){ if(!POS[id]){ freshSet[id]=1; fresh.push(id); var p=null; Object.keys(ADJ).forEach(function(s){ if((ADJ[s]||[]).indexOf(id)>=0 && POS[s]) p=POS[s]; });
+      var bx=p?p.x:W/2, by=p?p.y:H/2; POS[id]={x:bx+(Math.random()*60-30),y:by+(Math.random()*60-30),vx:0,vy:0}; } });
+    if(fresh.length===0) return;   // nada novo entrou → mantém o layout estável (sem "pulo" ao clicar)
+    ids.forEach(function(id){POS[id].vx=0;POS[id].vy=0;});
     var iters=ids.length>220?120:260;
     for(var it=0;it<iters;it++){
       for(var i=0;i<ids.length;i++)for(var j=i+1;j<ids.length;j++){ var a=POS[ids[i]],b=POS[ids[j]],dx=a.x-b.x,dy=a.y-b.y,d2=dx*dx+dy*dy||0.01,d=Math.sqrt(d2),f=2300/d2,fx=dx/d*f,fy=dy/d*f; a.vx+=fx;a.vy+=fy;b.vx-=fx;b.vy-=fy; }
       ids.forEach(function(s){ (ADJ[s]||[]).forEach(function(t){ if(!POS[t])return; var a=POS[s],b=POS[t],dx=b.x-a.x,dy=b.y-a.y,d=Math.sqrt(dx*dx+dy*dy)||0.01,f=(d-86)*0.045,fx=dx/d*f,fy=dy/d*f; a.vx+=fx;a.vy+=fy;b.vx-=fx;b.vy-=fy; }); });
-      ids.forEach(function(id){ if(PIN[id])return; var p=POS[id]; p.vx+=(W/2-p.x)*0.006; p.vy+=(H/2-p.y)*0.006; p.x+=Math.max(-14,Math.min(14,p.vx))*0.85; p.y+=Math.max(-14,Math.min(14,p.vy))*0.85; p.vx*=0.85;p.vy*=0.85; });
+      ids.forEach(function(id){ if(PIN[id]||!freshSet[id])return; var p=POS[id]; p.vx+=(W/2-p.x)*0.006; p.vy+=(H/2-p.y)*0.006; p.x+=Math.max(-14,Math.min(14,p.vx))*0.85; p.y+=Math.max(-14,Math.min(14,p.vy))*0.85; p.vx*=0.85;p.vy*=0.85; });
     }
-    ids.forEach(function(id){ if(PIN[id])return; var p=POS[id]; p.x=Math.max(36,Math.min(W-36,p.x)); p.y=Math.max(30,Math.min(H-30,p.y)); });
+    ids.forEach(function(id){ if(PIN[id]||!freshSet[id])return; var p=POS[id]; p.x=Math.max(36,Math.min(W-36,p.x)); p.y=Math.max(30,Math.min(H-30,p.y)); });
   }
   function shapeEl(type,x,y,r,fill,stroke,sw){
     var c=' fill="'+fill+'" stroke="'+stroke+'" stroke-width="'+sw+'"/>';
@@ -4025,19 +4053,13 @@ _CORR_SCRIPT = r"""<script>
     if(type==='typo'){ var pts=[]; for(var i=0;i<6;i++){var a=Math.PI/180*(60*i-30); pts.push((x+r*Math.cos(a)).toFixed(1)+','+(y+r*Math.sin(a)).toFixed(1));} return '<polygon points="'+pts.join(' ')+'"'+c; }
     return '<circle cx="'+x+'" cy="'+y+'" r="'+r+'"'+c;
   }
-  function neighbors(id){ var s={}; s[id]=1; (ADJ[id]||[]).forEach(function(c){s[c]=1;}); Object.keys(ADJ).forEach(function(p){ if((ADJ[p]||[]).indexOf(id)>=0)s[p]=1; }); return s; }
-  function parentsOf(id){ var ps=[]; Object.keys(ADJ).forEach(function(p){ if((ADJ[p]||[]).indexOf(id)>=0)ps.push(p); }); return ps; }
-  function rootsOf(id){ var rs={},st=[id],seen={}; while(st.length){ var x=st.pop(); if(seen[x])continue; seen[x]=1; if(N[x]&&N[x].type==='campaign'){rs[x]=1;continue;} parentsOf(x).forEach(function(p){st.push(p);}); } return Object.keys(rs); }
-  function revealAncestors(id){ var st=parentsOf(id),seen={}; while(st.length){ var p=st.pop(); if(seen[p])continue; seen[p]=1; open[p]=true; parentsOf(p).forEach(function(g){st.push(g);}); } }
   function paint(){
     var svg=document.getElementById('corr-svg'); if(!svg)return; var h='';
-    var hl=sel?neighbors(sel):null;   // ao selecionar, acende só o item + relacionados
-    // Desenha a aresta se AMBAS as pontas estão visíveis (não exige o pai expandido) —
-    // assim todo subdomínio visível que resolve para um IP compartilhado fica ligado a ele.
-    Object.keys(_vis).forEach(function(s){ (ADJ[s]||[]).forEach(function(t){ if(!_vis[t])return; var a=POS[s],b=POS[t],sh=(INDEG[t]||0)>1; var eo=hl?((s===sel||t===sel)?1:0.08):1;
-      h+='<line x1="'+a.x.toFixed(0)+'" y1="'+a.y.toFixed(0)+'" x2="'+b.x.toFixed(0)+'" y2="'+b.y.toFixed(0)+'" stroke="'+(sh?'#fb923c':'var(--border-2)')+'" stroke-width="'+(sh?1.6:0.7)+'" opacity="'+eo+'"/>'; }); });
-    _ids.forEach(function(id){ var n=N[id],p=POS[id],x=+p.x.toFixed(0),y=+p.y.toFixed(0),r=RAD[n.type]||8,c=SEV[n.risk]||'#8a99b4',sh=(n.type==='ip'&&(INDEG[id]||0)>1),ring=(kids(id)&&!open[id]); var no=hl?(hl[id]?1:0.13):1;
-      h+='<g class="corr-node" tabindex="0" role="button" opacity="'+no+'" aria-label="'+esc(n.label)+', '+esc(TLBL[n.type]||n.type)+', risco '+esc(n.risk)+'" data-id="'+esc(id)+'">';
+    // Desenha a aresta se AMBAS as pontas estão visíveis (não exige o pai expandido).
+    Object.keys(_vis).forEach(function(s){ (ADJ[s]||[]).forEach(function(t){ if(!_vis[t])return; var a=POS[s],b=POS[t],sh=isShared(t)||isShared(s);
+      h+='<line data-s="'+esc(s)+'" data-t="'+esc(t)+'" x1="'+a.x.toFixed(0)+'" y1="'+a.y.toFixed(0)+'" x2="'+b.x.toFixed(0)+'" y2="'+b.y.toFixed(0)+'" stroke="'+(sh?'#fb923c':'var(--border-2)')+'" stroke-width="'+(sh?1.6:0.7)+'"/>'; }); });
+    _ids.forEach(function(id){ var n=N[id],p=POS[id],x=+p.x.toFixed(0),y=+p.y.toFixed(0),r=RAD[n.type]||8,c=SEV[n.risk]||'#8a99b4',sh=isShared(id),ring=(kids(id)&&!open[id]);
+      h+='<g class="corr-node" tabindex="0" role="button" aria-label="'+esc(n.label)+', '+esc(TLBL[n.type]||n.type)+', risco '+esc(n.risk)+'" data-id="'+esc(id)+'">';
       h+='<title>'+esc(n.label)+' — '+esc(TLBL[n.type]||n.type)+'</title>';
       if(ring) h+='<circle cx="'+x+'" cy="'+y+'" r="'+(r+4)+'" fill="none" stroke="'+c+'" stroke-width="0.7" stroke-dasharray="2 2"/>';
       if(sh)   h+='<circle cx="'+x+'" cy="'+y+'" r="'+(r+4)+'" fill="none" stroke="#fb923c" stroke-width="1.6"/>';
@@ -4046,7 +4068,19 @@ _CORR_SCRIPT = r"""<script>
         h+='<text x="'+x+'" y="'+(y+r+12)+'" text-anchor="middle" font-size="11" fill="var(--muted)">'+esc(lbl)+'</text>'; }
       h+='</g>';
     });
-    svg.innerHTML=h;
+    svg.innerHTML=h; applyHL(!dragging);
+  }
+  // Acende só o item selecionado + relacionados; o resto esmaece. Em transição suave
+  // (CSS) quando não está arrastando — aplica a opacidade num próximo frame.
+  function applyHL(animate){
+    var svg=document.getElementById('corr-svg'); if(!svg)return;
+    var hl=sel?neighbors(sel):null;
+    var nodes=svg.querySelectorAll('g.corr-node'), lines=svg.querySelectorAll('line');
+    function go(){
+      for(var i=0;i<nodes.length;i++){ var id=nodes[i].getAttribute('data-id'); nodes[i].style.opacity=hl?(hl[id]?1:0.05):1; }
+      for(var k=0;k<lines.length;k++){ var ds=lines[k].getAttribute('data-s'),dt=lines[k].getAttribute('data-t'); lines[k].style.opacity=hl?((ds===sel||dt===sel)?1:0.04):1; }
+    }
+    if(animate&&hl) requestAnimationFrame(go); else go();
   }
   function render(camp){
     var rts=roots(camp); rts.forEach(function(r){ if(!(r in open)) open[r]=true; });
@@ -4054,35 +4088,44 @@ _CORR_SCRIPT = r"""<script>
   }
   function toSvg(cx,cy){ var svg=document.getElementById('corr-svg'); if(!svg||!svg.createSVGPoint)return null; var pt=svg.createSVGPoint(); pt.x=cx; pt.y=cy; var m=svg.getScreenCTM(); if(!m)return null; return pt.matrixTransform(m.inverse()); }
   function applyVB(){ var svg=document.getElementById('corr-svg'); if(svg)svg.setAttribute('viewBox',vb.x.toFixed(1)+' '+vb.y.toFixed(1)+' '+vb.w.toFixed(1)+' '+vb.h.toFixed(1)); }
-  function zoomAt(mx,my,f){ var nw=Math.max(140,Math.min(2200,vb.w*f)), nh=nw*(600/960); vb.x=mx-(mx-vb.x)*(nw/vb.w); vb.y=my-(my-vb.y)*(nh/vb.h); vb.w=nw; vb.h=nh; applyVB(); }
-  window.__corrZoom=function(k){ if(k==='r'){vb={x:0,y:0,w:960,h:600};applyVB();} else zoomAt(vb.x+vb.w/2,vb.y+vb.h/2,k<0?1.25:0.8); };
+  function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
+  // Alvo do zoom mantendo o ponto (mx,my) fixo. f<1 aproxima, f>1 afasta.
+  function targetZoom(mx,my,f){ var nw=clamp(vb.w*f,140,2200), nh=nw*(600/960); return {x:mx-(mx-vb.x)*(nw/vb.w), y:my-(my-vb.y)*(nh/vb.h), w:nw, h:nh}; }
+  function setVB(t){ vb.x=t.x;vb.y=t.y;vb.w=t.w;vb.h=t.h; applyVB(); }
+  function tweenVB(to,ms){ var f={x:vb.x,y:vb.y,w:vb.w,h:vb.h}, t0=(window.performance&&performance.now)?performance.now():Date.now();
+    function step(now){ var k=Math.min(1,((now||Date.now())-t0)/ms), e=k<0.5?2*k*k:1-Math.pow(-2*k+2,2)/2;
+      vb.x=f.x+(to.x-f.x)*e; vb.y=f.y+(to.y-f.y)*e; vb.w=f.w+(to.w-f.w)*e; vb.h=f.h+(to.h-f.h)*e; applyVB(); if(k<1)requestAnimationFrame(step); }
+    requestAnimationFrame(step); }
+  function zoomAt(mx,my,f){ setVB(targetZoom(mx,my,f)); }   // instantâneo (roda/arraste)
+  // Botões: k>0 APROXIMA (+), k<0 AFASTA (−), 'r' reajusta. Animado e suave (item 1 + 6).
+  window.__corrZoom=function(k){ if(k==='r'){ tweenVB({x:0,y:0,w:960,h:600},230); } else { tweenVB(targetZoom(vb.x+vb.w/2,vb.y+vb.h/2,k>0?0.8:1.25),200); } };
   function bindDrag(){
     var svg=document.getElementById('corr-svg'); if(!svg||svg.__bound)return; svg.__bound=true; svg.style.touchAction='none'; svg.style.cursor='grab';
     svg.addEventListener('pointerdown',function(e){ var g=e.target.closest&&e.target.closest('g.corr-node[data-id]');
-      if(g){ var id=g.getAttribute('data-id'); var p=toSvg(e.clientX,e.clientY); if(!p||!POS[id])return; drag=id; dragMoved=false; sx=p.x; sy=p.y; ox=p.x-POS[id].x; oy=p.y-POS[id].y; }
+      if(g){ var id=g.getAttribute('data-id'); var p=toSvg(e.clientX,e.clientY); if(!p||!POS[id])return; drag=id; dragging=true; dragMoved=false; sx=p.x; sy=p.y; ox=p.x-POS[id].x; oy=p.y-POS[id].y; }
       else { pan={cx:e.clientX,cy:e.clientY,vx:vb.x,vy:vb.y,moved:false}; svg.style.cursor='grabbing'; }
       try{svg.setPointerCapture(e.pointerId);}catch(_){} e.preventDefault(); });
     svg.addEventListener('pointermove',function(e){
       if(drag){ var p=toSvg(e.clientX,e.clientY); if(!p)return; if(Math.abs(p.x-sx)>3||Math.abs(p.y-sy)>3)dragMoved=true; POS[drag].x=p.x-ox; POS[drag].y=p.y-oy; PIN[drag]=true; paint(); }
       else if(pan){ var rect=svg.getBoundingClientRect(); var dx=e.clientX-pan.cx, dy=e.clientY-pan.cy; if(Math.abs(dx)>3||Math.abs(dy)>3)pan.moved=true; vb.x=pan.vx-dx*(vb.w/rect.width); vb.y=pan.vy-dy*(vb.h/rect.height); applyVB(); } });
-    function end(){ if(drag){ var id=drag; drag=null; if(!dragMoved) selectNode(id); }
-      else if(pan){ var pm=pan.moved; pan=null; svg.style.cursor='grab'; if(!pm && sel){ sel=null; selRoots=null; var cur=document.getElementById('corr-camp'); var d=document.getElementById('corr-detail'); if(d)d.style.display='none'; render(cur?cur.value:'*'); } } }
+    function end(){ if(drag){ var id=drag; drag=null; dragging=false; if(!dragMoved) selectNode(id); else applyHL(false); }
+      else if(pan){ var pm=pan.moved; pan=null; svg.style.cursor='grab'; if(!pm && sel){ sel=null; selRoots=null; hideDetail(); render(curCamp()); } } }
     svg.addEventListener('pointerup',end); svg.addEventListener('pointercancel',end);
     svg.addEventListener('wheel',function(e){ e.preventDefault(); var p=toSvg(e.clientX,e.clientY); if(!p)return; zoomAt(p.x,p.y,e.deltaY<0?0.85:1.176); },{passive:false});
   }
+  // Clicar liga e destaca o item + TODOS os relacionados (vale nos dois sentidos e nas duas visões):
+  //  · subdomínio  → mostra o IP que ele resolve;  · IP → mostra todos os subdomínios que resolvem nele.
   function selectNode(id){ var n=N[id]; if(!n)return; if(kids(id))open[id]=!open[id]; sel=id;
-    // Revela e liga TODOS os relacionados: abre os ancestrais de cada vizinho e
-    // garante que a(s) campanha(s) dele(s) entrem como raiz (vale mesmo entre campanhas).
     var rel=neighbors(id); selRoots={};
     Object.keys(rel).forEach(function(rid){ revealAncestors(rid); rootsOf(rid).forEach(function(rt){selRoots[rt]=1;});
       if(rid!==id && (ADJ[rid]||[]).indexOf(id)>=0) open[rid]=true; });  // pai de id: abre p/ garantir id visível
     rootsOf(id).forEach(function(rt){selRoots[rt]=1;});
-    var cur=document.getElementById('corr-camp'); render(cur?cur.value:'*'); detail(id);
+    render(curCamp()); detail(id);
   }
   function detail(id){ var n=N[id],d=document.getElementById('corr-detail'); if(!d)return;
     var rows=(n.detail||[]).map(function(kv){ return '<tr><td style="color:var(--muted);padding:5px 12px 5px 0;white-space:nowrap;vertical-align:top">'+esc(kv[0])+'</td><td style="padding:5px 0;text-align:right">'+esc(kv[1])+'</td></tr>'; }).join('');
-    var sh=(n.type==='ip'&&(INDEG[id]||0)>1);
-    d.innerHTML='<div style="display:flex;align-items:center;gap:8px;margin-bottom:3px"><span style="width:12px;height:12px;border-radius:50%;background:'+(SEV[n.risk]||'#8a99b4')+';flex:none"></span><span style="font-size:15px;font-weight:700">'+esc(n.label)+'</span>'+(sh?' <span style="color:#fb923c;font-size:12px">(compartilhado)</span>':'')+'</div>'
+    var sh=isShared(id);
+    d.innerHTML='<div style="display:flex;align-items:center;gap:8px;margin-bottom:3px"><span style="width:12px;height:12px;border-radius:50%;background:'+(SEV[n.risk]||'#8a99b4')+';flex:none"></span><span style="font-size:15px;font-weight:700">'+esc(n.label)+'</span>'+(sh?' <span style="color:#fb923c;font-size:12px">(compartilhado · '+degOf(id)+' subdomínios)</span>':'')+'</div>'
       +'<div class="page-sub" style="margin-bottom:10px">'+esc(TLBL[n.type]||n.type)+(kids(id)?(' · clique no nó para '+(open[id]?'recolher':'expandir')):'')+'</div>'
       +'<table style="width:100%;font-size:13px;border-top:1px solid var(--border)">'+rows+'</table>';
     d.style.display='block';
@@ -4091,8 +4134,8 @@ _CORR_SCRIPT = r"""<script>
     var subs=Object.keys(N).filter(function(id){return N[id].type==='subdomain';});
     var html='<table><caption class="sr-only">Subdomínios e seus IPs; "compartilhado por" indica IP servindo vários subdomínios</caption><thead><tr><th scope="col">Subdomínio</th><th scope="col">IP</th><th scope="col">Compartilhado por</th><th scope="col">Risco</th></tr></thead><tbody>';
     subs.sort(function(a,b){return N[a].label.localeCompare(N[b].label);}).forEach(function(id){
-      var ipid=(ADJ[id]||[]).filter(function(c){return N[c]&&N[c].type==='ip';})[0];
-      var ipn=ipid?N[ipid]:null, deg=ipid?(INDEG[ipid]||1):1;
+      var ipid=(ADJ[id]||[]).filter(function(c){return N[c]&&N[c].type==='ip';})[0] || parentsOf(id).filter(function(c){return N[c]&&N[c].type==='ip';})[0];
+      var ipn=ipid?N[ipid]:null, deg=ipid?degOf(ipid):1;
       html+='<tr><td>'+esc(N[id].label)+'</td><td>'+(ipn?'<code>'+esc(ipn.label)+'</code>':'—')+'</td><td>'+(deg>1?('<span style="color:#fb923c;font-weight:700">'+deg+' subdomínios</span>'):'1')+'</td><td class="risk-'+esc(N[id].risk)+'">'+esc(N[id].risk)+'</td></tr>';
     });
     html+='</tbody></table>'; el.innerHTML=html;
@@ -4108,11 +4151,21 @@ def build_correlation_page() -> str:
         '<style>'
         '#corr-wrap{border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);overflow:auto;margin-top:6px}'
         '#corr-svg{width:100%;height:600px;display:block}'
-        '.corr-node{cursor:pointer}.corr-node:hover circle{stroke-width:3}'
+        # Transições suaves (opacidade) + leve sombra = sensação de profundidade ao destacar/recuar (item 6).
+        '.corr-node{cursor:pointer;transition:opacity .28s ease;filter:drop-shadow(0 1px 1.5px rgba(0,0,0,.55))}'
+        '#corr-svg line{transition:opacity .28s ease}'
+        '.corr-node:hover circle{stroke-width:3}'
         '.corr-node:focus{outline:none}.corr-node:focus circle{stroke:var(--accent);stroke-width:3}'
         '#corr-detail{display:none;margin-top:14px}'
         '.corr-legend{display:flex;gap:16px;flex-wrap:wrap;align-items:center;font-size:12px;color:var(--muted);margin-left:auto}'
         '.corr-legend .dot{width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:5px;vertical-align:middle}'
+        # Botões do filtro de severidade (item 2): cada um é um "pílula" que liga/desliga o nível.
+        '.sevbar{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:2px 0 12px}'
+        '.sevbtn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);background:var(--surface-2);'
+        'color:var(--text);font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px;cursor:pointer;transition:opacity .15s,filter .15s}'
+        '.sevbtn .dot{width:9px;height:9px;border-radius:50%;display:inline-block}'
+        '.sevbtn.off{opacity:.4;filter:grayscale(.7)}'
+        '.sevbtn.off .dot{background:var(--muted)!important}'
         '</style>'
         # Estado vazio (mesmo padrão dos módulos): nenhum achado para correlacionar ainda.
         '<div id="corr-empty" class="panel panel-pad" style="display:none;text-align:center;padding:40px 24px">'
@@ -4133,6 +4186,11 @@ def build_correlation_page() -> str:
         '<div id="corr-main" style="display:none">'
         '<div class="toolbar no-print">'
         '<select id="corr-camp" aria-label="Filtrar por campanha"></select>'
+        # Seletor de VISÃO (item 3): organiza o grafo por subdomínio ou por IP.
+        '<select id="corr-view" aria-label="Organização do grafo" title="Como o grafo é organizado">'
+        '<option value="sub">Por subdomínio (campanha → domínio → subdomínio → IP)</option>'
+        '<option value="ip">Por IP (campanha → domínio → IP → subdomínios)</option>'
+        '</select>'
         '<div class="corr-legend">'
         '<span>cor = criticidade:</span>'
         '<span><span class="dot" style="background:#f43f5e"></span>crítico</span>'
@@ -4150,21 +4208,34 @@ def build_correlation_page() -> str:
         '<span style="color:var(--steel-2)"><svg width="13" height="13" viewBox="0 0 14 14" style="vertical-align:-2px"><rect x="2" y="2" width="10" height="10" rx="1.5" fill="currentColor"/></svg> quadrado = credenciais</span>'
         '<span style="color:var(--steel-2)"><svg width="13" height="13" viewBox="0 0 14 14" style="vertical-align:-2px"><polygon points="7,1 12.2,4 12.2,10 7,13 1.8,10 1.8,4" fill="currentColor"/></svg> hexágono = typosquat</span>'
         '</div>'
+        # Filtro de severidade (item 2): clique para mostrar SÓ os níveis ligados.
+        '<div class="sevbar" role="group" aria-label="Filtrar por criticidade">'
+        '<span style="font-size:12px;color:var(--muted)">mostrar:</span>'
+        '<button class="sevbtn" id="sevb-CRITICO" type="button" aria-pressed="true" onclick="window.__corrSev&&window.__corrSev(\'CRITICO\')"><span class="dot" style="background:#f43f5e"></span>crítico</button>'
+        '<button class="sevbtn" id="sevb-ALTO" type="button" aria-pressed="true" onclick="window.__corrSev&&window.__corrSev(\'ALTO\')"><span class="dot" style="background:#fb923c"></span>alto</button>'
+        '<button class="sevbtn" id="sevb-MEDIO" type="button" aria-pressed="true" onclick="window.__corrSev&&window.__corrSev(\'MEDIO\')"><span class="dot" style="background:#fbbf24"></span>médio</button>'
+        '<button class="sevbtn" id="sevb-BAIXO" type="button" aria-pressed="true" onclick="window.__corrSev&&window.__corrSev(\'BAIXO\')"><span class="dot" style="background:#34d399"></span>baixo</button>'
+        '<button class="sevbtn" id="sevb-INFO" type="button" aria-pressed="true" onclick="window.__corrSev&&window.__corrSev(\'INFO\')"><span class="dot" style="background:#8a99b4"></span>info</button>'
+        '<button class="btn btn-clr" type="button" style="margin-left:4px" onclick="window.__corrSev&&window.__corrSev(\'all\')" title="Mostrar todos os níveis">tudo</button>'
+        '</div>'
         '<div class="kpi-grid" style="max-width:540px;margin-bottom:14px">'
         '<div class="kpi"><div class="v" id="corr-nsub">&mdash;</div><div class="l">Subdomínios</div></div>'
         '<div class="kpi"><div class="v" id="corr-nip">&mdash;</div><div class="l">IPs únicos</div></div>'
         '<div class="kpi sev-abus"><div class="v" id="corr-nshared">&mdash;</div><div class="l">IPs compartilhados</div></div></div>'
         # Controles de zoom (a roda do mouse também dá zoom; arrastar o fundo faz pan).
         '<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">'
-        '<button class="btn btn-clr" type="button" onclick="window.__corrZoom&&window.__corrZoom(-1)" aria-label="Aproximar" title="Aproximar (zoom +)">&#x2795;</button>'
-        '<button class="btn btn-clr" type="button" onclick="window.__corrZoom&&window.__corrZoom(1)" aria-label="Afastar" title="Afastar (zoom -)">&#x2796;</button>'
+        '<button class="btn btn-clr" type="button" onclick="window.__corrZoom&&window.__corrZoom(1)" aria-label="Aproximar" title="Aproximar (zoom +)">&#x2795;</button>'
+        '<button class="btn btn-clr" type="button" onclick="window.__corrZoom&&window.__corrZoom(-1)" aria-label="Afastar" title="Afastar (zoom -)">&#x2796;</button>'
         '<button class="btn btn-clr" type="button" onclick="window.__corrZoom&&window.__corrZoom(\'r\')" aria-label="Reajustar zoom" title="Reajustar (100%)">&#x21BB; ajustar</button>'
         '<span class="page-sub" style="margin:0 0 0 4px">roda = zoom · arraste o fundo = mover</span></div>'
         '<div id="corr-wrap"><svg id="corr-svg" viewBox="0 0 960 600" role="img" '
         'aria-label="Grafo de correlação entre campanhas, subdomínios e IPs. Use a lista acessível abaixo para os detalhes."></svg></div>'
         '<p class="page-sub" style="margin-top:8px">Clique em um nó para <b>expandir</b> e <b>destacar</b> só ele e os '
-        'itens relacionados (o resto esmaece); clique no fundo para limpar. <b>Arraste</b> os nós para reorganizar e '
-        'use a <b>roda do mouse</b> (ou os botões) para dar <b>zoom</b>. Anel pontilhado = pode expandir; IP com anel '
+        'relacionados (o resto esmaece); clique no fundo para limpar. Ao clicar num <b>subdomínio</b> ele acende o '
+        '<b>IP</b> que resolve; ao clicar num <b>IP</b>, acende <b>todos os subdomínios</b> que caem nele. Use a caixa '
+        '<b>“Por IP”</b> para inverter o grafo e ver de cara quais IPs concentram mais subdomínios (infra crítica), e os '
+        'botões <b>de criticidade</b> para mostrar só os níveis que importam. <b>Arraste</b> os nós, use a '
+        '<b>roda</b>/<b>+ −</b> para <b>zoom</b>. Anel pontilhado = pode expandir; IP com anel '
         '<span style="color:#fb923c">laranja</span> é servido por vários subdomínios (raio de explosão).</p>'
         '<div id="corr-detail" class="panel panel-pad"></div>'
         '<details style="margin-top:14px"><summary style="cursor:pointer;color:var(--muted);font-weight:600">'

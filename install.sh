@@ -237,7 +237,8 @@ ok "Scripts: 644, diretórios: 755"
 # montar o mapa de Correlação. ACL concede leitura/travessia ao app user (rX) nos
 # diretórios + default para os arquivos futuros (a .db de cada execução).
 _acl_ok=true
-for _sd in "$MONITOR_DIR" "$SUBMONITOR_DIR" "$CREDENTIALS_DIR" "$EMAIL_DIR" "$TYPOSQUAT_DIR"; do
+# threatintel: cache de reputação (AbuseIPDB) lido pela Correlação p/ enriquecer TODOS os IPs.
+for _sd in "$MONITOR_DIR" "$SUBMONITOR_DIR" "$CREDENTIALS_DIR" "$EMAIL_DIR" "$TYPOSQUAT_DIR" "$THREATINTEL_DIR"; do
   setfacl -Rm  "u:$APP_USER:rX" "$_sd" 2>/dev/null || _acl_ok=false
   setfacl -dm  "u:$APP_USER:rX" "$_sd" 2>/dev/null || _acl_ok=false
 done
@@ -810,18 +811,20 @@ CRONMONITOR
 chmod 644 /etc/cron.d/argus-monitor
 ok "Cron monitor (TCP): todos os dias às 10h00"
 
-# UDP é opt-in e mais lento: cadência semanal, fora do horário. Log UNIFICADO
-# (mesmo monitor.log RFC5424 com transport=udp, e mesmo monitor_stdout.log).
+# UDP é mais lento, mas precisa rodar dentro da janela de carência (ARGUS_CLOSE_GRACE_DAYS=3):
+# se a cadência for maior que a carência, os achados UDP "fecham" entre execuções e
+# reaparecem como REINCIDENTE/RESSURGIDO (falsa reincidência). Por isso: a cada 2 dias,
+# fora do horário. Log UNIFICADO (mesmo monitor.log RFC5424 com transport=udp).
 cat > /etc/cron.d/argus-monitor-udp << CRONMONITORUDP
-# monitor UDP — postura UDP (100 portas) semanalmente aos domingos as 03h00
+# monitor UDP — postura UDP (100 portas) a cada 2 dias as 03h00 (< carencia de 3 dias)
 SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
 PYTHONPATH=$BASE_DIR
 
-0 3 * * 0 root umask 0002 && cd $MONITOR_DIR && $PYTHON_BIN $MONITOR_DIR/monitor.py --udp >> $LOG_DIR_MONITOR/monitor_stdout.log 2>&1
+0 3 */2 * * root umask 0002 && cd $MONITOR_DIR && $PYTHON_BIN $MONITOR_DIR/monitor.py --udp >> $LOG_DIR_MONITOR/monitor_stdout.log 2>&1
 CRONMONITORUDP
 chmod 644 /etc/cron.d/argus-monitor-udp
-ok "Cron monitor (UDP): domingos às 03h00"
+ok "Cron monitor (UDP): a cada 2 dias às 03h00 (dentro da carência de 3 dias)"
 
 cat > /etc/cron.d/argus-submonitor << CRONSUBMONITOR
 # submonitor — scan de subdominios diariamente as 12h00

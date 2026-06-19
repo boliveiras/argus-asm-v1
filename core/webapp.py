@@ -165,6 +165,38 @@ def correlation_graph(base: str | None = None) -> dict:
             a["isp"] = r.get("abuse_isp") or ""; a["tor"] = int(r.get("abuse_tor") or 0)
             a["reports"] = int(r.get("abuse_reports") or 0); a["last"] = r.get("abuse_last") or ""
 
+    # Reputação em cache (threatintel.db) — preenche a reputação de QUALQUER IP do grafo,
+    # inclusive os que só aparecem via subdomínio (o submonitor consulta o AbuseIPDB mas
+    # não persiste o score; o cache compartilhado tem o último valor conhecido).
+    abuse_cache: dict[str, dict] = {}
+    for r in _ro_rows(str(b / "threatintel" / "threatintel.db"),
+                      "SELECT ip,abuse_confidence_score,country_code,isp,is_tor,"
+                      "total_reports,last_reported_at FROM abuseipdb_cache"):
+        ip = (r.get("ip") or "").strip()
+        if ip:
+            abuse_cache[ip] = r
+
+    def _ip_rep_rows(ip: str, ag: dict) -> list:
+        """Linhas de reputação do IP: usa o valor persistido no monitor; se não houver,
+        cai para o cache do threatintel (assim subdomínio-só também mostra reputação)."""
+        score = ag.get("abuse", -1)
+        country, isp = ag.get("country", ""), ag.get("isp", "")
+        tor, reports, last = ag.get("tor", 0), ag.get("reports", 0), ag.get("last", "")
+        if score < 0:
+            c = abuse_cache.get(ip)
+            if c is not None:
+                score = int(c.get("abuse_confidence_score") or 0)
+                country = c.get("country_code") or ""; isp = c.get("isp") or ""
+                tor = int(c.get("is_tor") or 0); reports = int(c.get("total_reports") or 0)
+                last = c.get("last_reported_at") or ""
+        if score < 0:
+            return [["Reputação (AbuseIPDB)", "sem dados"]]
+        rows = [["Reputação (AbuseIPDB)", f"{score}%" + (" · TOR" if tor else "")]]
+        if isp:     rows.append(["Provedor (ISP)", isp])
+        if country: rows.append(["País", country])
+        if reports: rows.append(["Denúncias", str(reports) + (f" · última {last[:10]}" if last else "")])
+        return rows
+
     # Domínios-base conhecidos (de credenciais/e-mail/typosquat) p/ ancorar subdomínios.
     known_domains = set()
     for r in creds:  known_domains.add((r.get("domain") or "").lower().strip("."))
@@ -173,7 +205,9 @@ def correlation_graph(base: str | None = None) -> dict:
     known_domains.discard("")
 
     nodes: dict[str, dict] = {}
-    edges: list = []
+    edges: list = []                 # visão por subdomínio: campanha → domínio → subdomínio → IP
+    edges_ip: list = []              # visão por IP:         campanha → domínio → IP → subdomínios
+    ip_subcount: dict[str, int] = {} # nº de subdomínios que resolvem p/ cada IP (raio de explosão)
 
     def node(nid, ntype, label, risk="INFO", detail=None):
         n = nodes.get(nid)
@@ -184,8 +218,12 @@ def correlation_graph(base: str | None = None) -> dict:
             n["risk"] = _worse(n["risk"], risk)
         return n
 
-    def edge(a, c):
+    def edge(a, c, both=True):
+        """Aresta estrutural. `both`: também entra na visão por IP (camp→dom e dom→achado
+        são iguais nas duas; só o miolo subdomínio/IP muda)."""
         edges.append([a, c])
+        if both:
+            edges_ip.append([a, c])
 
     def camp_node(camp):
         cid = "camp:" + camp
@@ -231,22 +269,16 @@ def correlation_graph(base: str | None = None) -> dict:
         node(sid, "subdomain", host, srisk, [kv for kv in sdet if kv[1] not in ("—", "")])
         node(did, "domain", dom, srisk)   # propaga severidade ao domínio/campanha
         node(camp_node(camp), "campaign", camp, srisk)
-        edge(did, sid)
+        edge(did, sid, both=False)        # visão por subdomínio: domínio → subdomínio
         ip = (r.get("ip") or "").strip()
         if ip:
+            ipid = "ip:" + ip
+            ip_subcount[ipid] = ip_subcount.get(ipid, 0) + 1
             ag = ipagg.get(ip, {})
             iprisk = _worse(ag.get("risk", "INFO"), srisk)
             det = [["ASN", ag.get("asn") or r.get("asn") or "—"],
                    ["Tipo de IP", r.get("ip_type") or "—"]]
-            if ag.get("abuse", -1) >= 0:
-                det.append(["Reputação (AbuseIPDB)", f"{ag['abuse']}%"
-                            + (" · TOR" if ag.get("tor") else "")])
-                if ag.get("isp"):     det.append(["Provedor (ISP)", ag["isp"]])
-                if ag.get("country"): det.append(["País", ag["country"]])
-                if ag.get("reports"): det.append(["Denúncias", str(ag["reports"])
-                                                  + (f" · última {ag['last'][:10]}" if ag.get("last") else "")])
-            else:
-                det.append(["Reputação (AbuseIPDB)", "sem dados"])
+            det.extend(_ip_rep_rows(ip, ag))
             if ag.get("services"):
                 det.append(["Serviços", ", ".join(sorted(ag["services"]))])
             det.append(["Portas abertas", ", ".join(sorted(ag.get("ports", []))) or "—"])
@@ -261,8 +293,12 @@ def correlation_graph(base: str | None = None) -> dict:
                 det.append(["CVSS máx (NVD)", f"{ag['cvss']:.1f}"])
             if ag.get("tags"):
                 det.append(["Tags (Shodan)", ", ".join(sorted(ag["tags"]))])
-            node("ip:" + ip, "ip", ip, iprisk, det)
-            edge(sid, "ip:" + ip)
+            node(ipid, "ip", ip, iprisk, det)
+            edge(sid, ipid, both=False)       # visão por subdomínio: subdomínio → IP
+            edges_ip.append([did, ipid])      # visão por IP: domínio → IP
+            edges_ip.append([ipid, sid])      # visão por IP: IP → subdomínio
+        else:
+            edges_ip.append([did, sid])       # sem IP: mantém domínio → subdomínio na visão por IP
 
     # ── Achados de e-mail (por domínio) ──
     for r in mails:
@@ -340,6 +376,21 @@ def correlation_graph(base: str | None = None) -> dict:
         node(camp_node(camp), "campaign", camp, risk)
         edge(did, tid)
 
+    # Remove arestas duplicadas (campanha→domínio repete a cada filho) — corrige
+    # contagens e evita desenhar a mesma linha várias vezes.
+    def _dedupe(es: list) -> list:
+        seen, out = set(), []
+        for a, c in es:
+            if (a, c) not in seen:
+                seen.add((a, c)); out.append([a, c])
+        return out
+    edges, edges_ip = _dedupe(edges), _dedupe(edges_ip)
+
+    # nº de subdomínios por IP — "compartilhado" (raio de explosão), independente da visão.
+    for ipid, cnt in ip_subcount.items():
+        if ipid in nodes:
+            nodes[ipid]["deg"] = cnt
+
     # Detalhe sintético para campanhas e domínios (contagens).
     for n in nodes.values():
         if n["type"] == "campaign":
@@ -352,13 +403,11 @@ def correlation_graph(base: str | None = None) -> dict:
                            ["Pior achado", n["risk"]]]
 
     ip_ids = [k for k in nodes if k.startswith("ip:")]
-    indeg = {}
-    for _a, c in edges:
-        indeg[c] = indeg.get(c, 0) + 1
-    shared = sum(1 for k in ip_ids if indeg.get(k, 0) > 1)
+    shared = sum(1 for k in ip_ids if nodes[k].get("deg", 0) > 1)
     return {
         "nodes": list(nodes.values()),
         "edges": edges,
+        "edges_ip": edges_ip,
         "stats": {"campaigns": sum(1 for n in nodes.values() if n["type"] == "campaign"),
                   "subdomains": sum(1 for n in nodes.values() if n["type"] == "subdomain"),
                   "ips": len(ip_ids), "shared_ips": shared},
