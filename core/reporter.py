@@ -560,7 +560,10 @@ def _common_css() -> str:
     .nav.open { display:flex; }
     .nav a { min-height:44px; padding:12px 14px; font-size:14px; }
     body.light .nav { background:rgba(244,247,251,.98); }
-    .topbar { gap:12px; padding:0 16px; }
+    .topbar { gap:10px; padding:0 16px; }
+    /* Mobile: esconde o subtítulo do brand p/ a topbar caber em 360px (evita scroll horizontal). */
+    .brand { min-width:0; }
+    .brand .sub { display:none; }
     .wrap { padding:18px 16px 48px; }
     .breadcrumb { padding:9px 16px 0; }
     .summary { grid-template-columns:1fr; }
@@ -2560,11 +2563,12 @@ def app_css() -> str:
 def _portal_shell(active: str, title: str, subtitle: str, body: str,
                   extra_script: str = "", show_head: bool = True) -> str:
     """Casca padrão de página do portal (link p/ /assets/app.css + topbar + footer)."""
+    _ttl = "Argus" if (not title or title == "Argus") else f"{title} — Argus"
     head = (
         '<!DOCTYPE html>\n<html lang="pt-BR">\n<head>\n'
         '<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width,initial-scale=1">\n'
-        f'<title>{title} — Argus</title>\n'
+        f'<title>{_ttl}</title>\n'
         f'<link rel="icon" type="image/svg+xml" href="{_FAVICON}">\n'
         '<link rel="stylesheet" href="/assets/app.css">\n'
         '</head>\n<body>\n'
@@ -4025,12 +4029,16 @@ _CORR_SCRIPT = r"""<script>
   function neighbors(id){ var s={}; s[id]=1; (ADJ[id]||[]).forEach(function(c){s[c]=1;}); Object.keys(ADJ).forEach(function(p){ if((ADJ[p]||[]).indexOf(id)>=0)s[p]=1; }); return s; }
   function expandVisible(rts){ var vis={}; rts.forEach(function(r){vis[r]=1;}); var ch=true;
     while(ch){ ch=false; Object.keys(vis).forEach(function(id){ if(open[id]&&ADJ[id]) ADJ[id].forEach(function(c){ if(!vis[c]){vis[c]=1;ch=true;} }); }); } return vis; }
+  // Expande TUDO a partir das raízes (ignora estado recolhido) — usado pelo filtro de
+  // severidade, que precisa achar as folhas mesmo sem o usuário ter expandido a árvore.
+  function expandAll(rts){ var vis={},st=rts.slice(); rts.forEach(function(r){vis[r]=1;});
+    while(st.length){ var id=st.pop(); (ADJ[id]||[]).forEach(function(c){ if(!vis[c]){vis[c]=1;st.push(c);} }); } return vis; }
   // Aplica o filtro de severidade: mantém folhas com nível ligado + seus contêineres
   // ancestrais (campanha/domínio). Sobe SÓ por contêiner — nunca por outra folha — para
   // um IP compartilhado mantido não arrastar um subdomínio-irmão de outro nível.
   function sevFilter(vis){ var keep={}; Object.keys(vis).forEach(function(id){ if(isLeaf(id)&&sevSet[N[id].risk]) keep[id]=1; });
     var ch=true; while(ch){ ch=false; Object.keys(keep).forEach(function(id){ parentsOf(id).forEach(function(p){ if(vis[p]&&!keep[p]&&!isLeaf(p)){keep[p]=1;ch=true;} }); }); } return keep; }
-  function visible(rts){ var v=expandVisible(rts); if(sevActive()) v=sevFilter(v); return v; }
+  function visible(rts){ if(sevActive()) return sevFilter(expandAll(rts)); return expandVisible(rts); }
   function layout(ids,W,H){
     var freshSet={}, fresh=[];
     ids.forEach(function(id){ if(!POS[id]){ freshSet[id]=1; fresh.push(id); var p=null; Object.keys(ADJ).forEach(function(s){ if((ADJ[s]||[]).indexOf(id)>=0 && POS[s]) p=POS[s]; });
