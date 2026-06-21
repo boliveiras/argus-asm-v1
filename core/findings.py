@@ -173,7 +173,7 @@ def _now() -> str:
 def finding_id(source: str, natural_key: str) -> str:
     """ID estável e determinístico do achado (mesma chave natural → mesmo id)."""
     raw = f"{source}:{natural_key}".strip().lower()
-    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
+    return hashlib.sha1(raw.encode("utf-8"), usedforsecurity=False).hexdigest()[:16]
 
 
 def default_db_path() -> str:
@@ -395,7 +395,7 @@ class FindingRepository:
         (Mitigado / Falso Positivo). 'Em tratamento' NÃO entra (continua no scan)."""
         ph = ",".join("?" * len(SCAN_HIDDEN_STATUSES))
         rows = self._conn.execute(
-            f"SELECT natural_key FROM findings WHERE source=? AND status IN ({ph})",
+            f"SELECT natural_key FROM findings WHERE source=? AND status IN ({ph})",  # nosec B608 - placeholders ?, valores parametrizados
             (source, *SCAN_HIDDEN_STATUSES)).fetchall()
         return {r[0] for r in rows}
 
@@ -458,12 +458,12 @@ class FindingRepository:
 
     def count_findings(self, *, source=None, status=None, severity=None, active=None) -> int:
         w, args = self._where(source, status, severity, active)
-        return self._conn.execute("SELECT COUNT(*) FROM findings" + w, args).fetchone()[0]
+        return self._conn.execute("SELECT COUNT(*) FROM findings" + w, args).fetchone()[0]  # nosec B608 - 'w' do _where(): colunas fixas, valores via placeholder
 
     def list_findings(self, *, source=None, status=None, severity=None,
                       active=None, limit: int = 200, offset: int = 0) -> list[dict]:
         w, args = self._where(source, status, severity, active)
-        sql = ("SELECT id,source,natural_key,title,category,severity,status,active,"
+        sql = ("SELECT id,source,natural_key,title,category,severity,status,active,"  # nosec B608 - colunas fixas + 'w' parametrizado
                "campanha,first_seen,last_seen FROM findings") + w
         rows = self._conn.execute(sql, args).fetchall()
         cols = ("id","source","natural_key","title","category","severity","status",
@@ -731,7 +731,7 @@ def migrate_legacy_dbs(base_dir: str, *, db_path: str | None = None) -> dict:
             cols = {r[1] for r in c.execute("PRAGMA table_info(scans)")}
             sel = "ip,port,protocol,service,risk,campanha,status"
             for ip,port,proto,svc,risk,camp,st in c.execute(
-                    f"SELECT {sel} FROM scans WHERE status IN ('NOVO','REINCIDENTE','RESSURGIDO')"):
+                    f"SELECT {sel} FROM scans WHERE status IN ('NOVO','REINCIDENTE','RESSURGIDO')"):  # nosec B608 - 'sel' literal fixo, status literais
                 key = f"{ip}:{port}/{proto}"
                 fid, _ = repo.upsert("monitor", key, severity=risk or "BAIXO",
                                      title=f"{ip}:{port}/{proto} ({svc or '?'})",
@@ -771,7 +771,7 @@ def migrate_legacy_dbs(base_dir: str, *, db_path: str | None = None) -> dict:
         try:
             c = sqlite3.connect(str(p))
             for dom,risk,camp in c.execute(
-                    f"SELECT domain,risk,campanha FROM {table} WHERE status IN ('NOVO','REINCIDENTE','RESSURGIDO')"):
+                    f"SELECT domain,risk,campanha FROM {table} WHERE status IN ('NOVO','REINCIDENTE','RESSURGIDO')"):  # nosec B608 - 'table' literal do loop, status literais
                 fid, _ = repo.upsert(src, dom, severity=risk or "BAIXO", title=dom, campanha=camp or "")
                 stt, reason = _ack_status(src, dom)
                 if stt: repo.set_status(fid, stt, note=f"Migrado do RECONHECIDO: {reason}")

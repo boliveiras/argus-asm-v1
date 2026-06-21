@@ -654,7 +654,7 @@ def process_results(scan_results: list[dict], scanned_protocols=("tcp",)):
     ph = ",".join("?" * len(protos))
     # Só REINCIDENTE/RESSURGIDO podem ser CORRIGIDOS — NOVO nunca vai direto.
     cursor.execute(
-        f"SELECT id,ip,port,protocol,service,banner,risk,target,asn,ip_type,resolved_ip,campanha "
+        f"SELECT id,ip,port,protocol,service,banner,risk,target,asn,ip_type,resolved_ip,campanha "  # nosec B608 - colunas fixas, protocol via placeholders
         f"FROM scans WHERE status IN ('REINCIDENTE','RESSURGIDO') AND protocol IN ({ph}) AND last_seen < ?",
         (*protos, grace_cutoff))
     for row_id,ip,port,protocol,service,banner,risk,target,asn,ip_type,resolved_ip,campanha in cursor.fetchall():
@@ -720,11 +720,11 @@ def load_report_rows():
     conn = sqlite3.connect(DATABASE_FILE); cur = conn.cursor()
     cutoff = (datetime.datetime.now() - datetime.timedelta(days=CLOSED_WINDOW_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
     novos = [_row_to_result(r) for r in cur.execute(
-        f"SELECT {_REPORT_COLS} FROM scans WHERE status='NOVO'").fetchall()]
+        f"SELECT {_REPORT_COLS} FROM scans WHERE status='NOVO'").fetchall()]  # nosec B608 - _REPORT_COLS constante, status literal
     reincidentes = [_row_to_result(r) for r in cur.execute(
-        f"SELECT {_REPORT_COLS} FROM scans WHERE status IN ('REINCIDENTE','RESSURGIDO')").fetchall()]
+        f"SELECT {_REPORT_COLS} FROM scans WHERE status IN ('REINCIDENTE','RESSURGIDO')").fetchall()]  # nosec B608 - _REPORT_COLS constante, status literais
     corrigidos = [_row_to_result(r) for r in cur.execute(
-        f"SELECT {_REPORT_COLS} FROM scans WHERE status='CORRIGIDO' AND last_seen>=?", (cutoff,)).fetchall()]
+        f"SELECT {_REPORT_COLS} FROM scans WHERE status='CORRIGIDO' AND last_seen>=?", (cutoff,)).fetchall()]  # nosec B608 - _REPORT_COLS constante, status literal + placeholder
     conn.close()
     return novos, reincidentes, corrigidos
 

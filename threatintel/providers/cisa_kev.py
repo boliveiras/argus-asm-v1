@@ -122,7 +122,7 @@ def _download() -> dict | None:
         "User-Agent": _USER_AGENT, "Accept": "application/json",
     })
     try:
-        with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
+        with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:  # nosec B310 - scheme https:// fixo (base URL constante)
             return json.loads(resp.read().decode("utf-8", errors="replace"))
     except urllib.error.HTTPError as exc:
         print(f"[CISA-KEV] HTTP {exc.code} ao baixar o catálogo KEV")

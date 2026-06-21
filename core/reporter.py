@@ -229,7 +229,7 @@ def _common_css() -> str:
   .kpi.sev-abus::before{ background:var(--pink); }
 
   .donut-card { padding:16px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; }
-  .donut-card h2 { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.9px; align-self:flex-start; font-weight:700; }
+  .donut-card h2 { font-size:13px; color:var(--muted); text-transform:uppercase; letter-spacing:.9px; align-self:flex-start; font-weight:700; }
   .donut-flex { display:flex; align-items:center; gap:16px; width:100%; }
   .donut { width:120px; height:120px; flex:none; }
   .donut .tot { font-size:24px; font-weight:800; fill:var(--text); }
@@ -450,7 +450,7 @@ def _common_css() -> str:
   @media (max-width:860px){ .grid-2 { grid-template-columns:1fr; } }
   /* Resumo executivo (topo dos relatórios) */
   .exec { padding:18px 20px; margin-bottom:20px; border-left:3px solid var(--accent); }
-  .exec h2 { font-size:12.5px; color:var(--accent); text-transform:uppercase; letter-spacing:.7px;
+  .exec h2 { font-size:14px; color:var(--accent); text-transform:uppercase; letter-spacing:.7px;
              margin-bottom:10px; display:flex; align-items:center; gap:8px; }
   .exec-lead { color:#cbd5e1; font-size:13.5px; line-height:1.6; margin-bottom:14px; }
   .exec-lead b { color:var(--red); }
@@ -472,7 +472,7 @@ def _common_css() -> str:
   .acc[open] > summary::after { transform:rotate(180deg); }
   .acc[open] > summary { margin-bottom:12px; }
   .panel-pad { padding:18px 20px; }
-  .panel-pad h2 { font-size:12.5px; color:var(--accent); text-transform:uppercase; letter-spacing:.7px;
+  .panel-pad h2 { font-size:14px; color:var(--accent); text-transform:uppercase; letter-spacing:.7px;
                   margin-bottom:14px; display:flex; align-items:center; gap:8px; }
   .panel-pad h2 .badge { margin-left:auto; }
   .list-row { display:flex; align-items:flex-start; gap:12px; padding:11px 0; border-bottom:1px solid var(--border); }
@@ -522,8 +522,8 @@ def _common_css() -> str:
   body.light {
     --bg:#dfe6f0; --bg-grad:radial-gradient(1150px 580px at 78% -12%, #eef3fa 0%, #dfe6f0 60%);
     --surface:#f4f7fb; --surface-2:#e9eef6; --border:#c3cfe0; --border-2:#a8b7cd;
-    --text:#16243d; --muted:#4d5f7c; --faint:#76859e; --accent:#1769c0; --accent-2:#5b62e0;
-    --steel:#3a4f6e; --steel-2:#5b708f;
+    --text:#16243d; --muted:#3e4d64; --faint:#67768f; --accent:#1769c0; --accent-2:#5b62e0;
+    --steel:#3a4f6e; --steel-2:#3d4d68;
     --red:#dc2626; --orange:#d9620a; --yellow:#b45309; --green:#0f9d6b; --pink:#db2777;
     --shadow:0 10px 28px -18px rgba(20,40,80,.35);
   }
@@ -784,7 +784,7 @@ def _footer() -> str:
     return (
         '<div class="footer">'
         '<span>Argus — plataforma de monitoramento de superfície de ataque</span>'
-        f'<span>Relatório gerado automaticamente · &copy; {year}</span>'
+        f'<span>Gerado automaticamente pelo Argus · &copy; {year}</span>'
         '</div>'
     )
 
@@ -3966,7 +3966,7 @@ def build_risk_guide() -> str:
         f'background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:4px 12px">{label}</a>'
         for aid, label in toc_items)
     toc = ('<div class="panel panel-pad" id="top" style="margin-bottom:16px">'
-           '<h2 style="font-size:12.5px;color:var(--accent);text-transform:uppercase;letter-spacing:.7px;'
+           '<h2 style="font-size:14px;color:var(--accent);text-transform:uppercase;letter-spacing:.7px;'
            'margin-bottom:12px">&#x1F4D1; Índice</h2>'
            f'<div style="display:flex;flex-wrap:wrap;gap:8px">{toc_links}</div></div>')
     body = toc + "".join(body_sections)
@@ -3981,7 +3981,7 @@ _CORR_SCRIPT = r"""<script>
   var TLBL={campaign:'Campanha',domain:'Domínio',subdomain:'Subdomínio',ip:'IP',
             email:'Achado · postura de e-mail',cred:'Achado · credenciais',typo:'Achado · typosquat'};
   var RAD={campaign:14,domain:11,subdomain:8,ip:9,email:9,cred:8,typo:9};
-  var N={}, EDGES=[], EDGES_IP=[], ADJ={}, INDEG={}, open={}, POS={}, PIN={}, sel=null, _ids=[], _vis={}, selRoots=null;
+  var N={}, EDGES=[], EDGES_IP=[], ADJ={}, PAR={}, INDEG={}, open={}, POS={}, PIN={}, sel=null, _ids=[], _vis={}, selRoots=null;
   var viewMode='sub', sevSet={CRITICO:1,ALTO:1,MEDIO:1,BAIXO:1,INFO:1};
   var drag=null, dragMoved=false, ox=0, oy=0, sx=0, sy=0, vb={x:0,y:0,w:960,h:600}, pan=null, dragging=false;
   function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
@@ -3989,8 +3989,8 @@ _CORR_SCRIPT = r"""<script>
   function showOnly(id){['corr-empty','corr-off','corr-main'].forEach(function(x){var e=document.getElementById(x);if(e)e.style.display=(x===id?'block':'none');});}
   function curCamp(){ var s=document.getElementById('corr-camp'); return s?s.value:'*'; }
   // Monta a lista de adjacência da visão ATUAL (por subdomínio ou por IP).
-  function rebuildAdj(){ var E=(viewMode==='ip')?EDGES_IP:EDGES; ADJ={}; INDEG={};
-    E.forEach(function(e){ (ADJ[e[0]]=ADJ[e[0]]||[]).push(e[1]); INDEG[e[1]]=(INDEG[e[1]]||0)+1; }); }
+  function rebuildAdj(){ var E=(viewMode==='ip')?EDGES_IP:EDGES; ADJ={}; PAR={}; INDEG={};
+    E.forEach(function(e){ (ADJ[e[0]]=ADJ[e[0]]||[]).push(e[1]); (PAR[e[1]]=PAR[e[1]]||[]).push(e[0]); INDEG[e[1]]=(INDEG[e[1]]||0)+1; }); }
   function start(){
     fetch('/api/correlation',{cache:'no-store'}).then(function(r){return r.ok?r.json():null;}).then(function(j){
       if(!j||!j.ok){ showOnly('corr-off'); return; }
@@ -4020,13 +4020,13 @@ _CORR_SCRIPT = r"""<script>
   function syncSevButtons(){ SEVKEYS.forEach(function(k){ var b=document.getElementById('sevb-'+k); if(b){ b.classList.toggle('off',!sevSet[k]); } }); }
   function roots(camp){ var rs=Object.keys(N).filter(function(id){return N[id].type==='campaign' && (camp==='*'||N[id].label===camp);}); if(selRoots){ Object.keys(selRoots).forEach(function(r){ if(rs.indexOf(r)<0)rs.push(r); }); } return rs; }
   function kids(id){ return (ADJ[id]||[]).length>0; }
-  function parentsOf(id){ var ps=[]; Object.keys(ADJ).forEach(function(p){ if((ADJ[p]||[]).indexOf(id)>=0)ps.push(p); }); return ps; }
+  function parentsOf(id){ return PAR[id]||[]; }   // O(1) — mapa pré-computado no rebuildAdj
   function rootsOf(id){ var rs={},st=[id],seen={}; while(st.length){ var x=st.pop(); if(seen[x])continue; seen[x]=1; if(N[x]&&N[x].type==='campaign'){rs[x]=1;continue;} parentsOf(x).forEach(function(p){st.push(p);}); } return Object.keys(rs); }
   function revealAncestors(id){ var st=parentsOf(id),seen={}; while(st.length){ var p=st.pop(); if(seen[p])continue; seen[p]=1; open[p]=true; parentsOf(p).forEach(function(g){st.push(g);}); } }
   function degOf(id){ var n=N[id]; return (n&&n.deg!=null)?n.deg:(INDEG[id]||0); }   // nº de subdomínios do IP
   function isShared(id){ var n=N[id]; return !!(n&&n.type==='ip'&&degOf(id)>1); }
   function isLeaf(id){ var n=N[id]; return !!(n&&['subdomain','ip','email','cred','typo'].indexOf(n.type)>=0); }
-  function neighbors(id){ var s={}; s[id]=1; (ADJ[id]||[]).forEach(function(c){s[c]=1;}); Object.keys(ADJ).forEach(function(p){ if((ADJ[p]||[]).indexOf(id)>=0)s[p]=1; }); return s; }
+  function neighbors(id){ var s={}; s[id]=1; (ADJ[id]||[]).forEach(function(c){s[c]=1;}); parentsOf(id).forEach(function(p){s[p]=1;}); return s; }
   function expandVisible(rts){ var vis={}; rts.forEach(function(r){vis[r]=1;}); var ch=true;
     while(ch){ ch=false; Object.keys(vis).forEach(function(id){ if(open[id]&&ADJ[id]) ADJ[id].forEach(function(c){ if(!vis[c]){vis[c]=1;ch=true;} }); }); } return vis; }
   // Expande TUDO a partir das raízes (ignora estado recolhido) — usado pelo filtro de
@@ -4041,7 +4041,7 @@ _CORR_SCRIPT = r"""<script>
   function visible(rts){ if(sevActive()) return sevFilter(expandAll(rts)); return expandVisible(rts); }
   function layout(ids,W,H){
     var freshSet={}, fresh=[];
-    ids.forEach(function(id){ if(!POS[id]){ freshSet[id]=1; fresh.push(id); var p=null; Object.keys(ADJ).forEach(function(s){ if((ADJ[s]||[]).indexOf(id)>=0 && POS[s]) p=POS[s]; });
+    ids.forEach(function(id){ if(!POS[id]){ freshSet[id]=1; fresh.push(id); var p=null; parentsOf(id).forEach(function(s){ if(POS[s]) p=POS[s]; });
       var bx=p?p.x:W/2, by=p?p.y:H/2; POS[id]={x:bx+(Math.random()*60-30),y:by+(Math.random()*60-30),vx:0,vy:0}; } });
     if(fresh.length===0) return;   // nada novo entrou → mantém o layout estável (sem "pulo" ao clicar)
     ids.forEach(function(id){POS[id].vx=0;POS[id].vy=0;});

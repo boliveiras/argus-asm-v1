@@ -141,7 +141,7 @@ def get_subdomains(domain: str, use_cache: bool = True) -> set[str]:
     subs: set[str] = set()
     try:
         req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as resp:
+        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as resp:  # nosec B310 - scheme https:// fixo (base URL constante)
             raw = resp.read().decode("utf-8", errors="replace")
         # crt.sh retorna um array JSON de objetos
         entries = json.loads(raw)

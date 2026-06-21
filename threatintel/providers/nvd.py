@@ -158,7 +158,7 @@ def _fetch(cve: str):
         headers["apiKey"] = _API_KEY
     req = urllib.request.Request(f"{_API_URL}?cveId={cve}", headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
+        with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:  # nosec B310 - scheme https:// fixo (base URL constante)
             data = json.loads(resp.read().decode("utf-8", errors="replace"))
         _increment()
         return data

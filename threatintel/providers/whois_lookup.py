@@ -180,7 +180,7 @@ def _fetch_json(url: str, timeout: int) -> dict | None:
             "User-Agent": USER_AGENT,
             "Accept": "application/rdap+json, application/json",
         })
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310 - scheme https:// fixo (base URL constante)
             return json.loads(resp.read().decode("utf-8", errors="replace"))
     except (urllib.error.URLError, urllib.error.HTTPError,
             json.JSONDecodeError, TimeoutError, ValueError):

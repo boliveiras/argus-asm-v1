@@ -117,21 +117,21 @@ def correlation_graph(base: str | None = None) -> dict:
     são simplesmente ignorados."""
     b = Path(base or _argus_base())
     subs = _ro_rows(str(b / "submonitor" / "submonitor.db"),
-                    f"SELECT campanha,hostname,ip,cname,asn,ip_type,risk,http_status,dnssec,"
+                    f"SELECT campanha,hostname,ip,cname,asn,ip_type,risk,http_status,dnssec,"  # nosec B608 - colunas fixas, status via constante _ACTIVE
                     f"ssl_status,ssl_expiry,origem,whois_status,whois_age_days,whois_creation,whois_expiry,"
                     f"whois_registrar FROM subdomains WHERE status IN {_ACTIVE}")
     mons = _ro_rows(str(b / "monitor" / "monitor.db"),
-                    f"SELECT campanha,ip,port,protocol,service,asn,risk,abuse_score,abuse_country,abuse_isp,"
+                    f"SELECT campanha,ip,port,protocol,service,asn,risk,abuse_score,abuse_country,abuse_isp,"  # nosec B608 - colunas fixas, status via constante _ACTIVE
                     f"abuse_tor,abuse_reports,abuse_last,idb_vuln_count,idb_vulns,idb_tags,kev_count,kev_cves,"
                     f"nvd_max_score,nvd_severity,nvd_scores FROM scans WHERE status IN {_ACTIVE}")
     creds = _ro_rows(str(b / "credentials" / "credentials.db"),
-                     f"SELECT campanha,domain,total,employees,users,third_parties,top_url,risk "
+                     f"SELECT campanha,domain,total,employees,users,third_parties,top_url,risk "  # nosec B608 - colunas fixas, status via constante _ACTIVE
                      f"FROM domains WHERE status IN {_ACTIVE} AND total>0")
     mails = _ro_rows(str(b / "email" / "email.db"),
-                     f"SELECT campanha,domain,spf_status,dmarc_status,dkim_status,dkim_selector,risk,issues,"
+                     f"SELECT campanha,domain,spf_status,dmarc_status,dkim_status,dkim_selector,risk,issues,"  # nosec B608 - colunas fixas, status via constante _ACTIVE
                      f"has_mx,mx FROM domains WHERE status IN {_ACTIVE}")
     typos = _ro_rows(str(b / "typosquat" / "typosquat.db"),
-                     f"SELECT campanha,base_domain,domain,fuzzer,ip,risk,whois_status,whois_age_days,"
+                     f"SELECT campanha,base_domain,domain,fuzzer,ip,risk,whois_status,whois_age_days,"  # nosec B608 - colunas fixas, status via constante _ACTIVE
                      f"whois_creation,mx FROM lookalikes WHERE status IN {_ACTIVE}")
 
     # Agrega o enriquecimento por IP (vindo do monitor de portas).
