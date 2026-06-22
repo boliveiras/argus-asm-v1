@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # Argus — monitoramento de superfície de ataque
 # Copyright (C) 2026  Bruno Santos
@@ -115,7 +114,7 @@ def _sd_escape(v: str) -> str:
 def syslog_write(severity: str, msgid: str, msg: str, **sd):
     if _syslog_fd is None: return
     prival = _FAC * 8 + _SEV.get(severity, 6)
-    ts     = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]+"Z"
+    ts     = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]+"Z"
     parts  = [f'run_id="{_sd_escape(_run_id)}"'] + [f'{k}="{_sd_escape(v)}"' for k,v in sd.items()]
     line   = f"<{prival}>1 {ts} {_hostname} {SYSLOG_APP} {_pid} {msgid} [origin@32473 {' '.join(parts)}] {str(msg).replace(chr(10),' ')}\n"
     try: _syslog_fd.write(line); _syslog_fd.flush()
@@ -425,8 +424,9 @@ def main():
             except Exception:
                 pass
 
+        import os as _os
+        import shutil as _shutil
         from pathlib import Path as _Path
-        import os as _os, shutil as _shutil
         _docroot = _Path(APACHE_DOCROOT)
         _out = str(_docroot / HTML_REPORT) if _docroot.exists() else HTML_REPORT
 

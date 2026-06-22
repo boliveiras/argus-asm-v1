@@ -38,11 +38,10 @@ Características:
 """
 
 import json
-import os
 import time
-import urllib.request
-import urllib.error
 from pathlib import Path
+
+import requests
 
 # ── Configuração ─────────────────────────────────────────────
 CRTSH_URL          = "https://crt.sh/?q=%25.{domain}&output=json"
@@ -140,19 +139,19 @@ def get_subdomains(domain: str, use_cache: bool = True) -> set[str]:
     url = CRTSH_URL.format(domain=domain)
     subs: set[str] = set()
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as resp:  # nosec B310 - scheme https:// fixo (base URL constante)
-            raw = resp.read().decode("utf-8", errors="replace")
+        resp = requests.get(url, headers={"User-Agent": USER_AGENT},
+                            timeout=REQUEST_TIMEOUT)
+        resp.raise_for_status()
         # crt.sh retorna um array JSON de objetos
-        entries = json.loads(raw)
+        entries = json.loads(resp.text)
         for entry in entries:
             name_value = entry.get("name_value", "")
             common_name = entry.get("common_name", "")
             for src in (name_value, common_name):
                 if src:
                     subs.update(_normalize_name(src, domain))
-    except (urllib.error.URLError, urllib.error.HTTPError,
-            json.JSONDecodeError, TimeoutError, ValueError):
+    except (requests.exceptions.RequestException,
+            json.JSONDecodeError, ValueError):
         # Degradação graciosa — retorna o que tiver (vazio)
         return set()
     except Exception:

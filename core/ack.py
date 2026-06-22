@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 ack.py — Reconhecimento de achados (status RECONHECIDO) compartilhado pelos
 módulos Argus (monitor / submonitor / credentials).
@@ -28,11 +27,11 @@ Exemplos de chave:
 O módulo é autodetectado pela forma da chave: IP:porta/proto => monitor; caso
 contrário => submonitor. Para domínios de credentials/email, informe -m.
 """
+import datetime
 import os
 import re
-import sys
 import sqlite3
-import datetime
+import sys
 from pathlib import Path
 
 MODULES = ("monitor", "submonitor", "credentials", "email", "typosquat")
@@ -114,7 +113,7 @@ def load_acks(module: str) -> dict:
         rows = conn.execute(
             "SELECT key, reason FROM ack WHERE module=?", (module,)).fetchall()
         conn.close()
-        return {k: v for k, v in rows}
+        return dict(rows)
     except Exception:
         return {}
 

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # Argus — monitoramento de superfície de ataque
 # Copyright (C) 2026  Bruno Santos
@@ -36,11 +35,10 @@ Uso:
 """
 
 import base64
-import json
 import datetime
 import html
+import json
 from pathlib import Path
-
 
 # ============================================================
 # UTILITÁRIOS COMPARTILHADOS
@@ -3023,7 +3021,7 @@ def _findings_stats_panel(stats: dict) -> str:
         '</div>'
     )
     src_labels = {k: _SRC_LABEL.get(k, k) for k in stats.get("by_source", {})}
-    fst_labels = {st: lb for st, lb in _FST_OPTIONS}
+    fst_labels = dict(_FST_OPTIONS)
     left = (
         '<div>'
         '<h3 style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.7px;margin-bottom:8px">'
@@ -3461,8 +3459,9 @@ def write_findings_page(docroot: str = "/var/www/argus", db_path: str | None = N
         except Exception: stt = None
     except Exception:
         return None
+    import os as _os
+    import shutil as _sh
     from pathlib import Path as _P
-    import os as _os, shutil as _sh
     droot = _P(docroot)
     out = str(droot / local_name) if droot.exists() else local_name
     try:

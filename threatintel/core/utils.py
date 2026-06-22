@@ -23,8 +23,6 @@ Utilitários reutilizáveis por todos os módulos do pacote.
 from __future__ import annotations
 
 import ipaddress
-import re
-from typing import Optional
 
 
 def is_public_ip(ip: str) -> bool:
@@ -46,7 +44,7 @@ def is_public_ip(ip: str) -> bool:
         return False
 
 
-def normalize_ip(ip: str) -> Optional[str]:
+def normalize_ip(ip: str) -> str | None:
     """
     Normaliza e valida um endereço IP.
     Retorna a forma canônica ou None se inválido.

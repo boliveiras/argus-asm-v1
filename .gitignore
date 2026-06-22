@@ -31,6 +31,12 @@ threatintel/hudsonrock_cache/
 # Cache do Shodan InternetDB (CVE/portas/tags por IP + cota)
 threatintel/internetdb_cache/
 
+# Cache do catálogo CISA KEV (vulns exploradas in-the-wild)
+threatintel/cisa_kev_cache/
+
+# Cache da NVD (CVSS por CVE + cota)
+threatintel/nvd_cache/
+
 # Logs
 *.log
 logs/

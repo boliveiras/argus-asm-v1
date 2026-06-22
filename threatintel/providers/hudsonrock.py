@@ -48,10 +48,9 @@ Uso:
 import datetime
 import json
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
 from pathlib import Path
+
+import requests
 
 from threatintel import CONFIG
 
@@ -155,22 +154,22 @@ def _fetch(domain: str) -> dict | None:
     if not _can_request():
         print(f"[HUDSONROCK] ⚠️  Cota diária esgotada ({_DAILY_LIMIT}) — consulta pulada")
         return None
-    url = f"{_API_URL}?{urllib.parse.urlencode({'domain': domain})}"
-    req = urllib.request.Request(url, headers={
-        "User-Agent": _USER_AGENT, "Accept": "application/json",
-    })
+    headers = {"User-Agent": _USER_AGENT, "Accept": "application/json"}
     try:
-        with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:  # nosec B310 - scheme https:// fixo (base URL constante)
-            data = json.loads(resp.read().decode("utf-8", errors="replace"))
+        resp = requests.get(_API_URL, headers=headers,
+                            params={"domain": domain}, timeout=_TIMEOUT)
+        resp.raise_for_status()
+        data = resp.json()
         _increment()
         return data
-    except urllib.error.HTTPError as exc:
-        if exc.code == 429:
+    except requests.exceptions.HTTPError as exc:
+        code = exc.response.status_code if exc.response is not None else None
+        if code == 429:
             print("[HUDSONROCK] ⚠️  Rate limit (HTTP 429)")
         else:
-            print(f"[HUDSONROCK] HTTP {exc.code} para {domain}")
+            print(f"[HUDSONROCK] HTTP {code} para {domain}")
         return None
-    except (urllib.error.URLError, json.JSONDecodeError, TimeoutError, ValueError):
+    except (requests.exceptions.RequestException, json.JSONDecodeError, ValueError):
         return None
     except Exception:
         return None

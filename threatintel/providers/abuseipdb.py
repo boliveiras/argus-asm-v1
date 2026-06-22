@@ -42,15 +42,13 @@ Uso:
 
 from __future__ import annotations
 
-import json
 import time
-from typing import Optional
 
 import requests
 
 from threatintel import CONFIG
 from threatintel.core.cache import get_cached, set_cache
-from threatintel.core.quota import can_request, increment, get_remaining
+from threatintel.core.quota import can_request, get_remaining, increment
 from threatintel.core.utils import is_public_ip, safe_int, safe_str
 
 # ─── Configurações ────────────────────────────────────────────────────────────
@@ -149,12 +147,12 @@ def get_ip_reputation(ip: str) -> dict:
             return data
 
         if resp.status_code == 429:
-            print(f"[ABUSE] ⚠️  Rate limit atingido (HTTP 429) — aguardando 5s")
+            print("[ABUSE] ⚠️  Rate limit atingido (HTTP 429) — aguardando 5s")
             time.sleep(5)
             return {**_EMPTY_RESULT, "source": "rate_limited"}
 
         if resp.status_code == 401:
-            print(f"[ABUSE] ❌ API key inválida (HTTP 401)")
+            print("[ABUSE] ❌ API key inválida (HTTP 401)")
             return {**_EMPTY_RESULT, "source": "auth_error"}
 
         print(f"[ABUSE] HTTP {resp.status_code} para IP {ip}")

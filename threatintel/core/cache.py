@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import datetime
 import json
-from typing import Optional
 
 from threatintel import CONFIG
 from threatintel.core.database import get_connection
@@ -35,22 +34,22 @@ _TTL_HOURS: int = int(CONFIG.get("cache_ttl_hours", 48))
 
 
 def _now_utc() -> str:
-    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    return datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _is_expired(updated_at: str) -> bool:
     """Retorna True se o registro está mais velho que o TTL."""
     try:
         ts = datetime.datetime.strptime(updated_at, "%Y-%m-%d %H:%M:%S").replace(
-            tzinfo=datetime.timezone.utc
+            tzinfo=datetime.UTC
         )
-        age = datetime.datetime.now(datetime.timezone.utc) - ts
+        age = datetime.datetime.now(datetime.UTC) - ts
         return age.total_seconds() > _TTL_HOURS * 3600
     except Exception:
         return True
 
 
-def get_cached(ip: str) -> Optional[dict]:
+def get_cached(ip: str) -> dict | None:
     """
     Retorna o registro em cache se existir E não estiver expirado.
     Atualiza last_accessed_at transparentemente.

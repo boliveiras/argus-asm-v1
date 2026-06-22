@@ -47,9 +47,9 @@ import datetime
 import json
 import re
 import time
-import urllib.error
-import urllib.request
 from pathlib import Path
+
+import requests
 
 from threatintel import CONFIG
 
@@ -156,22 +156,24 @@ def _fetch(cve: str):
     headers = {"User-Agent": _USER_AGENT, "Accept": "application/json"}
     if _HAS_KEY:
         headers["apiKey"] = _API_KEY
-    req = urllib.request.Request(f"{_API_URL}?cveId={cve}", headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:  # nosec B310 - scheme https:// fixo (base URL constante)
-            data = json.loads(resp.read().decode("utf-8", errors="replace"))
+        resp = requests.get(_API_URL, headers=headers,
+                            params={"cveId": cve}, timeout=_TIMEOUT)
+        resp.raise_for_status()
+        data = resp.json()
         _increment()
         return data
-    except urllib.error.HTTPError as exc:
+    except requests.exceptions.HTTPError as exc:
         _increment()
-        if exc.code == 404:
+        code = exc.response.status_code if exc.response is not None else None
+        if code == 404:
             return {"vulnerabilities": []}     # CVE não encontrada na NVD
-        if exc.code in (403, 429):
-            print(f"[NVD] ⚠️  Rate limit (HTTP {exc.code}) — considere a API key")
+        if code in (403, 429):
+            print(f"[NVD] ⚠️  Rate limit (HTTP {code}) — considere a API key")
         else:
-            print(f"[NVD] HTTP {exc.code} para {cve}")
+            print(f"[NVD] HTTP {code} para {cve}")
         return None
-    except (urllib.error.URLError, json.JSONDecodeError, TimeoutError, ValueError):
+    except (requests.exceptions.RequestException, json.JSONDecodeError, ValueError):
         return None
     except Exception:
         return None

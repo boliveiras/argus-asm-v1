@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # Argus ASM — monitoramento de superfície de ataque
 # Copyright (C) 2026  Bruno Santos
@@ -93,7 +92,7 @@ class AuditLogger:
     def event(self, msgid: str, message: str = "", *, level: str = "NOTICE", **fields) -> None:
         sev = _SEV.get(str(level).upper(), 5)
         pri = _FACILITY * 8 + sev
-        ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+        ts = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
         cid = fields.pop("correlation_id", None) or str(uuid.uuid4())
         merged = {"correlation_id": cid}
         for k, v in fields.items():
@@ -122,7 +121,7 @@ class AuditLogger:
                 self._fd = None
 
 
-_LOGGER: "AuditLogger | None" = None
+_LOGGER: AuditLogger | None = None
 
 
 def get_logger() -> AuditLogger:

@@ -82,7 +82,6 @@ def compute_final_risk(
     score       = safe_int(abuse_data.get("abuse_confidence_score"), 0)
     is_tor      = bool(abuse_data.get("is_tor", 0))
     usage_type  = str(abuse_data.get("usage_type", "")).lower().strip()
-    total_rpts  = safe_int(abuse_data.get("total_reports"), 0)
 
     # Regra 1: score absoluto
     if score >= _SCORE_CRITICO:

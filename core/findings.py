@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # Argus ASM — monitoramento de superfície de ataque
 # Copyright (C) 2026  Bruno Santos
@@ -425,7 +424,7 @@ class FindingRepository:
         row = self._conn.execute("SELECT * FROM findings WHERE id=?", (fid,)).fetchone()
         if not row:
             return None
-        d = dict(zip(cols, row))
+        d = dict(zip(cols, row, strict=False))
         try: d["details"] = json.loads(d.get("details") or "{}")
         except Exception: d["details"] = {}
         return d
@@ -434,7 +433,7 @@ class FindingRepository:
         rows = self._conn.execute(
             "SELECT ts,actor,action,from_status,to_status,note FROM finding_events "
             "WHERE finding_id=? ORDER BY id", (fid,)).fetchall()
-        return [dict(zip(("ts","actor","action","from_status","to_status","note"), r)) for r in rows]
+        return [dict(zip(("ts","actor","action","from_status","to_status","note"), r, strict=False)) for r in rows]
 
     def counts(self) -> dict:
         out = {"total": 0, "active": 0, "by_status": {}, "by_severity": {}}
@@ -468,7 +467,7 @@ class FindingRepository:
         rows = self._conn.execute(sql, args).fetchall()
         cols = ("id","source","natural_key","title","category","severity","status",
                 "active","campanha","first_seen","last_seen")
-        out = [dict(zip(cols, r)) for r in rows]
+        out = [dict(zip(cols, r, strict=False)) for r in rows]
         # ativos primeiro, depois por severidade, depois mais recentes
         out.sort(key=lambda d: (0 if d["active"] else 1,
                                 self._SEV_RANK.get(d["severity"], 9),
@@ -493,12 +492,12 @@ class FindingRepository:
     def notes(self, fid: str) -> list[dict]:
         rows = self._conn.execute(
             "SELECT ts,actor,note FROM finding_notes WHERE finding_id=? ORDER BY id", (fid,)).fetchall()
-        return [dict(zip(("ts","actor","note"), r)) for r in rows]
+        return [dict(zip(("ts","actor","note"), r, strict=False)) for r in rows]
 
     def evidence(self, fid: str) -> list[dict]:
         rows = self._conn.execute(
             "SELECT ts,actor,label,ref FROM finding_evidence WHERE finding_id=? ORDER BY id", (fid,)).fetchall()
-        return [dict(zip(("ts","actor","label","ref"), r)) for r in rows]
+        return [dict(zip(("ts","actor","label","ref"), r, strict=False)) for r in rows]
 
 
 def _parse_ts(s):
@@ -728,9 +727,8 @@ def migrate_legacy_dbs(base_dir: str, *, db_path: str | None = None) -> dict:
         b = _backup_db(mon);  summary["backups"].append(b) if b else None
         try:
             c = sqlite3.connect(str(mon))
-            cols = {r[1] for r in c.execute("PRAGMA table_info(scans)")}
             sel = "ip,port,protocol,service,risk,campanha,status"
-            for ip,port,proto,svc,risk,camp,st in c.execute(
+            for ip,port,proto,svc,risk,camp,_st in c.execute(
                     f"SELECT {sel} FROM scans WHERE status IN ('NOVO','REINCIDENTE','RESSURGIDO')"):  # nosec B608 - 'sel' literal fixo, status literais
                 key = f"{ip}:{port}/{proto}"
                 fid, _ = repo.upsert("monitor", key, severity=risk or "BAIXO",

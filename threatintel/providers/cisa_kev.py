@@ -39,12 +39,11 @@ Uso:
     risk = cisa_kev.kev_elevate(risk, r.get("kev"))  # eleva (KEV -> CRÍTICO)
 """
 
-import datetime
 import json
 import time
-import urllib.error
-import urllib.request
 from pathlib import Path
+
+import requests
 
 from threatintel import CONFIG
 
@@ -118,16 +117,16 @@ def _save_cache(catalog: dict) -> None:
 
 
 def _download() -> dict | None:
-    req = urllib.request.Request(_URL, headers={
-        "User-Agent": _USER_AGENT, "Accept": "application/json",
-    })
+    headers = {"User-Agent": _USER_AGENT, "Accept": "application/json"}
     try:
-        with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:  # nosec B310 - scheme https:// fixo (base URL constante)
-            return json.loads(resp.read().decode("utf-8", errors="replace"))
-    except urllib.error.HTTPError as exc:
-        print(f"[CISA-KEV] HTTP {exc.code} ao baixar o catálogo KEV")
+        resp = requests.get(_URL, headers=headers, timeout=_TIMEOUT)
+        resp.raise_for_status()
+        return resp.json()
+    except requests.exceptions.HTTPError as exc:
+        code = exc.response.status_code if exc.response is not None else "?"
+        print(f"[CISA-KEV] HTTP {code} ao baixar o catálogo KEV")
         return None
-    except (urllib.error.URLError, json.JSONDecodeError, TimeoutError, ValueError):
+    except (requests.exceptions.RequestException, json.JSONDecodeError, ValueError):
         return None
     except Exception:
         return None

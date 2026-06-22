@@ -52,9 +52,9 @@ Uso:
 import datetime
 import json
 import time
-import urllib.error
-import urllib.request
 from pathlib import Path
+
+import requests
 
 from threatintel import CONFIG
 from threatintel.core.utils import is_public_ip
@@ -154,24 +154,24 @@ def _fetch(ip: str):
     if not _can_request():
         print(f"[INTERNETDB] ⚠️  Cota diária esgotada ({_DAILY_LIMIT}) — consulta pulada")
         return None, None
-    req = urllib.request.Request(f"{_API_URL}/{ip}", headers={
-        "User-Agent": _USER_AGENT, "Accept": "application/json",
-    })
+    headers = {"User-Agent": _USER_AGENT, "Accept": "application/json"}
     try:
-        with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:  # nosec B310 - scheme https:// fixo (base URL constante)
-            data = json.loads(resp.read().decode("utf-8", errors="replace"))
+        resp = requests.get(f"{_API_URL}/{ip}", headers=headers, timeout=_TIMEOUT)
+        resp.raise_for_status()
+        data = resp.json()
         _increment()
         return data, True
-    except urllib.error.HTTPError as exc:
+    except requests.exceptions.HTTPError as exc:
         _increment()
-        if exc.code == 404:
+        code = exc.response.status_code if exc.response is not None else None
+        if code == 404:
             return None, False        # IP sem dados no Shodan (limpo)
-        if exc.code == 429:
+        if code == 429:
             print("[INTERNETDB] ⚠️  Rate limit (HTTP 429)")
         else:
-            print(f"[INTERNETDB] HTTP {exc.code} para {ip}")
+            print(f"[INTERNETDB] HTTP {code} para {ip}")
         return None, None
-    except (urllib.error.URLError, json.JSONDecodeError, TimeoutError, ValueError):
+    except (requests.exceptions.RequestException, json.JSONDecodeError, ValueError):
         return None, None
     except Exception:
         return None, None
@@ -288,7 +288,6 @@ def vuln_elevate(risk: str, intel: dict | None) -> str:
     IP com ≥1 CVE → risco no MÍNIMO ALTO. Não força CRÍTICO sozinho (o matching
     do Shodan é heurístico). Combinado a porta crítica/abuso, o risco já chega a
     CRÍTICO por outras camadas."""
-    if intel and intel.get("vuln_count", 0) >= 1:
-        if _RANK.get(risk, 3) > _RANK["ALTO"]:
-            return "ALTO"
+    if intel and intel.get("vuln_count", 0) >= 1 and _RANK.get(risk, 3) > _RANK["ALTO"]:
+        return "ALTO"
     return risk

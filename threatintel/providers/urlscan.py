@@ -44,10 +44,9 @@ Uso:
 import datetime
 import json
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
 from pathlib import Path
+
+import requests
 
 from threatintel import CONFIG
 
@@ -159,25 +158,26 @@ def _search(query: str, size: int = 100) -> dict | None:
     if not _can_request():
         print(f"[URLSCAN] ⚠️  Cota diária esgotada ({_DAILY_LIMIT}) — consulta pulada")
         return None
-    params = urllib.parse.urlencode({"q": query, "size": size})
-    url = f"{_SEARCH_URL}?{params}"
-    req = urllib.request.Request(url, headers={
+    headers = {
         "User-Agent": _USER_AGENT,
         "API-Key": _API_KEY,
         "Accept": "application/json",
-    })
+    }
     try:
-        with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:  # nosec B310 - scheme https:// fixo (base URL constante)
-            data = json.loads(resp.read().decode("utf-8", errors="replace"))
+        resp = requests.get(_SEARCH_URL, headers=headers,
+                            params={"q": query, "size": size}, timeout=_TIMEOUT)
+        resp.raise_for_status()
+        data = resp.json()
         _increment()
         return data
-    except urllib.error.HTTPError as exc:
-        if exc.code == 429:
+    except requests.exceptions.HTTPError as exc:
+        code = exc.response.status_code if exc.response is not None else None
+        if code == 429:
             print("[URLSCAN] ⚠️  Rate limit (HTTP 429)")
-        elif exc.code == 401:
+        elif code == 401:
             print("[URLSCAN] ❌ API key inválida (HTTP 401)")
         return None
-    except (urllib.error.URLError, json.JSONDecodeError, TimeoutError, ValueError):
+    except (requests.exceptions.RequestException, json.JSONDecodeError, ValueError):
         return None
     except Exception:
         return None

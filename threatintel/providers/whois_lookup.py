@@ -50,9 +50,9 @@ import json
 import logging
 import sqlite3
 import time
-import urllib.error
-import urllib.request
 from pathlib import Path
+
+import requests
 
 # Fallback opcional: python-whois (porta 43). RDAP é o motor principal.
 try:
@@ -176,14 +176,14 @@ def _write_cache(intel: dict) -> None:
 def _fetch_json(url: str, timeout: int) -> dict | None:
     """GET genérico que retorna JSON ou None (nunca levanta)."""
     try:
-        req = urllib.request.Request(url, headers={
+        resp = requests.get(url, headers={
             "User-Agent": USER_AGENT,
             "Accept": "application/rdap+json, application/json",
-        })
-        with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310 - scheme https:// fixo (base URL constante)
-            return json.loads(resp.read().decode("utf-8", errors="replace"))
-    except (urllib.error.URLError, urllib.error.HTTPError,
-            json.JSONDecodeError, TimeoutError, ValueError):
+        }, timeout=timeout)
+        resp.raise_for_status()
+        return resp.json()
+    except (requests.exceptions.RequestException,
+            json.JSONDecodeError, ValueError):
         return None
     except Exception:
         return None
@@ -253,7 +253,7 @@ def _parse_rdap_date(value: str | None) -> datetime.datetime | None:
     try:
         dt = datetime.datetime.fromisoformat(s)
         if dt.tzinfo is not None:
-            dt = dt.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+            dt = dt.astimezone(datetime.UTC).replace(tzinfo=None)
         return dt
     except ValueError:
         for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # Argus — monitoramento de superfície de ataque
 # Copyright (C) 2026  Bruno Santos
@@ -39,7 +38,6 @@ Estrutura:
 
 import datetime
 import ipaddress
-import json
 import os
 import re
 import socket
@@ -58,9 +56,9 @@ except ImportError:
     sys.exit(1)
 
 try:
+    from threatintel.core.database import init_database as init_threatintel_db
+    from threatintel.core.reputation import compute_final_risk
     from threatintel.providers.abuseipdb import enrich_results
-    from threatintel.core.reputation      import compute_final_risk
-    from threatintel.core.database        import init_database as init_threatintel_db
     _THREATINTEL_AVAILABLE = True
 except ImportError:
     _THREATINTEL_AVAILABLE = False
@@ -180,7 +178,7 @@ def _sd_escape(v: str) -> str:
 def syslog_write(severity: str, msgid: str, msg: str, **sd):
     if _syslog_fd is None: return
     prival = _FAC * 8 + _SEV.get(severity, 6)
-    ts     = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]+"Z"
+    ts     = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]+"Z"
     parts  = [f'run_id="{_sd_escape(_run_id)}"'] + [f'{k}="{_sd_escape(v)}"' for k,v in sd.items()]
     line   = f"<{prival}>1 {ts} {_hostname} {SYSLOG_APP} {_pid} {msgid} [origin@32473 {' '.join(parts)}] {str(msg).replace(chr(10),' ')}\n"
     try: _syslog_fd.write(line); _syslog_fd.flush()
@@ -189,7 +187,7 @@ def syslog_write(severity: str, msgid: str, msg: str, **sd):
 def syslog_init(campaigns: int, targets_count: int, transport: str = "tcp"):
     global _run_id, _scan_start
     _run_id = str(uuid.uuid4())
-    _scan_start = datetime.datetime.now(datetime.timezone.utc)
+    _scan_start = datetime.datetime.now(datetime.UTC)
     _syslog_open()
     syslog_write("INFO","SCAN_START",f"Iniciando scan {transport}: {campaigns} campanha(s), {targets_count} alvo(s)",
                  module=SYSLOG_APP, version=APP_VERSION, transport=transport,
@@ -917,7 +915,8 @@ def main():
             try:
                 _hidden = _findings.hidden_keys("monitor")
                 if _hidden:
-                    _kf = lambda r: f"{r.get('ip')}:{r.get('port')}/{r.get('protocol')}"
+                    def _kf(r):
+                        return f"{r.get('ip')}:{r.get('port')}/{r.get('protocol')}"
                     rep_novos = [r for r in rep_novos if _kf(r) not in _hidden]
                     rep_rein  = [r for r in rep_rein  if _kf(r) not in _hidden]
                     rep_corr  = [r for r in rep_corr  if _kf(r) not in _hidden]
@@ -931,8 +930,9 @@ def main():
                 print(f"[ACK] {_ack_n} achado(s) reconhecido(s) -> status RECONHECIDO / risco INFO")
 
         # ── Grava relatório HTML ──────────────────────────────────
+        import os as _os
+        import shutil as _shutil
         from pathlib import Path as _Path
-        import os as _os, shutil as _shutil
         _docroot      = _Path(APACHE_DOCROOT)
         _docroot_path = _docroot / HTML_REPORT
         _local_path   = HTML_REPORT

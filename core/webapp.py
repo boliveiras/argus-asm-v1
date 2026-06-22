@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 #
 # Argus ASM — monitoramento de superfície de ataque
 # Copyright (C) 2026  Bruno Santos
@@ -53,13 +52,12 @@ import sqlite3
 from pathlib import Path
 
 try:
-    from flask import Flask, request, jsonify
+    from flask import Flask, jsonify, request
     _FLASK_OK = True
 except ImportError:                       # degrada com mensagem clara
     _FLASK_OK = False
 
 import findings as F
-
 
 # ============================================================
 # CORRELAÇÃO — grafo da superfície (junta os bancos dos scanners)
@@ -92,7 +90,7 @@ def _ro_rows(db_path: str, sql: str) -> list[dict]:
         try:
             cur = conn.execute(sql)
             cols = [d[0] for d in cur.description]
-            return [dict(zip(cols, r)) for r in cur.fetchall()]
+            return [dict(zip(cols, r, strict=False)) for r in cur.fetchall()]
         finally:
             conn.close()
     except Exception:
@@ -414,7 +412,7 @@ def correlation_graph(base: str | None = None) -> dict:
     }
 
 try:
-    import logs as _audit_log          # trilha de auditoria (RFC 5424, audit.log)
+    import logs as _audit_log  # trilha de auditoria (RFC 5424, audit.log)
 except Exception:                       # nunca impede a API de subir
     _audit_log = None
 
@@ -551,7 +549,6 @@ def create_app():
                 return jsonify(ok=False, error="não encontrado"), 404
             from_status = (repo.get(rid) or {}).get("status", "")
             repo.set_status(rid, to, actor=_actor(request), note=note)
-            f = repo.get(rid)
         finally:
             if repo: repo.close()
         regen = _regen_page()
