@@ -564,6 +564,13 @@ if [ "$INSTALL_APACHE" = true ]; then
   else
     warn "Falha ao gerar portal via reporter.py (PYTHONPATH=$BASE_DIR)"
   fi
+  # Fontes self-hosted (JetBrains Mono, OFL) — offline-safe; o app.css referencia /assets/fonts.
+  if mkdir -p "$APACHE_DOCROOT/assets/fonts" && cp -f assets/fonts/*.woff2 "$APACHE_DOCROOT/assets/fonts/" 2>/dev/null; then
+    cp -f assets/fonts/OFL.txt "$APACHE_DOCROOT/assets/fonts/" 2>/dev/null || true
+    ok "Fontes embarcadas (JetBrains Mono) em /assets/fonts"
+  else
+    warn "Fontes não encontradas (assets/fonts) — a UI cai p/ a mono do sistema"
+  fi
   # Página de Gestão de Achados já preenchida com o argus.db migrado (se houver).
   PYTHONPATH="$BASE_DIR" ARGUS_DB="$FINDINGS_STORE/argus.db" "$PYTHON_BIN" -c \
     "import reporter; reporter.write_findings_page('$APACHE_DOCROOT')" 2>/dev/null \

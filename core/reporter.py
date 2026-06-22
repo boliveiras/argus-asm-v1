@@ -129,6 +129,12 @@ def _nvd_to_js(nvd: dict | None) -> dict:
 
 def _common_css() -> str:
     return """
+  /* JetBrains Mono (OFL-1.1) — self-hosted, offline-safe; dá caráter técnico aos dados
+     (IP/porta/CVE/code). Subset latino, 400+700. font-display:swap cai p/ system até carregar. */
+  @font-face { font-family:'JetBrains Mono'; font-style:normal; font-weight:400; font-display:swap;
+    src:url('/assets/fonts/jetbrains-mono-400.woff2') format('woff2'); }
+  @font-face { font-family:'JetBrains Mono'; font-style:normal; font-weight:700; font-display:swap;
+    src:url('/assets/fonts/jetbrains-mono-700.woff2') format('woff2'); }
   *, *::before, *::after { box-sizing:border-box; margin:0; padding:0; }
   :root {
     --bg:#070c16; --bg-grad:radial-gradient(1150px 580px at 78% -12%, #122747 0%, #070c16 58%);
@@ -139,7 +145,7 @@ def _common_css() -> str:
     --radius:10px; --radius-sm:7px;
     --shadow:0 10px 30px -16px rgba(0,0,0,.7);
     --font:'Inter','Segoe UI',system-ui,-apple-system,Arial,sans-serif;
-    --mono:ui-monospace,'JetBrains Mono','SFMono-Regular',Menlo,Consolas,monospace;
+    --mono:'JetBrains Mono',ui-monospace,'SFMono-Regular',Menlo,Consolas,monospace;
   }
   body { background:var(--bg); background-image:var(--bg-grad); background-attachment:fixed;
          color:var(--text); font-family:var(--font); font-size:14px; padding:0; -webkit-font-smoothing:antialiased; }
