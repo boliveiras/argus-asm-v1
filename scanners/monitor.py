@@ -364,14 +364,35 @@ def get_ip_type(ip: str) -> str:
     try: return "PRIVADO" if ipaddress.ip_address(ip).is_private else "PUBLICO"
     except Exception: return "DESCONHECIDO"
 
+def _load_known_asn() -> dict:
+    """ASN já resolvido e persistido no banco. Enriquecimento estático (ASN/org NÃO muda):
+    reusa p/ não re-buscar e, sobretudo, p/ não rebaixar a 'desconhecido' quando a API
+    falha ou a rede cai no momento do scan."""
+    known: dict[str, str] = {}
+    try:
+        conn = sqlite3.connect(DATABASE_FILE)
+        for ip, asn in conn.execute(
+                "SELECT ip, asn FROM scans WHERE asn NOT IN ('', 'ASN desconhecido', 'REDE PRIVADA')"):
+            if ip and asn:
+                known[ip] = asn
+        conn.close()
+    except Exception:
+        pass
+    return known
+
 def resolve_asn_bulk(results: list[dict]) -> None:
+    known = _load_known_asn()
     ip_indices: dict[str, list[int]] = {}
     for idx, r in enumerate(results):
         if r.get("ip_type") == "PUBLICO" and r.get("asn") == "ASN desconhecido":
-            ip_indices.setdefault(r["ip"], []).append(idx)
+            k = known.get(r["ip"])
+            if k:                       # já no banco — reusa, não re-busca
+                r["asn"] = k
+            else:
+                ip_indices.setdefault(r["ip"], []).append(idx)
     unique_ips = list(ip_indices.keys())
     if not unique_ips: return
-    print(f"[ASN] Resolvendo {len(unique_ips)} IPs únicos...")
+    print(f"[ASN] Resolvendo {len(unique_ips)} IPs novos...")
     cache: dict[str, str] = {}
     for i in range(0, len(unique_ips), ASN_BATCH_SIZE):
         batch = unique_ips[i:i+ASN_BATCH_SIZE]
@@ -391,6 +412,8 @@ def resolve_asn_bulk(results: list[dict]) -> None:
             except Exception: pass
     for ip, indices in ip_indices.items():
         resolved = cache.get(ip, "ASN desconhecido")
+        if resolved == "ASN desconhecido":
+            continue                    # falhou e é IP novo — mantém 'desconhecido', nunca rebaixa um bom
         for idx in indices: results[idx]["asn"] = resolved
 
 # ============================================================

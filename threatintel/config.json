@@ -1,6 +1,6 @@
 {
     "abuseipdb_api_key": "SUA_API_KEY_AQUI",
-    "cache_ttl_hours": 48,
+    "cache_ttl_hours": 168,
     "request_timeout": 15,
     "daily_request_limit": 1000,
     "abuse_score_alto": 50,

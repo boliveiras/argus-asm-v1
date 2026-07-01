@@ -374,14 +374,34 @@ async def _single_asn_ipinfo(session: aiohttp.ClientSession, ip: str) -> str:
         except Exception: continue
     return "ASN desconhecido"
 
+def _load_known_asn() -> dict:
+    """ASN já resolvido e persistido no banco. Enriquecimento estático (ASN/org NÃO muda):
+    reusa p/ não re-buscar e p/ não rebaixar a 'desconhecido' quando a API/rede cai no scan."""
+    known: dict[str, str] = {}
+    try:
+        conn = sqlite3.connect(DATABASE_FILE)
+        for ip, asn in conn.execute(
+                "SELECT ip, asn FROM subdomains WHERE asn NOT IN ('', 'ASN desconhecido', 'REDE PRIVADA')"):
+            if ip and asn:
+                known[ip] = asn
+        conn.close()
+    except Exception:
+        pass
+    return known
+
 async def resolve_asn_bulk(session: aiohttp.ClientSession, results: list[dict]) -> None:
+    known = _load_known_asn()
     ip_indices: dict[str, list[int]] = {}
     for idx, r in enumerate(results):
         if r.get("ip_type") == "PUBLICO" and r.get("asn") == "ASN desconhecido":
-            ip_indices.setdefault(r["ip"], []).append(idx)
+            k = known.get(r["ip"])
+            if k:                       # já no banco — reusa, não re-busca
+                r["asn"] = k
+            else:
+                ip_indices.setdefault(r["ip"], []).append(idx)
     unique_ips = list(ip_indices.keys())
     if not unique_ips: return
-    print(f"[ASN] Resolvendo {len(unique_ips)} IPs únicos...")
+    print(f"[ASN] Resolvendo {len(unique_ips)} IPs novos...")
     asn_cache: dict[str, str] = {}
     for i in range(0, len(unique_ips), ASN_BATCH_SIZE):
         asn_cache.update(await _batch_asn_ipapi(session, unique_ips[i:i+ASN_BATCH_SIZE]))
@@ -394,6 +414,8 @@ async def resolve_asn_bulk(session: aiohttp.ClientSession, results: list[dict]) 
         await asyncio.gather(*[fallback(ip) for ip in failed])
     for ip, indices in ip_indices.items():
         resolved = asn_cache.get(ip, "ASN desconhecido")
+        if resolved == "ASN desconhecido":
+            continue                    # falhou e é IP novo — mantém 'desconhecido', nunca rebaixa um bom
         for idx in indices: results[idx]["asn"] = resolved
 
 # ============================================================
