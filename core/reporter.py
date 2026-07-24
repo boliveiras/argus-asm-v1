@@ -1094,7 +1094,12 @@ function initColMenu(){
   var ths=document.querySelectorAll('.tbl-wrap thead th');
   var body=document.getElementById('colmenu-body');
   if(!ths.length||!body) return;
-  var hidden=[]; try{ hidden=JSON.parse(localStorage.getItem(_colKey())||'[]')||[]; }catch(e){ hidden=[]; }
+  // Sem preferência salva: mostra as ESSENCIAIS e oculta as adicionais (th[data-opt="1"]).
+  // Com preferência salva (mesmo vazia): respeita a escolha do usuário.
+  var saved=null; try{ saved=JSON.parse(localStorage.getItem(_colKey())); }catch(e){}
+  var hidden;
+  if(saved&&saved.forEach){ hidden=saved; }
+  else { hidden=[]; ths.forEach(function(th,i){ if(th.getAttribute('data-opt')==='1') hidden.push(i); }); }
   body.innerHTML='';
   ths.forEach(function(th,i){
     var label=th.textContent.replace(/[⇅↑↓▲▼]/g,'').replace(/\s+/g,' ').trim()||('Coluna '+(i+1));
@@ -1353,15 +1358,24 @@ def generate_monitor_report(
 <div class="tbl-wrap">
 <table>
   <thead><tr>
-    <th onclick="doSort('ip')"            >IP      <span class="si" id="si-ip"            >&#x21C5;</span></th>
-    <th onclick="doSort('ip_type')"       >Tipo    <span class="si" id="si-ip_type"       >&#x21C5;</span></th>
-    <th onclick="doSort('port')"          >Porta   <span class="si" id="si-port"          >&#x21C5;</span></th>
-    <th onclick="doSort('protocol')"      >Proto   <span class="si" id="si-protocol"      >&#x21C5;</span></th>
-    <th onclick="doSort('service')"       >Serviço <span class="si" id="si-service"       >&#x21C5;</span></th>
-    <th onclick="doSort('asn')"           >ASN     <span class="si" id="si-asn"           >&#x21C5;</span></th>
-    <th onclick="doSort('abuse_country')" >País    <span class="si" id="si-abuse_country" >&#x21C5;</span></th>
-    <th onclick="doSort('risk')"          >Risco   <span class="si" id="si-risk"          >&#x21C5;</span></th>
-    <th onclick="doSort('abuse_score')"   >Abuso   <span class="si" id="si-abuse_score"   >&#x21C5;</span></th>
+    <th data-col="ip"            data-essential="1" onclick="doSort('ip')"            >IP      <span class="si" id="si-ip"            >&#x21C5;</span></th>
+    <th data-col="ip_type"       data-essential="1" onclick="doSort('ip_type')"       >Tipo    <span class="si" id="si-ip_type"       >&#x21C5;</span></th>
+    <th data-col="port"          data-essential="1" onclick="doSort('port')"          >Porta   <span class="si" id="si-port"          >&#x21C5;</span></th>
+    <th data-col="protocol"      data-essential="1" onclick="doSort('protocol')"      >Proto   <span class="si" id="si-protocol"      >&#x21C5;</span></th>
+    <th data-col="service"       data-essential="1" onclick="doSort('service')"       >Serviço <span class="si" id="si-service"       >&#x21C5;</span></th>
+    <th data-col="asn"           data-essential="1" onclick="doSort('asn')"           >ASN     <span class="si" id="si-asn"           >&#x21C5;</span></th>
+    <th data-col="abuse_country" data-essential="1" onclick="doSort('abuse_country')" >País    <span class="si" id="si-abuse_country" >&#x21C5;</span></th>
+    <th data-col="risk"          data-essential="1" onclick="doSort('risk')"          >Risco   <span class="si" id="si-risk"          >&#x21C5;</span></th>
+    <th data-col="abuse_score"   data-essential="1" onclick="doSort('abuse_score')"   >Abuso   <span class="si" id="si-abuse_score"   >&#x21C5;</span></th>
+    <th data-col="campanha"      data-opt="1" onclick="doSort('campanha')"      >Campanha <span class="si" id="si-campanha"      >&#x21C5;</span></th>
+    <th data-col="target"        data-opt="1" onclick="doSort('target')"        >Alvo     <span class="si" id="si-target"        >&#x21C5;</span></th>
+    <th data-col="banner"        data-opt="1" >Banner</th>
+    <th data-col="idb_vulns"     data-opt="1" onclick="doSort('idb_vulns')"     >CVEs     <span class="si" id="si-idb_vulns"     >&#x21C5;</span></th>
+    <th data-col="status"        data-opt="1" onclick="doSort('status')"        >Status   <span class="si" id="si-status"        >&#x21C5;</span></th>
+    <th data-col="ack_reason"    data-opt="1" >Motivo</th>
+    <th data-col="abuse_isp"     data-opt="1" onclick="doSort('abuse_isp')"     >ISP      <span class="si" id="si-abuse_isp"     >&#x21C5;</span></th>
+    <th data-col="abuse_reports" data-opt="1" onclick="doSort('abuse_reports')" >Reports  <span class="si" id="si-abuse_reports" >&#x21C5;</span></th>
+    <th data-col="abuse_last"    data-opt="1" onclick="doSort('abuse_last')"    >Últ. Reporte <span class="si" id="si-abuse_last" >&#x21C5;</span></th>
   </tr></thead>
   <tbody id="tbody"></tbody>
 </table>
@@ -1470,15 +1484,24 @@ function render(){{
       ?`<span class="cve-badge" title="${{esc(cveTitle)}}${{(idb.vulns||[]).length<vc?' …':''}}">${{vc}} CVE${{vc>1?'s':''}}</span>`+cvssBadge+kevBadge
       :'<span class="ssl-none">&#8212;</span>';
     html+=`<tr class="r-${{esc(r.risk)}}${{r.status==='RECONHECIDO'?' ack':''}}">
-      <td><code>${{esc(r.ip)}}</code></td>
-      <td><span class="ip-${{esc(r.ip_type)}}">${{esc(r.ip_type)}}</span></td>
-      <td><b>${{esc(r.port)}}</b></td>
-      <td>${{esc(r.protocol)}}</td>
-      <td>${{esc(r.service)}}</td>
-      <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${{esc(r.asn)}}">${{esc(r.asn)}}</td>
-      <td>${{esc(ab.country||'')}}</td>
-      <td class="risk-${{esc(r.risk)}}">${{esc(r.risk)}}</td>
-      <td><span class="${{scoreClass(score)}}">${{scoreLabel(score)}}</span>${{torBadge}}</td>
+      <td data-col="ip"><code>${{esc(r.ip)}}</code></td>
+      <td data-col="ip_type"><span class="ip-${{esc(r.ip_type)}}">${{esc(r.ip_type)}}</span></td>
+      <td data-col="port"><b>${{esc(r.port)}}</b></td>
+      <td data-col="protocol">${{esc(r.protocol)}}</td>
+      <td data-col="service">${{esc(r.service)}}</td>
+      <td data-col="asn" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${{esc(r.asn)}}">${{esc(r.asn)}}</td>
+      <td data-col="abuse_country">${{esc(ab.country||'')}}</td>
+      <td data-col="risk" class="risk-${{esc(r.risk)}}">${{esc(r.risk)}}</td>
+      <td data-col="abuse_score"><span class="${{scoreClass(score)}}">${{scoreLabel(score)}}</span>${{torBadge}}</td>
+      <td data-col="campanha">${{esc(r.campanha||'')}}</td>
+      <td data-col="target">${{esc(r.target||'')}}</td>
+      <td data-col="banner" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${{esc(r.banner||'')}}">${{esc(r.banner||'')}}</td>
+      <td data-col="idb_vulns">${{cveCell}}</td>
+      <td data-col="status">${{esc(r.status||'')}}</td>
+      <td data-col="ack_reason" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${{esc(ackR)}}">${{esc(ackR)}}</td>
+      <td data-col="abuse_isp">${{esc(ab.isp||'')}}</td>
+      <td data-col="abuse_reports">${{esc(ab.total_reports!==undefined&&ab.total_reports>=0?ab.total_reports:'')}}</td>
+      <td data-col="abuse_last">${{esc(lastRpt)}}</td>
     </tr>`;
   }});
   tbody.innerHTML=html;
@@ -1748,14 +1771,29 @@ def generate_submonitor_report(
 <div class="tbl-wrap">
 <table>
   <thead><tr>
-    <th onclick="doSort('campanha')"        >Campanha <span class="si" id="si-campanha"       >&#x21C5;</span></th>
-    <th onclick="doSort('hostname')"        >Hostname <span class="si" id="si-hostname"       >&#x21C5;</span></th>
-    <th onclick="doSort('ip')"              >IP       <span class="si" id="si-ip"             >&#x21C5;</span></th>
-    <th onclick="doSort('asn')"             >ASN      <span class="si" id="si-asn"            >&#x21C5;</span></th>
-    <th onclick="doSort('http_status')"     >HTTP     <span class="si" id="si-http_status"    >&#x21C5;</span></th>
-    <th onclick="doSort('origem')"          >Origem   <span class="si" id="si-origem"         >&#x21C5;</span></th>
-    <th onclick="doSort('risk')"            >Risco    <span class="si" id="si-risk"           >&#x21C5;</span></th>
-    <th onclick="doSort('status')"          >Status   <span class="si" id="si-status"         >&#x21C5;</span></th>
+    <th data-col="campanha"    data-essential="1" onclick="doSort('campanha')"    >Campanha <span class="si" id="si-campanha"    >&#x21C5;</span></th>
+    <th data-col="hostname"    data-essential="1" onclick="doSort('hostname')"    >Hostname <span class="si" id="si-hostname"    >&#x21C5;</span></th>
+    <th data-col="ip"          data-essential="1" onclick="doSort('ip')"          >IP       <span class="si" id="si-ip"          >&#x21C5;</span></th>
+    <th data-col="asn"         data-essential="1" onclick="doSort('asn')"         >ASN      <span class="si" id="si-asn"         >&#x21C5;</span></th>
+    <th data-col="http_status" data-essential="1" onclick="doSort('http_status')" >HTTP     <span class="si" id="si-http_status" >&#x21C5;</span></th>
+    <th data-col="origem"      data-essential="1" onclick="doSort('origem')"      >Origem   <span class="si" id="si-origem"      >&#x21C5;</span></th>
+    <th data-col="risk"        data-essential="1" onclick="doSort('risk')"        >Risco    <span class="si" id="si-risk"        >&#x21C5;</span></th>
+    <th data-col="status"      data-essential="1" onclick="doSort('status')"      >Status   <span class="si" id="si-status"      >&#x21C5;</span></th>
+    <th data-col="ip_type"        data-opt="1" onclick="doSort('ip_type')"        >Tipo         <span class="si" id="si-ip_type"        >&#x21C5;</span></th>
+    <th data-col="abuse_score"    data-opt="1" onclick="doSort('abuse_score')"    >Abuso        <span class="si" id="si-abuse_score"    >&#x21C5;</span></th>
+    <th data-col="abuse_country"  data-opt="1" onclick="doSort('abuse_country')"  >País         <span class="si" id="si-abuse_country"  >&#x21C5;</span></th>
+    <th data-col="abuse_isp"      data-opt="1" onclick="doSort('abuse_isp')"      >ISP          <span class="si" id="si-abuse_isp"      >&#x21C5;</span></th>
+    <th data-col="idb_vulns"      data-opt="1" onclick="doSort('idb_vulns')"      >CVEs         <span class="si" id="si-idb_vulns"      >&#x21C5;</span></th>
+    <th data-col="dnssec"         data-opt="1" onclick="doSort('dnssec')"         >DNSSEC       <span class="si" id="si-dnssec"         >&#x21C5;</span></th>
+    <th data-col="ssl_status"     data-opt="1" onclick="doSort('ssl_status')"     >Cert SSL     <span class="si" id="si-ssl_status"     >&#x21C5;</span></th>
+    <th data-col="ssl_expiry"     data-opt="1" onclick="doSort('ssl_expiry')"     >Validade SSL <span class="si" id="si-ssl_expiry"     >&#x21C5;</span></th>
+    <th data-col="urlscan_seen"   data-opt="1" onclick="doSort('urlscan_seen')"   >urlscan      <span class="si" id="si-urlscan_seen"   >&#x21C5;</span></th>
+    <th data-col="whois_status"   data-opt="1" onclick="doSort('whois_status')"   >Domínio      <span class="si" id="si-whois_status"   >&#x21C5;</span></th>
+    <th data-col="whois_age_days" data-opt="1" onclick="doSort('whois_age_days')" >Idade (d)    <span class="si" id="si-whois_age_days" >&#x21C5;</span></th>
+    <th data-col="whois_creation" data-opt="1" onclick="doSort('whois_creation')" >Registro     <span class="si" id="si-whois_creation" >&#x21C5;</span></th>
+    <th data-col="whois_expiry"   data-opt="1" onclick="doSort('whois_expiry')"   >Expira       <span class="si" id="si-whois_expiry"   >&#x21C5;</span></th>
+    <th data-col="whois_registrar" data-opt="1" onclick="doSort('whois_registrar')" >Registrar  <span class="si" id="si-whois_registrar" >&#x21C5;</span></th>
+    <th data-col="ack_reason"     data-opt="1" >Motivo</th>
   </tr></thead>
   <tbody id="tbody"></tbody>
 </table>
@@ -1902,14 +1940,29 @@ function render(){{
       ?`<span class="cve-badge" title="${{esc(cveTitle)}}">${{vc}} CVE${{vc>1?'s':''}}</span>`+cvssBadge+kevBadge
       :'<span class="ssl-none">&#8212;</span>';
     html+=`<tr class="r-${{esc(r.risk)}}${{r.status==='RECONHECIDO'?' ack':''}}">
-      <td><span class="camp-badge">${{esc(r.campanha)}}</span></td>
-      <td style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${{esc(r.hostname)}}">${{esc(r.hostname)}}</td>
-      <td><code>${{esc(r.ip)}}</code></td>
-      <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${{esc(r.asn)}}">${{esc(r.asn)}}</td>
-      <td>${{esc(r.http_status)}}</td>
-      <td>${{origemBadge}}</td>
-      <td class="risk-${{esc(r.risk)}}">${{esc(r.risk)}}</td>
-      <td><span class="status-${{esc(r.status)}}" title="${{esc(ackR)}}">${{esc(r.status)}}</span></td>
+      <td data-col="campanha"><span class="camp-badge">${{esc(r.campanha)}}</span></td>
+      <td data-col="hostname" style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${{esc(r.hostname)}}">${{esc(r.hostname)}}</td>
+      <td data-col="ip"><code>${{esc(r.ip)}}</code></td>
+      <td data-col="asn" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${{esc(r.asn)}}">${{esc(r.asn)}}</td>
+      <td data-col="http_status">${{esc(r.http_status)}}</td>
+      <td data-col="origem">${{origemBadge}}</td>
+      <td data-col="risk" class="risk-${{esc(r.risk)}}">${{esc(r.risk)}}</td>
+      <td data-col="status"><span class="status-${{esc(r.status)}}" title="${{esc(ackR)}}">${{esc(r.status)}}</span></td>
+      <td data-col="ip_type"><span class="ip-${{esc(r.ip_type)}}">${{esc(r.ip_type)}}</span></td>
+      <td data-col="abuse_score"><span class="${{scoreClass(score)}}">${{scoreLabel(score)}}</span>${{torBadge}}</td>
+      <td data-col="abuse_country">${{esc(ab.country||'')}}</td>
+      <td data-col="abuse_isp">${{esc(ab.isp||'')}}</td>
+      <td data-col="idb_vulns">${{cveCell}}</td>
+      <td data-col="dnssec">${{dnssecBadge}}</td>
+      <td data-col="ssl_status">${{sslBadge}}</td>
+      <td data-col="ssl_expiry">${{esc(r.ssl_expiry||'')}}</td>
+      <td data-col="urlscan_seen">${{usCell}}</td>
+      <td data-col="whois_status">${{whoisBadge}}</td>
+      <td data-col="whois_age_days">${{esc(ageVal)}}</td>
+      <td data-col="whois_creation">${{esc(r.whois_creation||'')}}</td>
+      <td data-col="whois_expiry">${{esc(r.whois_expiry||'')}}</td>
+      <td data-col="whois_registrar" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${{esc(r.whois_registrar||'')}}">${{esc(r.whois_registrar||'')}}</td>
+      <td data-col="ack_reason" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${{esc(ackR)}}">${{esc(ackR)}}</td>
     </tr>`;
   }});
   tbody.innerHTML=html;
@@ -2121,14 +2174,14 @@ def generate_credentials_report(
     <th onclick="doSort('campanha')"     >Campanha     <span class="si" id="si-campanha"     >&#x21C5;</span></th>
     <th onclick="doSort('domain')"       >Domínio      <span class="si" id="si-domain"       >&#x21C5;</span></th>
     <th onclick="doSort('risk')"         >Risco        <span class="si" id="si-risk"         >&#x21C5;</span></th>
-    <th onclick="doSort('employees')"    >Funcionários <span class="si" id="si-employees"    >&#x21C5;</span></th>
-    <th onclick="doSort('users')"        >Usuários     <span class="si" id="si-users"        >&#x21C5;</span></th>
-    <th onclick="doSort('third_parties')">Terceiros    <span class="si" id="si-third_parties">&#x21C5;</span></th>
+    <th data-opt="1" onclick="doSort('employees')"    >Funcionários <span class="si" id="si-employees"    >&#x21C5;</span></th>
+    <th data-opt="1" onclick="doSort('users')"        >Usuários     <span class="si" id="si-users"        >&#x21C5;</span></th>
+    <th data-opt="1" onclick="doSort('third_parties')">Terceiros    <span class="si" id="si-third_parties">&#x21C5;</span></th>
     <th onclick="doSort('total')"        >Total        <span class="si" id="si-total"        >&#x21C5;</span></th>
-    <th>Apps expostas (top)</th>
+    <th data-opt="1">Apps expostas (top)</th>
     <th onclick="doSort('status')"       >Status       <span class="si" id="si-status"       >&#x21C5;</span></th>
-    <th onclick="doSort('ack_reason')"   >Motivo       <span class="si" id="si-ack_reason"   >&#x21C5;</span></th>
-    <th>Origem</th>
+    <th data-opt="1" onclick="doSort('ack_reason')"   >Motivo       <span class="si" id="si-ack_reason"   >&#x21C5;</span></th>
+    <th data-opt="1">Origem</th>
   </tr></thead>
   <tbody id="tbody"></tbody>
 </table>
@@ -2418,14 +2471,14 @@ def generate_email_report(
   <thead><tr>
     <th onclick="doSort('campanha')"     >Campanha     <span class="si" id="si-campanha"    >&#x21C5;</span></th>
     <th onclick="doSort('domain')"       >Domínio      <span class="si" id="si-domain"      >&#x21C5;</span></th>
-    <th onclick="doSort('has_mx')"       >MX           <span class="si" id="si-has_mx"      >&#x21C5;</span></th>
+    <th data-opt="1" onclick="doSort('has_mx')"       >MX           <span class="si" id="si-has_mx"      >&#x21C5;</span></th>
     <th onclick="doSort('spf_status')"   >SPF          <span class="si" id="si-spf_status"  >&#x21C5;</span></th>
     <th onclick="doSort('dmarc_status')" >DMARC        <span class="si" id="si-dmarc_status">&#x21C5;</span></th>
-    <th onclick="doSort('dkim_status')"  >DKIM         <span class="si" id="si-dkim_status" >&#x21C5;</span></th>
+    <th data-opt="1" onclick="doSort('dkim_status')"  >DKIM         <span class="si" id="si-dkim_status" >&#x21C5;</span></th>
     <th onclick="doSort('risk')"         >Risco        <span class="si" id="si-risk"        >&#x21C5;</span></th>
     <th onclick="doSort('status')"       >Status       <span class="si" id="si-status"      >&#x21C5;</span></th>
-    <th onclick="doSort('ack_reason')"   >Motivo       <span class="si" id="si-ack_reason"  >&#x21C5;</span></th>
-    <th>Problemas</th>
+    <th data-opt="1" onclick="doSort('ack_reason')"   >Motivo       <span class="si" id="si-ack_reason"  >&#x21C5;</span></th>
+    <th data-opt="1">Problemas</th>
   </tr></thead>
   <tbody id="tbody"></tbody>
 </table>
@@ -2770,13 +2823,13 @@ def generate_typosquat_report(
     <th onclick="doSort('campanha')"    >Campanha     <span class="si" id="si-campanha"    >&#x21C5;</span></th>
     <th onclick="doSort('base_domain')" >Domínio-base <span class="si" id="si-base_domain" >&#x21C5;</span></th>
     <th onclick="doSort('domain')"      >Sósia        <span class="si" id="si-domain"      >&#x21C5;</span></th>
-    <th onclick="doSort('fuzzer')"      >Técnica      <span class="si" id="si-fuzzer"      >&#x21C5;</span></th>
-    <th onclick="doSort('ip')"          >IP           <span class="si" id="si-ip"          >&#x21C5;</span></th>
-    <th onclick="doSort('mx')"          >MX           <span class="si" id="si-mx"          >&#x21C5;</span></th>
-    <th onclick="doSort('whois_age_days')">Registro   <span class="si" id="si-whois_age_days">&#x21C5;</span></th>
+    <th data-opt="1" onclick="doSort('fuzzer')"      >Técnica      <span class="si" id="si-fuzzer"      >&#x21C5;</span></th>
+    <th data-opt="1" onclick="doSort('ip')"          >IP           <span class="si" id="si-ip"          >&#x21C5;</span></th>
+    <th data-opt="1" onclick="doSort('mx')"          >MX           <span class="si" id="si-mx"          >&#x21C5;</span></th>
+    <th data-opt="1" onclick="doSort('whois_age_days')">Registro   <span class="si" id="si-whois_age_days">&#x21C5;</span></th>
     <th onclick="doSort('risk')"        >Risco        <span class="si" id="si-risk"        >&#x21C5;</span></th>
     <th onclick="doSort('status')"      >Status       <span class="si" id="si-status"      >&#x21C5;</span></th>
-    <th onclick="doSort('ack_reason')"  >Motivo       <span class="si" id="si-ack_reason"  >&#x21C5;</span></th>
+    <th data-opt="1" onclick="doSort('ack_reason')"  >Motivo       <span class="si" id="si-ack_reason"  >&#x21C5;</span></th>
   </tr></thead>
   <tbody id="tbody"></tbody>
 </table>

@@ -428,6 +428,17 @@ def _fmt_duration(seconds: int) -> str:
     if m < 60: return f"{m}m {s:02d}s"
     h, m = divmod(m, 60); return f"{h}h {m:02d}m {s:02d}s"
 
+def _dns_healthy() -> bool:
+    """Pré-flight: a resolução de nomes está viva? Se não, o dnstwist acharia MENOS sósias
+    (resolução falha = 'não registrado') e o reconcile fecharia achados bons. Aborta em vez
+    de gerar falso negativo. Usa socket (stdlib) — não depende do dnstwist."""
+    for ctrl in ("cloudflare.com", "google.com", "microsoft.com"):
+        try:
+            socket.getaddrinfo(ctrl, None); return True
+        except OSError:
+            continue
+    return False
+
 def main():
     if "--install-cron" in sys.argv: setup_cron(); return
 
@@ -451,6 +462,15 @@ def main():
     print(f"[+] {len(campaigns)} campanha(s) | {total_domains} domínio(s)-base")
     syslog_init(len(campaigns), total_domains)
     print()
+
+    # Pré-flight de DNS: sem resolução de nomes o dnstwist retorna menos sósias e o reconcile
+    # fecharia achados bons (falso negativo). Aborta antes de tocar no banco.
+    if not _dns_healthy():
+        print("[ERRO] DNS indisponível — resolução de nomes fora. Scan ABORTADO "
+              "(o dnstwist acharia menos sósia e fecharia achados bons). Verifique a rede e rode de novo.")
+        try: syslog_error("preflight", RuntimeError("DNS indisponível no pré-flight"))
+        except Exception: pass
+        sys.exit(2)
 
     try:
         results: list[dict] = []

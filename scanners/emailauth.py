@@ -276,11 +276,17 @@ def _make_resolver() -> "dns.resolver.Resolver":
     r.lifetime = DNS_LIFETIME
     return r
 
+class DnsUnavailable(Exception):
+    """Falha TRANSITÓRIA de DNS (timeout / sem nameserver / rede fora) — distinta de
+    'registro ausente' (NXDOMAIN/NoAnswer). Evita tratar rede caída como 'sem SPF/MX'."""
+
 def _txt(resolver, name: str) -> list[str]:
     try:
         ans = resolver.resolve(name, "TXT")
-    except dns.exception.DNSException:
-        return []
+    except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
+        return []                                    # negativo autoritativo: registro realmente ausente
+    except dns.exception.DNSException as e:
+        raise DnsUnavailable(f"TXT {name}: {e.__class__.__name__}") from e   # timeout/sem-NS — NÃO é 'ausente'
     out = []
     for rr in ans:
         try:
@@ -292,9 +298,25 @@ def _txt(resolver, name: str) -> list[str]:
 def _mx(resolver, domain: str) -> list[str]:
     try:
         ans = resolver.resolve(domain, "MX")
-    except dns.exception.DNSException:
+    except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
         return []
+    except dns.exception.DNSException as e:
+        raise DnsUnavailable(f"MX {domain}: {e.__class__.__name__}") from e
     return sorted({str(r.exchange).rstrip(".") for r in ans if str(r.exchange).rstrip(".")})
+
+def _dns_healthy() -> bool:
+    """Pré-flight: o resolver resolve um nome de controle? Se não, a rede/DNS está fora e o
+    scan deve ABORTAR — senão marcaria TODOS os domínios como 'sem SPF/MX' (falso crítico
+    em massa) e ainda sobrescreveria dados bons no banco."""
+    r = _make_resolver()
+    for ctrl in ("cloudflare.com", "google.com", "microsoft.com"):
+        try:
+            r.resolve(ctrl, "A"); return True
+        except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
+            return True                              # respondeu de forma autoritativa → DNS vivo
+        except dns.exception.DNSException:
+            continue
+    return False
 
 
 def _analyze_spf(records: list[str]) -> dict:
@@ -390,12 +412,24 @@ def _score(has_mx: bool, spf: dict, dmarc: dict, dkim: dict) -> tuple[str, list[
 
 def check_domain(campanha: str, domain: str) -> dict:
     resolver = _make_resolver()
-    mx_hosts = _mx(resolver, domain)
+    try:
+        mx_hosts  = _mx(resolver, domain)
+        base_txt  = _txt(resolver, domain)
+        dmarc_txt = _txt(resolver, "_dmarc." + domain)
+        dkim      = _probe_dkim(resolver, domain)
+    except DnsUnavailable as e:
+        # DNS indisponível para ESTE domínio — não dá p/ afirmar 'sem SPF/MX'. Marca
+        # INDETERMINADO e risco INFO (não pontua) em vez de gerar um crítico falso.
+        return {
+            "campanha": campanha, "domain": domain, "has_mx": False, "mx": "",
+            "spf_status": "INDETERMINADO", "spf_raw": "",
+            "dmarc_status": "INDETERMINADO", "dmarc_raw": "", "dmarc_rua": False,
+            "dkim_status": "INDETERMINADO", "dkim_selector": "",
+            "risk": "INFO", "issues": [f"Coleta incompleta — DNS indisponível ({e})"],
+        }
     has_mx   = bool(mx_hosts)
-    base_txt = _txt(resolver, domain)
     spf      = _analyze_spf(base_txt)
-    dmarc    = _analyze_dmarc(_txt(resolver, "_dmarc." + domain))
-    dkim     = _probe_dkim(resolver, domain)
+    dmarc    = _analyze_dmarc(dmarc_txt)
     risk, issues = _score(has_mx, spf, dmarc, dkim)
     return {
         "campanha":      campanha,
@@ -536,6 +570,16 @@ def main():
     print(f"[+] {len(campaigns)} campanha(s) | {total_domains} domínio(s)")
     syslog_init(len(campaigns), total_domains)
     print()
+
+    # Pré-flight de DNS: se a resolução de nomes está fora, ABORTA antes de tocar no banco —
+    # senão TODOS os domínios sairiam como 'sem SPF/MX' (falso crítico) e sobrescreveriam dados bons.
+    if not _dns_healthy():
+        print("[ERRO] DNS indisponível — nenhum nome de controle resolveu. Scan ABORTADO "
+              "(evita marcar todos os domínios como 'sem SPF/MX' = falso crítico em massa). "
+              "Verifique a resolução de nomes / egress e rode novamente.")
+        try: syslog_error("preflight", RuntimeError("DNS indisponível no pré-flight"))
+        except Exception: pass
+        sys.exit(2)
 
     try:
         results = run_scan(campaigns)

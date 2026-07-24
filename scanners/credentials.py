@@ -381,6 +381,14 @@ def main():
 
     try:
         results = run_scan(campaigns)
+        # Fail-safe: se TODAS as consultas falharam (Hudson Rock/rede fora), aborta antes do
+        # process_results — senão fecharia/zeraria achados de credenciais bons (falso negativo).
+        if results and all(r.get("source") == "error" for r in results):
+            print("[ERRO] Hudson Rock indisponível — todas as consultas falharam (rede/API). "
+                  "Scan ABORTADO para não fechar achados bons. Verifique a rede e rode novamente.")
+            try: syslog_error("preflight", RuntimeError("Hudson Rock indisponível (todas as consultas falharam)"))
+            except Exception: pass
+            sys.exit(2)
         novos, reincidentes, removidos = process_results(results)
 
         # ── Store central de achados (argus.db) — ADITIVO ─────────

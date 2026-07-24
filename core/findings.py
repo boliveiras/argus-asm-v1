@@ -31,7 +31,9 @@ Conceitos (orthogonais, de propósito):
                 + `first_seen`/`last_seen`. É o ciclo de OBSERVAÇÃO.
   • triagem   → `status` (Novo → Em tratamento → Mitigado, ou Falso Positivo).
                 É o ciclo OPERACIONAL/humano e PERSISTE mesmo quando o ativo é
-                reobservado. O scanner marcar CORRIGIDO promove o achado a Mitigado.
+                reobservado. Mitigado/Falso-Positivo são decisão do ANALISTA — o
+                scanner NÃO promove a Mitigado (presença é só o flag `active`; um
+                CORRIGIDO por miss transitório não deve virar triagem humana).
 
 Banco: `argus.db` (store central). Os bancos de scan atuais NÃO são apagados —
 a migração faz backup e importa de forma idempotente e não-destrutiva.
@@ -647,13 +649,12 @@ def sync_findings(source: str, observed: list, *, key_of, severity_of,
                 details=(details_of(item) if details_of else None),
                 run_id=run_id, actor=actor)
         closed = repo.mark_absent(source, seen, key_predicate=scope_predicate, actor=actor)
-        # ACOPLAMENTO scan→achado: CORRIGIDO vira MITIGADO; RESSURGIDO reabre p/ NOVO.
-        if resurged:
-            rk = [key_of(it) for it in resurged]
-            repo.mark_resurged(source, [k for k in rk if k], actor=actor)
-        if corrected:
-            ck = [key_of(it) for it in corrected]
-            repo.mark_corrected(source, [k for k in ck if k], actor=actor)
+        # Presença é modelada SÓ pelo flag `active`: mark_absent fecha (active=0) o que
+        # sumiu — preservando a triagem — e upsert reabre (active=1) quando volta. O scanner
+        # marcar CORRIGIDO NÃO promove mais a MITIGADO (evitava a gangorra: miss transitório
+        # → auto-mitigado → RESSURGIDO → NOVO). MITIGADO/Falso-Positivo = só o analista.
+        # `corrected`/`resurged` seguem aceitos por compatibilidade, mas NÃO transicionam a triagem.
+        _ = (corrected, resurged)
         return len(seen), closed
     finally:
         repo.close()
