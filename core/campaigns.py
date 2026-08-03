@@ -303,8 +303,12 @@ def _migrate_history(scope: str, old: str, new: str, base: Path) -> int:
 
 
 # ── wordlist de subdomínios (submonitor/subs.txt) ────────────────────────────
-# Rótulo DNS (mesma regra do submonitor): "api", "dev-app", "www2" — NÃO é domínio.
-_LABEL_RE = re.compile(r"^(?!-)[A-Za-z0-9_-]{1,63}(?<!-)$")
+# Prefixo DNS: um rótulo ("api", "dev-app", "_domainkey") ou vários separados por
+# ponto ("abt.cleverdata" → abt.cleverdata.empresa.com.br). Wordlists reais trazem
+# muita entrada composta — recusá-las descartaria boa parte da lista.
+_DNS_LABEL = r"(?!-)[A-Za-z0-9_-]{1,63}(?<!-)"
+_LABEL_RE = re.compile(rf"^{_DNS_LABEL}(\.{_DNS_LABEL})*$")
+_WORD_MAXLEN = 200          # o prefixo + o domínio precisam caber no limite DNS (253)
 WORDLIST_MAX = 20000          # teto defensivo (a wordlist multiplica o custo do scan)
 
 
@@ -313,7 +317,8 @@ def wordlist_path(base: str | None = None) -> Path:
 
 
 def valid_word(value: str) -> bool:
-    return bool(_LABEL_RE.match((value or "").strip()))
+    v = (value or "").strip()
+    return len(v) <= _WORD_MAXLEN and bool(_LABEL_RE.match(v))
 
 
 def parse_words(raw) -> tuple[list[str], list[str]]:

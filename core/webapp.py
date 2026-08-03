@@ -61,6 +61,7 @@ except ImportError:                       # degrada com mensagem clara
 
 import campaigns as CAMP
 import findings as F
+import users as USERS
 
 try:
     import runner as RUN  # constantes da execução sob demanda (não executa nada no import)
@@ -492,6 +493,39 @@ def create_app():
     def _csrf_ok() -> bool:
         return request.headers.get("X-Requested-With") == "argus"
 
+    # ── Autorização (RBAC) ─────────────────────────────────────────────
+    # Guard GLOBAL: toda requisição de ESCRITA (POST) passa por aqui — inclusive
+    # rotas criadas no futuro. Fail-safe: quem não tem perfil de escrita é barrado
+    # antes de chegar ao handler, então esquecer a checagem numa rota nova não abre
+    # brecha. Leitura (GET) segue liberada a qualquer usuário autenticado.
+    _SELF_SERVICE = ("/api/me/password",)      # trocar a PRÓPRIA senha: qualquer perfil
+
+    @app.before_request
+    def _authorize():
+        if request.method != "POST":
+            return None
+        path = request.path.rstrip("/")
+        if path in _SELF_SERVICE:
+            return None
+        actor = _actor(request)
+        # Gestão de contas é exclusiva do administrador da instalação.
+        if path.startswith("/api/users"):
+            if not USERS.is_admin(actor):
+                _audit(request, "AUTHZ_DENY",
+                       f"ação negada: {actor or '?'} não é administrador ({path})",
+                       outcome="deny", action="rbac_admin_required")
+                return jsonify(ok=False,
+                               error="apenas o administrador pode gerenciar usuários"), 403
+            return None
+        if not USERS.can_write(actor):
+            _audit(request, "AUTHZ_DENY",
+                   f"ação negada: perfil somente leitura ({actor or '?'}) em {path}",
+                   outcome="deny", action="rbac_readonly")
+            return jsonify(ok=False,
+                           error="seu perfil é somente leitura — peça a um Master ou ao "
+                                 "administrador para executar esta ação"), 403
+        return None
+
     def _resolve(fid_or_prefix):
         repo = F.FindingRepository()
         try:
@@ -608,6 +642,109 @@ def create_app():
                f"campanha {scope}/{name} removida dos alvos (histórico preservado)",
                outcome="success", action="campaign_delete", obj=name, object_type="campaign")
         return jsonify(ok=True, **res)
+
+    # ── Contas e perfis (RBAC) ─────────────────────────────────────────
+    # Só o administrador da instalação gerencia contas (o guard global já barra os
+    # demais). Senhas trafegam apenas neste POST (HTTPS), viram hash bcrypt e nunca
+    # são registradas em log — a auditoria guarda só o nome do usuário afetado.
+
+    @app.get("/api/me")
+    def whoami():
+        """Perfil do usuário logado — a interface usa para esconder o que ele não pode fazer."""
+        actor = _actor(request)
+        role = USERS.role_of(actor)
+        return jsonify(ok=True, user=actor, role=role,
+                       role_label=USERS.ROLE_LABEL.get(role, role),
+                       can_write=USERS.can_write(actor), is_admin=USERS.is_admin(actor))
+
+    @app.get("/api/users")
+    def list_users_api():
+        if not USERS.is_admin(_actor(request)):
+            return jsonify(ok=False, error="apenas o administrador pode ver as contas"), 403
+        try:
+            return jsonify(ok=True, admin=USERS.admin_user(), users=USERS.list_users(),
+                           roles=[{"id": r, "label": USERS.ROLE_LABEL[r]} for r in USERS.ROLES])
+        except Exception as exc:
+            return jsonify(ok=False, error=str(exc)), 500
+
+    @app.post("/api/users")
+    def create_user_api():
+        if not _csrf_ok():
+            return jsonify(ok=False, error="CSRF: header ausente"), 403
+        data = request.get_json(silent=True) or {}
+        name = str(data.get("name", "")).strip()
+        try:
+            res = USERS.create_user(name, str(data.get("password", "")),
+                                    str(data.get("role", "")).lower(), now=_now_str())
+        except USERS.UserError as exc:
+            return jsonify(ok=False, error=str(exc)), 400
+        except OSError as exc:
+            return jsonify(ok=False, error=f"sem permissão para gravar as credenciais: {exc}"), 500
+        _audit(request, "USER_CREATE", f"conta {name} criada com perfil {res['role']}",
+               outcome="success", action="user_create", obj=name, object_type="user")
+        return jsonify(ok=True, user=res)
+
+    @app.post("/api/users/<name>")
+    def update_user_api(name):
+        if not _csrf_ok():
+            return jsonify(ok=False, error="CSRF: header ausente"), 403
+        data = request.get_json(silent=True) or {}
+        role = str(data.get("role", "") or "").lower()
+        password = str(data.get("password", "") or "")
+        if not role and not password:
+            return jsonify(ok=False, error="informe um novo perfil ou uma nova senha"), 400
+        try:
+            out = {}
+            if role:
+                out["role"] = USERS.set_role(name, role)
+                _audit(request, "USER_ROLE", f"perfil de {name} alterado para {role}",
+                       outcome="success", action="user_role", obj=name, object_type="user")
+            if password:
+                USERS.set_password(name, password)
+                out["password"] = True
+                _audit(request, "USER_PASSWORD", f"senha de {name} redefinida pelo administrador",
+                       outcome="success", action="user_password", obj=name, object_type="user")
+        except USERS.UserError as exc:
+            return jsonify(ok=False, error=str(exc)), 400
+        except OSError as exc:
+            return jsonify(ok=False, error=f"sem permissão para gravar as credenciais: {exc}"), 500
+        return jsonify(ok=True, **out)
+
+    @app.post("/api/users/<name>/delete")
+    def delete_user_api(name):
+        if not _csrf_ok():
+            return jsonify(ok=False, error="CSRF: header ausente"), 403
+        try:
+            res = USERS.delete_user(name)
+        except USERS.UserError as exc:
+            return jsonify(ok=False, error=str(exc)), 400
+        except OSError as exc:
+            return jsonify(ok=False, error=f"sem permissão para gravar as credenciais: {exc}"), 500
+        _audit(request, "USER_DELETE", f"conta {name} removida",
+               outcome="success", action="user_delete", obj=name, object_type="user")
+        return jsonify(ok=True, **res)
+
+    @app.post("/api/me/password")
+    def change_own_password_api():
+        """Troca da PRÓPRIA senha — liberada a qualquer perfil, exige a senha atual."""
+        if not _csrf_ok():
+            return jsonify(ok=False, error="CSRF: header ausente"), 403
+        data = request.get_json(silent=True) or {}
+        actor = _actor(request)
+        if not actor:
+            return jsonify(ok=False, error="usuário não identificado"), 403
+        try:
+            USERS.change_own_password(actor, str(data.get("current", "")),
+                                      str(data.get("new", "")))
+        except USERS.UserError as exc:
+            _audit(request, "USER_PASSWORD_SELF", f"troca de senha recusada: {exc}",
+                   outcome="deny", action="user_password_self", obj=actor, object_type="user")
+            return jsonify(ok=False, error=str(exc)), 400
+        except OSError as exc:
+            return jsonify(ok=False, error=f"sem permissão para gravar as credenciais: {exc}"), 500
+        _audit(request, "USER_PASSWORD_SELF", "usuário trocou a própria senha",
+               outcome="success", action="user_password_self", obj=actor, object_type="user")
+        return jsonify(ok=True, updated=True)
 
     # ── Execução sob demanda (botão Play) ──────────────────────────────
     # A Web NÃO executa processo algum: apenas grava o arquivo de pedido. Um serviço

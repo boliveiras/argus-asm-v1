@@ -261,6 +261,14 @@ def _common_css() -> str:
   .btn-csv:hover { background:#036b4d; }
   .btn-clr { background:var(--surface); color:var(--muted); border-color:var(--border); }
 
+  /* RBAC: perfil somente leitura não vê controles de escrita (o servidor também recusa). */
+  body.ro-user [data-write] { display:none !important; }
+  .role-badge { font-size:11px; font-weight:700; letter-spacing:.4px; text-transform:uppercase;
+       padding:2px 8px; border-radius:999px; border:1px solid var(--border); color:var(--muted); }
+  .role-admin  { color:var(--accent);  border-color:var(--accent);  background:rgba(51,163,239,.10); }
+  .role-master { color:var(--green);   border-color:var(--green);   background:rgba(52,211,153,.10); }
+  .role-user   { color:var(--muted); }
+
   /* ── "Mais filtros" (agrupa filtros secundários) ────────── */
   .morefilters { position:relative; display:inline-block; }
   .morefilters > summary { list-style:none; cursor:pointer; padding:8px 13px; border-radius:var(--radius-sm);
@@ -693,6 +701,11 @@ _NAV_ICONS = {
     "campanhas":  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">'
                   '<circle cx="8" cy="8" r="5.6"/><circle cx="8" cy="8" r="2.2"/>'
                   '<path d="M8 .8v2.2M8 13v2.2M.8 8h2.2M13 8h2.2" stroke-linecap="round"/></svg>',
+    # Usuários — pessoa + contorno de grupo (contas e perfis de acesso)
+    "usuarios":   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">'
+                  '<circle cx="6.4" cy="5.4" r="2.6"/>'
+                  '<path d="M1.9 13.4c.5-2.4 2.3-3.8 4.5-3.8s4 1.4 4.5 3.8" stroke-linecap="round"/>'
+                  '<path d="M11.4 3.3a2.4 2.4 0 0 1 0 4.3M12.6 9.9c1.2.5 2 1.7 2.3 3.2" stroke-linecap="round"/></svg>',
 }
 
 
@@ -726,6 +739,7 @@ def _topbar(active: str) -> str:
         ("email",       "/email_report.html",       "E-mail"),
         ("typosquat",   "/typosquat_report.html",   "Typosquat"),
         ("campanhas",   "/campanhas.html",          "Campanhas"),
+        ("usuarios",    "/usuarios.html",           "Usuários"),
         ("risk",        "/risk-guide.html",         "Guia de Risco"),
     ]
     links = "".join(
@@ -1012,8 +1026,41 @@ def _exec_email(all_results: list) -> str:
 # JS UTILITÁRIOS COMPARTILHADOS
 # ============================================================
 
+# Bootstrap de RBAC compartilhado: injetado TANTO nos relatórios (via
+# _common_js_utils) QUANTO nas páginas do portal (via _portal_shell), para que a
+# adaptação por perfil valha na interface inteira.
+_RBAC_BOOT_JS = r"""
+// ── Perfil do usuário (RBAC) ──────────────────────────────────────────
+// Descobre o perfil logo no carregamento e adapta a interface: quem é somente
+// leitura não vê os controles de escrita ([data-write]), e o menu de Usuários só
+// aparece para o administrador. É conveniência de UX — quem manda é o servidor,
+// que recusa a ação de qualquer forma (defesa em profundidade).
+window.__ARGUS_ME = null;
+(function(){
+  function apply(me){
+    window.__ARGUS_ME = me;
+    var b = document.body; if(!b) return;
+    b.classList.toggle('ro-user', !(me && me.can_write));
+    b.classList.toggle('is-admin', !!(me && me.is_admin));
+    if(!(me && me.is_admin)){
+      var nav = document.querySelector('nav a[href="/usuarios.html"]');
+      if(nav) nav.style.display = 'none';
+    }
+    var tag = document.getElementById('me-badge');
+    if(tag && me && me.user) tag.textContent = me.user + ' · ' + (me.role_label || me.role || '');
+  }
+  function boot(){
+    fetch('/api/me',{cache:'no-store'}).then(function(r){return r.ok?r.json():null;})
+      .then(function(j){ if(j && j.ok) apply(j); })
+      .catch(function(){});   // sem backend: mantém a interface como está
+  }
+  if(document.readyState!=='loading') boot(); else document.addEventListener('DOMContentLoaded', boot);
+})();
+"""
+
+
 def _common_js_utils() -> str:
-    return r"""
+    return _RBAC_BOOT_JS + r"""
 function esc(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
@@ -1063,6 +1110,8 @@ function dl(name, text, mime){
 }
 function _today(){ return new Date().toISOString().slice(0,10); }
 function uniq(arr){ return [...new Set(arr.filter(Boolean))]; }
+
+// (o bootstrap de RBAC vive em _RBAC_BOOT_JS e é injetado em todas as páginas)
 
 // ── Badges de postura de e-mail (SPF/DMARC/DKIM/MX) ──
 function spfBadge(s){
@@ -2648,6 +2697,7 @@ def _portal_shell(active: str, title: str, subtitle: str, body: str,
     return (
         head + _topbar(active) + '\n<main class="wrap" id="conteudo">\n'
         + page_head + body + '\n' + _footer() + '\n</main>\n'
+        + '<script>' + _RBAC_BOOT_JS + '</script>\n'
         + extra_script + '\n</body>\n</html>\n'
     )
 
@@ -4380,8 +4430,8 @@ _CAMP_SCRIPT = r"""<script>
           +'<span class="badge">'+c.count+' '+esc(SCOPES[scope].unit)+(c.count===1?'':'s')+'</span></div>'
           +'<div class="camp-prev" title="'+esc(c.targets.join(', '))+'">'+preview+'</div>'
           +'<div class="camp-acts">'
-          +'<button class="btn btn-clr" type="button" onclick="__camp.edit(\''+esc(scope)+'\',\''+esc(c.name)+'\')">Editar</button>'
-          +'<button class="btn btn-del" type="button" onclick="__camp.del(\''+esc(scope)+'\',\''+esc(c.name)+'\')">Excluir</button>'
+          +'<button class="btn btn-clr" type="button" data-write="1" onclick="__camp.edit(\''+esc(scope)+'\',\''+esc(c.name)+'\')">Editar</button>'
+          +'<button class="btn btn-del" type="button" data-write="1" onclick="__camp.del(\''+esc(scope)+'\',\''+esc(c.name)+'\')">Excluir</button>'
           +'</div></div>';
       });
       host.innerHTML=h;
@@ -4543,7 +4593,7 @@ def build_campaigns_page() -> str:
             f'<h2>{_NAV_ICONS.get(scope, "")} {label} '
             f'<span class="badge" id="camp-count-{scope}">&mdash;</span></h2>'
             f'<p class="page-sub" style="margin:2px 0 12px">{desc}</p>'
-            f'<button class="btn btn-pdf" type="button" onclick="window.__camp&&window.__camp.novo(\'{scope}\')">'
+            f'<button class="btn btn-pdf" type="button" data-write="1" onclick="window.__camp&&window.__camp.novo(\'{scope}\')">'
             f'&#x2b; Nova campanha</button>'
             f'<div class="camp-grid" id="camp-list-{scope}" style="margin-top:12px"></div>'
             '</div>')
@@ -4604,7 +4654,7 @@ def build_campaigns_page() -> str:
         '<div class="panel panel-pad" style="margin-bottom:16px;border-left:3px solid var(--accent)">'
         '<h2>&#9654; Executar agora</h2>'
         '<div style="display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap">'
-        '<button class="btn btn-pdf" type="button" id="scan-btn" style="flex:none"'
+        '<button class="btn btn-pdf" type="button" id="scan-btn" data-write="1" style="flex:none"'
         ' onclick="window.__camp&&window.__camp.scanStart()">&#9654; Rodar todos os scans agora</button>'
         '<div id="scan-box" style="flex:1;min-width:280px"></div>'
         '</div></div>'
@@ -4651,7 +4701,7 @@ def build_campaigns_page() -> str:
           '<div id="wl-hint" class="page-sub" style="margin-top:7px;font-size:11.5px">Quanto maior a lista, mais '
           'completo <b>e mais demorado</b> o scan (cada prefixo vira uma consulta DNS por domínio).</div>'
           '<div style="display:flex;gap:8px;margin-top:12px">'
-          '<button class="btn btn-pdf" type="button" id="wl-save" onclick="window.__camp&&window.__camp.wlSave()">'
+          '<button class="btn btn-pdf" type="button" id="wl-save" data-write="1" onclick="window.__camp&&window.__camp.wlSave()">'
           'Salvar wordlist</button>'
           '<button class="btn btn-clr" type="button" onclick="window.__camp&&window.__camp.wlReload()">'
           'Descartar alterações</button>'
@@ -4666,6 +4716,198 @@ def build_campaigns_page() -> str:
         "campanhas", "Campanhas",
         "Cadastre e edite o escopo monitorado: alvos do monitor de portas (IP/CIDR) e do monitor de subdomínios (domínios)",
         body, extra_script=_CAMP_SCRIPT)
+
+
+_USERS_SCRIPT = r"""<script>
+(function(){
+  var ME=null, USERS=[], ROLES=[];
+  function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+  function show(id){['u-off','u-denied','u-main'].forEach(function(x){var e=document.getElementById(x);if(e)e.style.display=(x===id?'block':'none');});}
+  function msg(text,kind,box){
+    var b=document.getElementById(box||'u-msg'); if(!b)return;
+    if(!text){b.style.display='none';return;}
+    var col=kind==='err'?'var(--red)':'var(--green)';
+    b.style.display='block'; b.style.borderLeft='3px solid '+col;
+    b.innerHTML='<span style="color:'+col+';font-weight:700">'+(kind==='err'?'Erro':'Pronto')+'</span> &middot; '+esc(text);
+    if(kind!=='err') setTimeout(function(){b.style.display='none';},5000);
+  }
+  function api(url,opts){
+    opts=opts||{};
+    opts.headers=Object.assign({'Content-Type':'application/json','X-Requested-With':'argus'},opts.headers||{});
+    return fetch(url,opts).then(function(r){
+      return r.json().catch(function(){return {ok:false,error:'resposta inválida'};})
+        .then(function(j){ if(!r.ok||!j.ok) throw new Error(j.error||('HTTP '+r.status)); return j; });
+    });
+  }
+  function badge(role){
+    var cls=role==='admin'?'role-admin':(role==='master'?'role-master':'role-user');
+    var txt=role==='admin'?'Administrador':(role==='master'?'Master':'User');
+    return '<span class="role-badge '+cls+'">'+txt+'</span>';
+  }
+  function load(){
+    fetch('/api/me',{cache:'no-store'}).then(function(r){return r.json();}).then(function(me){
+      ME=me;
+      var self=document.getElementById('u-self-name');
+      if(self) self.textContent=me.user+' — '+(me.role_label||me.role);
+      if(!me.is_admin){ show('u-denied'); return; }
+      return api('/api/users',{cache:'no-store'}).then(function(j){
+        USERS=j.users||[]; ROLES=j.roles||[]; show('u-main'); render();
+      });
+    }).catch(function(){ show('u-off'); });
+  }
+  function render(){
+    var host=document.getElementById('u-list'); if(!host)return;
+    var sel=ROLES.map(function(r){return '<option value="'+esc(r.id)+'">'+esc(r.label)+'</option>';}).join('');
+    var h='<table><thead><tr><th scope="col">Usuário</th><th scope="col">Perfil</th>'
+         +'<th scope="col">Criado em</th><th scope="col">Ações</th></tr></thead><tbody>';
+    USERS.forEach(function(u){
+      h+='<tr><td><b>'+esc(u.name)+'</b>'+(u.is_admin?' <span class="page-sub" style="font-size:11px">(criado na instalação)</span>':'')+'</td>'
+        +'<td>'+badge(u.role)+'</td>'
+        +'<td class="page-sub" style="font-size:12px">'+esc(u.created||'—')+'</td><td>';
+      if(u.is_admin){
+        h+='<span class="page-sub" style="font-size:12px">gerenciado pelo servidor</span>';
+      } else {
+        h+='<select onchange="__u.role(\''+esc(u.name)+'\',this.value)" aria-label="Perfil de '+esc(u.name)+'">'
+          +sel.replace('value="'+esc(u.role)+'"','value="'+esc(u.role)+'" selected')+'</select> '
+          +'<button class="btn btn-clr" type="button" onclick="__u.reset(\''+esc(u.name)+'\')">Redefinir senha</button> '
+          +'<button class="btn btn-del" type="button" onclick="__u.del(\''+esc(u.name)+'\')">Excluir</button>';
+      }
+      h+='</td></tr>';
+    });
+    h+='</tbody></table>'; host.innerHTML=h;
+    var n=document.getElementById('u-count'); if(n) n.textContent=USERS.length;
+  }
+  function novo(){
+    var name=document.getElementById('u-new-name').value.trim();
+    var pw=document.getElementById('u-new-pw').value;
+    var role=document.getElementById('u-new-role').value;
+    if(!name){ msg('Informe o nome do usuário.','err'); return; }
+    api('/api/users',{method:'POST',body:JSON.stringify({name:name,password:pw,role:role})})
+      .then(function(j){
+        msg('Usuário "'+name+'" criado como '+(j.user.role_label||j.user.role)+'.');
+        document.getElementById('u-new-name').value=''; document.getElementById('u-new-pw').value='';
+        load();
+      }).catch(function(e){ msg(e.message,'err'); });
+  }
+  function role(name,value){
+    api('/api/users/'+encodeURIComponent(name),{method:'POST',body:JSON.stringify({role:value})})
+      .then(function(){ msg('Perfil de "'+name+'" atualizado.'); load(); })
+      .catch(function(e){ msg(e.message,'err'); load(); });
+  }
+  function reset(name){
+    var pw=window.prompt('Nova senha para "'+name+'" (mínimo 8 caracteres):');
+    if(pw===null) return;
+    api('/api/users/'+encodeURIComponent(name),{method:'POST',body:JSON.stringify({password:pw})})
+      .then(function(){ msg('Senha de "'+name+'" redefinida. Informe a nova senha ao usuário por um canal seguro.'); })
+      .catch(function(e){ msg(e.message,'err'); });
+  }
+  function del(name){
+    if(!window.confirm('Excluir o usuário "'+name+'"?\n\nEle perde o acesso imediatamente.')) return;
+    api('/api/users/'+encodeURIComponent(name)+'/delete',{method:'POST'})
+      .then(function(){ msg('Usuário "'+name+'" removido.'); load(); })
+      .catch(function(e){ msg(e.message,'err'); });
+  }
+  function trocarSenha(){
+    var cur=document.getElementById('u-cur-pw').value, nw=document.getElementById('u-new-pw2').value,
+        cf=document.getElementById('u-new-pw3').value;
+    if(nw!==cf){ msg('A confirmação não confere com a nova senha.','err','u-msg-self'); return; }
+    api('/api/me/password',{method:'POST',body:JSON.stringify({current:cur,new:nw})})
+      .then(function(){
+        msg('Sua senha foi alterada.', 'ok', 'u-msg-self');
+        ['u-cur-pw','u-new-pw2','u-new-pw3'].forEach(function(i){document.getElementById(i).value='';});
+      }).catch(function(e){ msg(e.message,'err','u-msg-self'); });
+  }
+  window.__u={novo:novo,role:role,reset:reset,del:del,senha:trocarSenha};
+  if(document.readyState!=='loading') load(); else document.addEventListener('DOMContentLoaded',load);
+})();
+</script>"""
+
+
+def build_users_page() -> str:
+    body = (
+        '<style>'
+        '#u-list table{width:100%}#u-list td,#u-list th{padding:9px 10px}'
+        '#u-list select{background:var(--bg);color:var(--text);border:1px solid var(--border);'
+        'border-radius:var(--radius-sm);padding:5px 8px;font-size:12.5px}'
+        '#u-list .btn{padding:5px 10px;font-size:12px}'
+        '.u-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;align-items:end}'
+        '.u-form label{display:block;font-size:12px;font-weight:600;color:var(--muted);margin:0 0 5px}'
+        '.u-form input,.u-form select{width:100%;background:var(--bg);color:var(--text);'
+        'border:1px solid var(--border);border-radius:var(--radius-sm);padding:9px 11px;font-size:13px}'
+        '.u-form input:focus,.u-form select:focus{border-color:var(--accent);outline:none;'
+        'box-shadow:0 0 0 3px rgba(51,163,239,.12)}'
+        '#u-msg,#u-msg-self{display:none;margin-bottom:14px;font-size:13px}'
+        '</style>'
+
+        '<div id="u-off" class="panel panel-pad" style="display:none;text-align:center;padding:40px 24px">'
+        '<div style="font-weight:700;font-size:15px;margin-bottom:6px">Gestão de usuários indisponível</div>'
+        '<div style="color:var(--muted);font-size:13px">Esta página depende do serviço <code>argus-web</code>. '
+        'Verifique com: <code>systemctl status argus-web</code>.</div></div>'
+
+        # Sem permissão: mostra só a troca da própria senha (todo perfil pode).
+        '<div id="u-denied" style="display:none">'
+        '<div class="panel panel-pad" style="border-left:3px solid var(--accent);margin-bottom:16px">'
+        '<div style="font-weight:700;font-size:15px;margin-bottom:4px">Acesso restrito ao administrador</div>'
+        '<div style="color:var(--muted);font-size:13px;line-height:1.6">A gestão de contas é exclusiva do '
+        'administrador definido na instalação. Você pode alterar a sua própria senha abaixo.</div></div>'
+        + _users_self_block() +
+        '</div>'
+
+        '<div id="u-main" style="display:none">'
+        '<div id="u-msg" class="panel panel-pad"></div>'
+
+        '<div class="panel panel-pad" style="margin-bottom:16px">'
+        f'<h2>{_NAV_ICONS.get("usuarios", "")} Novo usuário</h2>'
+        '<p class="page-sub" style="margin:2px 0 12px">O <b>Master</b> pode editar (campanhas, wordlist, '
+        'execução e triagem). O <b>User</b> apenas consulta. A gestão de contas fica só com você, '
+        'administrador.</p>'
+        '<div class="u-form">'
+        '<div><label for="u-new-name">Usuário</label>'
+        '<input id="u-new-name" type="text" maxlength="32" autocomplete="off" placeholder="ex.: ana.silva"></div>'
+        '<div><label for="u-new-pw">Senha inicial</label>'
+        '<input id="u-new-pw" type="password" autocomplete="new-password" placeholder="mínimo 8 caracteres"></div>'
+        '<div><label for="u-new-role">Perfil</label>'
+        '<select id="u-new-role"><option value="user">User (somente leitura)</option>'
+        '<option value="master">Master (leitura e edição)</option></select></div>'
+        '<div><button class="btn btn-pdf" type="button" onclick="window.__u&&window.__u.novo()">'
+        'Criar usuário</button></div>'
+        '</div></div>'
+
+        '<div class="panel panel-pad" style="margin-bottom:16px">'
+        '<h2>Contas <span class="badge"><span id="u-count">&mdash;</span></span></h2>'
+        '<div id="u-list" class="tbl-wrap"></div></div>'
+
+        + _users_self_block() +
+
+        '<p class="page-sub">As contas usam a mesma base de autenticação do login. A senha é gravada apenas '
+        'como <b>hash bcrypt</b> — nunca em texto claro. Toda criação, alteração de perfil, redefinição de '
+        'senha e exclusão fica registrada na trilha de auditoria.</p>'
+        '</div>'
+    )
+    return _portal_shell(
+        "usuarios", "Usuários",
+        "Contas de acesso e perfis: Master (leitura e edição) e User (somente leitura)",
+        body, extra_script=_USERS_SCRIPT)
+
+
+def _users_self_block() -> str:
+    """Bloco de troca da própria senha — disponível para qualquer perfil."""
+    return (
+        '<div class="panel panel-pad" style="margin-bottom:16px">'
+        '<h2>Minha senha</h2>'
+        '<p class="page-sub" style="margin:2px 0 12px">Conectado como <b id="u-self-name">&mdash;</b>. '
+        'Para trocar, informe a senha atual.</p>'
+        '<div id="u-msg-self"></div>'
+        '<div class="u-form">'
+        '<div><label for="u-cur-pw">Senha atual</label>'
+        '<input id="u-cur-pw" type="password" autocomplete="current-password"></div>'
+        '<div><label for="u-new-pw2">Nova senha</label>'
+        '<input id="u-new-pw2" type="password" autocomplete="new-password" placeholder="mínimo 8 caracteres"></div>'
+        '<div><label for="u-new-pw3">Confirmar nova senha</label>'
+        '<input id="u-new-pw3" type="password" autocomplete="new-password"></div>'
+        '<div><button class="btn btn-pdf" type="button" onclick="window.__u&&window.__u.senha()">'
+        'Alterar minha senha</button></div>'
+        '</div></div>')
 
 
 def build_login_page() -> str:
@@ -4795,6 +5037,7 @@ def write_portal(docroot: str) -> None:
     # Página de Correlação — lê os relatórios client-side; sempre regerada.
     (d / "correlacao.html").write_text(build_correlation_page(), encoding="utf-8")
     (d / "campanhas.html").write_text(build_campaigns_page(), encoding="utf-8")
+    (d / "usuarios.html").write_text(build_users_page(), encoding="utf-8")
     for name, active, label in [
         ("findings_report.html",    "findings",    "Gestão de Achados"),
         ("monitor_report.html",     "monitor",     "Monitor de Portas"),

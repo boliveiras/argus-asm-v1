@@ -294,13 +294,17 @@ def init_database():
 _HOSTNAME_RE = re.compile(
     r"^(?=.{1,253}$)(?!-)[A-Za-z0-9_-]{1,63}(?<!-)(\.(?!-)[A-Za-z0-9_-]{1,63}(?<!-))*$")
 _LABEL_RE = re.compile(r"^(?!-)[A-Za-z0-9_-]{1,63}(?<!-)$")
+# Prefixo de wordlist: um ou mais rótulos separados por ponto.
+_PREFIX_RE = re.compile(r"^(?!-)[A-Za-z0-9_-]{1,63}(?<!-)(\.(?!-)[A-Za-z0-9_-]{1,63}(?<!-))*$")
 
 def _valid_domain(s: str) -> bool:
     return bool(_HOSTNAME_RE.match(s))
 
 def _valid_sub(s: str) -> bool:
-    # entradas da wordlist são labels (ex.: "api", "dev-app"); aceita rótulo único
-    return bool(_LABEL_RE.match(s))
+    # Prefixo da wordlist: um rótulo ("api", "dev-app") OU vários separados por ponto
+    # ("abt.cleverdata" → abt.cleverdata.empresa.com.br). Wordlists públicas trazem
+    # muita entrada composta; aceitar só rótulo único descartaria boa parte da lista.
+    return len(s) <= 200 and bool(_PREFIX_RE.match(s))
 
 
 def load_campaigns() -> list[tuple[str, list[str]]]:

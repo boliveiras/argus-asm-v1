@@ -77,9 +77,11 @@ O Argus separa **o que o scanner vê** (STATUS, automático) de **o que o analis
 | **Mitigado** | resolvido. | aba **Tratado** (some dos painéis do scanner) |
 | **Falso positivo** | não é risco real. | aba **Tratado** (some dos painéis do scanner) |
 
-O único ponto onde os dois níveis se tocam: quando o scanner marca um item como
-**Corrigido**, o achado correspondente vira **Mitigado** automaticamente. O histórico fica
-sempre guardado.
+Os dois níveis **não se misturam**: o scanner nunca muda a sua triagem. Se um achado
+some de uma varredura, ele apenas deixa de ser observado — e volta a aparecer se
+reaparecer. **Mitigado e Falso positivo são decisão sua**, ninguém marca por você. Isso
+evita a gangorra clássica: uma falha de rede fazia o item "sumir", virar mitigado sozinho
+e voltar como novo na rodada seguinte. O histórico fica sempre guardado.
 
 ## Tudo conectado — o mapa de correlação
 
@@ -114,6 +116,41 @@ No exemplo, clicar no IP compartilhado revela a tabelinha de enriquecimento — 
 (ASN), reputação, portas abertas, CVE/KEV e nota CVSS — e fica claro que **dois serviços
 caem juntos** se aquele host for comprometido.
 
+O mapa também **inverte a leitura**: na visão **“Por IP”** o grafo fica
+`campanha → domínio → IP → subdomínios`, mostrando de cara **quais IPs concentram mais
+serviços** — é por onde começa quem quer priorizar infraestrutura. Dá para **filtrar por
+criticidade** (ver só o que é crítico e alto), **dar zoom** e, ao clicar num item, acender
+só ele e o que está ligado a ele — o resto esmaece.
+
+## Tudo pela web
+
+Depois de instalado, você não precisa mais editar arquivo no servidor para operar:
+
+| Na tela | O que dá para fazer |
+|---|---|
+| **Campanhas** | Cadastrar, editar, renomear e excluir os alvos — IPs/faixas (portas) e domínios (subdomínios). Renomear **leva o histórico junto**; excluir só tira do escopo e **preserva os achados**. |
+| **Wordlist** | Editar os prefixos usados na descoberta de subdomínios (`api`, `vpn`, `abt.cleverdata`…). Já vem com **100 prefixos** prontos e nunca aceita ficar vazia. |
+| **▶ Executar agora** | Roda a sequência completa na hora, sem esperar o agendamento, com **barra de progresso** etapa a etapa. Um de cada vez: enquanto roda, o botão fica travado. |
+| **Usuários** | Contas de acesso e perfis (veja abaixo). |
+
+### Quem pode o quê
+
+| Perfil | Pode |
+|---|---|
+| **Administrador** | é o usuário criado na instalação. Faz tudo, e é o **único** que gerencia contas. |
+| **Master** | leitura + edição: campanhas, wordlist, executar scans e triagem de achados. |
+| **User** | **somente leitura** — consulta tudo, não altera nada (os botões de edição nem aparecem). |
+
+Cada um troca a própria senha informando a atual; o administrador redefine a de qualquer
+um. As senhas são guardadas apenas como **hash bcrypt** e toda ação em contas fica na
+trilha de auditoria.
+
+### Relatórios do seu jeito
+
+As tabelas abrem com as **colunas essenciais** para a triagem. O resto do enriquecimento
+(ISP, CVEs, DNSSEC, SSL, WHOIS, reputação…) continua ali, a um clique em **Colunas** — e a
+sua escolha fica salva para as próximas visitas.
+
 ## Como instalar?
 
 No Debian/Ubuntu/**Kali**, como root:
@@ -124,8 +161,14 @@ cd argus-asm-v1
 sudo bash install.sh
 ```
 
-O instalador cuida do resto — dependências, comandos, agendamento e o portal web.
-Aí é só dizer **o que** monitorar e deixar trabalhar:
+O instalador cuida do resto — dependências, comandos, agendamento, o portal web e o
+usuário administrador (você define a senha na instalação).
+
+Aí é só abrir `https://<host>:8443`, entrar em **Campanhas**, cadastrar seus IPs e
+domínios e clicar em **▶ Rodar todos os scans agora**. Daí em diante ele roda sozinho
+todo dia.
+
+Se preferir o terminal, os alvos continuam sendo arquivos simples:
 
 ```bash
 sudo nano /etc/argus/monitor/targets/EMPRESA.txt      # seus IPs

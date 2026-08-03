@@ -201,6 +201,7 @@ copy_if_exists "core/findings.py"                     "$BASE_DIR/findings.py"
 copy_if_exists "core/webapp.py"                       "$BASE_DIR/webapp.py"
 copy_if_exists "core/campaigns.py"                    "$BASE_DIR/campaigns.py"
 copy_if_exists "core/runner.py"                       "$BASE_DIR/runner.py"
+copy_if_exists "core/users.py"                        "$BASE_DIR/users.py"
 copy_if_exists "core/logs.py"                         "$BASE_DIR/logs.py"
 copy_if_exists "argus-reset.sh"                       "$BASE_DIR/argus-reset.sh"
 copy_if_exists "scanners/monitor.py"                  "$MONITOR_DIR/monitor.py"
@@ -654,6 +655,20 @@ if [ "$INSTALL_APACHE" = true ]; then
   chown root:www-data "$HTPASSWD_FILE"
   ok "Autenticação HTTP configurada (usuário: $APACHE_USER)"
 
+  # Gestão de contas pela Web: o serviço precisa GRAVAR o htpasswd (criar/remover
+  # usuários e redefinir senhas). ACL restrita a este arquivo — o Apache segue dono.
+  setfacl -m "u:$APP_USER:rw" "$HTPASSWD_FILE" 2>/dev/null \
+    && ok "ACL: $APP_USER pode gerenciar contas (htpasswd)" \
+    || warn "setfacl indisponível — a gestão de usuários ficará somente leitura"
+  # bcrypt: hash das senhas criadas pela interface (o Apache valida bcrypt desde 2.4.4).
+  if ! "$PYTHON_BIN" -c "import bcrypt" 2>/dev/null; then
+    apt-get install -y python3-bcrypt >/dev/null 2>&1 \
+      && ok "python3-bcrypt instalado (hash das senhas)" \
+      || warn "python3-bcrypt ausente — instale com: apt install python3-bcrypt (senão a criação de usuários falha)"
+  else
+    ok "python3-bcrypt disponível"
+  fi
+
   # Passphrase para criptografar o cookie de sessão (mod_session_crypto).
   # Arquivo 640 root:www-data — fora do vhost (que é world-readable).
   SESSION_KEY_FILE="/etc/apache2/argus-session.key"
@@ -819,6 +834,8 @@ Environment=ARGUS_DB=$BASE_DIR/store/argus.db
 Environment=ARGUS_WEB_HOST=127.0.0.1
 Environment=ARGUS_WEB_PORT=8099
 Environment=ARGUS_AUDIT_LOG=$LOG_DIR_AUDIT/audit.log
+Environment=ARGUS_ADMIN_USER=$APACHE_USER
+Environment=ARGUS_HTPASSWD=$HTPASSWD_FILE
 ExecStart=$PYTHON_BIN $BASE_DIR/webapp.py
 Restart=on-failure
 RestartSec=3
@@ -830,7 +847,7 @@ ProtectHome=true
 # ProtectSystem=full deixa TODO o /etc somente-leitura para este serviço. Sem liberar
 # explicitamente os caminhos abaixo, a gestão de campanhas e a edição da wordlist pela
 # Web falham com "Read-only file system" — a ACL sozinha não basta (o systemd bloqueia antes).
-ReadWritePaths=$BASE_DIR/store $APACHE_DOCROOT $LOG_DIR_AUDIT $MONITOR_DIR/targets $SUBMONITOR_DIR/targets $SUBMONITOR_DIR/subs.txt
+ReadWritePaths=$BASE_DIR/store $APACHE_DOCROOT $LOG_DIR_AUDIT $MONITOR_DIR/targets $SUBMONITOR_DIR/targets $SUBMONITOR_DIR/subs.txt $HTPASSWD_FILE /etc/apache2
 
 [Install]
 WantedBy=multi-user.target
