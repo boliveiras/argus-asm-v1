@@ -479,6 +479,8 @@ def _common_css() -> str:
   .panel-pad h2 { font-size:14px; color:var(--accent); text-transform:uppercase; letter-spacing:.7px;
                   margin-bottom:14px; display:flex; align-items:center; gap:8px; }
   .panel-pad h2 .badge { margin-left:auto; }
+  /* Ícone do título: o SVG do nav não traz width/height — sem isto o flex estica ele. */
+  .panel-pad h2 > svg { width:16px; height:16px; flex:none; }
   .list-row { display:flex; align-items:flex-start; gap:12px; padding:11px 0; border-bottom:1px solid var(--border); }
   .list-row:last-child { border-bottom:none; }
   .list-row .ic2 { color:var(--muted); margin-top:1px; font-size:15px; }
@@ -687,6 +689,10 @@ _NAV_ICONS = {
                   '<circle cx="3.2" cy="8" r="1.8"/><circle cx="12.8" cy="3.4" r="1.8"/>'
                   '<circle cx="12.8" cy="12.6" r="1.8"/>'
                   '<path d="M4.8 7.1 11.2 4.1M4.8 8.9l6.4 3" stroke-linecap="round"/></svg>',
+    # Campanhas — alvo/mira: o escopo do que é monitorado
+    "campanhas":  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">'
+                  '<circle cx="8" cy="8" r="5.6"/><circle cx="8" cy="8" r="2.2"/>'
+                  '<path d="M8 .8v2.2M8 13v2.2M.8 8h2.2M13 8h2.2" stroke-linecap="round"/></svg>',
 }
 
 
@@ -719,6 +725,7 @@ def _topbar(active: str) -> str:
         ("credentials", "/credentials_report.html", "Credenciais"),
         ("email",       "/email_report.html",       "E-mail"),
         ("typosquat",   "/typosquat_report.html",   "Typosquat"),
+        ("campanhas",   "/campanhas.html",          "Campanhas"),
         ("risk",        "/risk-guide.html",         "Guia de Risco"),
     ]
     links = "".join(
@@ -4316,6 +4323,344 @@ def build_correlation_page() -> str:
         body, extra_script=_CORR_SCRIPT)
 
 
+# ============================================================
+# CAMPANHAS — CRUD dos alvos (targets/*.txt) pela Web
+# ============================================================
+
+_CAMP_SCRIPT = r"""<script>
+(function(){
+  var SCOPES={monitor:{label:'Monitor de Portas',unit:'IP/CIDR',
+                ph:'200.165.1.2\n10.0.0.0/24\n2001:db8::1',
+                hint:'Um IP ou faixa CIDR por linha (IPv4/IPv6).'},
+              submonitor:{label:'Monitor de Subdomínios',unit:'domínio',
+                ph:'empresa.com.br\noutromarca.com',
+                hint:'Um domínio por linha (sem http://). Os subdomínios são descobertos pelo scan.'}};
+  var DATA={}, editing=null;   // editing = {scope,name}|{scope,name:null} (novo)
+  function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+  function show(id){['camp-off','camp-main'].forEach(function(x){var e=document.getElementById(x);if(e)e.style.display=(x===id?'block':'none');});}
+  function msg(text,kind){
+    var b=document.getElementById('camp-msg'); if(!b)return;
+    if(!text){ b.style.display='none'; return; }
+    var col=kind==='err'?'var(--red)':'var(--green)';
+    b.style.display='block'; b.style.borderLeft='3px solid '+col;
+    b.innerHTML='<span style="color:'+col+';font-weight:700">'+(kind==='err'?'Erro':'Pronto')+'</span> &middot; '+esc(text);
+    if(kind!=='err') setTimeout(function(){ b.style.display='none'; },4000);
+  }
+  function api(url,opts){
+    opts=opts||{};
+    opts.headers=Object.assign({'Content-Type':'application/json','X-Requested-With':'argus'},opts.headers||{});
+    return fetch(url,opts).then(function(r){
+      return r.json().catch(function(){return {ok:false,error:'resposta inválida do servidor'};})
+        .then(function(j){ if(!r.ok||!j.ok) throw new Error(j.error||('HTTP '+r.status)); return j; });
+    });
+  }
+  function load(){
+    api('/api/campaigns',{cache:'no-store'}).then(function(j){
+      DATA=j.campaigns||{}; show('camp-main'); render(); wlLoad(); pollScan();
+    }).catch(function(){ show('camp-off'); });
+  }
+  function render(){
+    Object.keys(SCOPES).forEach(function(scope){
+      var host=document.getElementById('camp-list-'+scope); if(!host)return;
+      var list=(DATA[scope]||[]).slice().sort(function(a,b){return a.name.localeCompare(b.name);});
+      var cnt=document.getElementById('camp-count-'+scope); if(cnt) cnt.textContent=list.length;
+      if(!list.length){
+        host.innerHTML='<div class="camp-empty">Nenhuma campanha ainda. Clique em <b>+ Nova campanha</b> '
+          +'para cadastrar '+esc(SCOPES[scope].unit)+'(s) e o scan passa a cobri-los.</div>';
+        return;
+      }
+      var h='';
+      list.forEach(function(c){
+        var preview=c.targets.slice(0,3).map(esc).join(' · ')+(c.targets.length>3?(' · +'+(c.targets.length-3)):'');
+        h+='<div class="camp-card">'
+          +'<div class="camp-card-hd"><span class="camp-name">'+esc(c.name)+'</span>'
+          +'<span class="badge">'+c.count+' '+esc(SCOPES[scope].unit)+(c.count===1?'':'s')+'</span></div>'
+          +'<div class="camp-prev" title="'+esc(c.targets.join(', '))+'">'+preview+'</div>'
+          +'<div class="camp-acts">'
+          +'<button class="btn btn-clr" type="button" onclick="__camp.edit(\''+esc(scope)+'\',\''+esc(c.name)+'\')">Editar</button>'
+          +'<button class="btn btn-del" type="button" onclick="__camp.del(\''+esc(scope)+'\',\''+esc(c.name)+'\')">Excluir</button>'
+          +'</div></div>';
+      });
+      host.innerHTML=h;
+    });
+  }
+  function openEditor(scope,name){
+    editing={scope:scope,name:name};
+    var cfg=SCOPES[scope];
+    var cur=(DATA[scope]||[]).filter(function(c){return c.name===name;})[0];
+    document.getElementById('camp-ed-title').textContent=(name?'Editar campanha':'Nova campanha')+' — '+cfg.label;
+    document.getElementById('camp-ed-name').value=name||'';
+    var ta=document.getElementById('camp-ed-targets');
+    ta.value=cur?cur.targets.join('\n'):'';
+    ta.placeholder=cfg.ph;
+    document.getElementById('camp-ed-hint').textContent=cfg.hint;
+    document.getElementById('camp-ed-unit').textContent=cfg.unit+'(s)';
+    document.getElementById('camp-editor').style.display='block';
+    document.getElementById('camp-ed-name').focus();
+    msg('');
+  }
+  function closeEditor(){ editing=null; document.getElementById('camp-editor').style.display='none'; }
+  function save(){
+    if(!editing)return;
+    var name=document.getElementById('camp-ed-name').value.trim();
+    var targets=document.getElementById('camp-ed-targets').value;
+    if(!name){ msg('Informe o nome da campanha.','err'); return; }
+    var body,url;
+    if(editing.name){ url='/api/campaigns/'+encodeURIComponent(editing.scope)+'/'+encodeURIComponent(editing.name);
+      body={targets:targets}; if(name!==editing.name) body.new_name=name; }
+    else { url='/api/campaigns'; body={scope:editing.scope,name:name,targets:targets}; }
+    var btn=document.getElementById('camp-ed-save'); btn.disabled=true;
+    api(url,{method:'POST',body:JSON.stringify(body)}).then(function(j){
+      var n=(j.campaign&&j.campaign.count)||0;
+      msg('Campanha "'+name+'" salva com '+n+' alvo(s). O próximo scan já usa esses alvos.');
+      closeEditor(); load();
+    }).catch(function(e){ msg(e.message,'err'); }).then(function(){ btn.disabled=false; });
+  }
+  function del(scope,name){
+    if(!window.confirm('Excluir a campanha "'+name+'"?\n\nO alvo deixa de ser escaneado. '
+      +'Os achados e o histórico já coletados são PRESERVADOS.')) return;
+    api('/api/campaigns/'+encodeURIComponent(scope)+'/'+encodeURIComponent(name)+'/delete',{method:'POST'})
+      .then(function(){ msg('Campanha "'+name+'" removida dos alvos (histórico preservado).'); load(); })
+      .catch(function(e){ msg(e.message,'err'); });
+  }
+  // ── Execução sob demanda (botão Play) — independente do cron ──
+  var scanTimer=null;
+  function stepIcon(st){
+    if(st==='ok')      return '<span style="color:var(--green)">&#10003;</span>';
+    if(st==='running') return '<span class="spin" style="color:var(--accent)">&#9679;</span>';
+    if(st==='pending') return '<span style="color:var(--muted)">&#9675;</span>';
+    return '<span style="color:var(--red)">&#10007;</span>';           // fail/timeout/missing
+  }
+  function fmtDur(s){
+    s=parseInt(s||0,10); if(s<60)return s+'s';
+    var m=Math.floor(s/60); return m+'m '+(s%60<10?'0':'')+(s%60)+'s';
+  }
+  function renderScan(st){
+    var box=document.getElementById('scan-box'); if(!box)return;
+    var btn=document.getElementById('scan-btn');
+    var running=!!st.running;
+    if(btn){
+      btn.disabled=running||st.available===false;
+      btn.innerHTML=running?'&#9203; Executando…':'&#9654; Rodar todos os scans agora';
+    }
+    if(st.available===false){
+      box.innerHTML='<div class="page-sub">Execução sob demanda indisponível: '+esc(st.error||'')+'</div>';
+      return;
+    }
+    var total=st.total||6, pct=Math.max(0,Math.min(100,st.percent||0));
+    var h='';
+    if(running||st.started_at){
+      var doneLabel=running
+        ? ('Etapa '+(st.current||0)+' de '+total+(st.current_label?(' — '+esc(st.current_label)):''))
+        : ('Concluído em '+esc(st.finished_at||'')+' — '+(st.succeeded||0)+' ok'
+           +((st.failed||0)?(', <span style="color:var(--red)">'+st.failed+' com falha</span>'):''));
+      h+='<div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:6px">'
+        +'<span style="font-size:13px;font-weight:600">'+doneLabel+'</span>'
+        +'<span style="font-size:12px;color:var(--muted)">'+pct+'%</span></div>';
+      h+='<div class="scan-bar"><i style="width:'+pct+'%"></i></div>';
+      if(st.steps&&st.steps.length){
+        h+='<div class="scan-steps">';
+        st.steps.forEach(function(s){
+          h+='<div class="scan-step"><span class="si">'+stepIcon(s.status)+'</span>'
+            +'<span class="nm">'+esc(s.label)+'</span>'
+            +'<code>'+esc(s.cmd||'')+'</code>'
+            +'<span class="dur">'+(s.duration?fmtDur(s.duration):'')+'</span></div>';
+        });
+        h+='</div>';
+      }
+      if(running) h+='<div class="page-sub" style="margin-top:8px;font-size:11.5px">Pode fechar a página — '
+        +'a execução continua no servidor.</div>';
+    } else {
+      h='<div class="page-sub">Roda a sequência completa (subdomínios &rarr; portas TCP &rarr; portas UDP &rarr; '
+       +'e-mail &rarr; credenciais &rarr; typosquat) agora, sem esperar o agendamento.</div>';
+    }
+    box.innerHTML=h;
+    // Enquanto roda, consulta o progresso periodicamente.
+    if(running&&!scanTimer) scanTimer=setInterval(pollScan,3000);
+    if(!running&&scanTimer){ clearInterval(scanTimer); scanTimer=null; }
+  }
+  function pollScan(){
+    fetch('/api/scan/status',{cache:'no-store'}).then(function(r){return r.json();})
+      .then(function(j){ if(j.ok) renderScan(j); }).catch(function(){});
+  }
+  function startScan(){
+    var btn=document.getElementById('scan-btn'); if(btn) btn.disabled=true;   // trava imediata
+    api('/api/scan/start',{method:'POST',body:'{}'}).then(function(j){
+      msg('Execução iniciada — acompanhe o progresso abaixo.');
+      renderScan(j); pollScan();
+    }).catch(function(e){ msg(e.message,'err'); pollScan(); });
+  }
+
+  // ── Wordlist de subdomínios (submonitor/subs.txt) ──
+  function wlCount(){
+    var ta=document.getElementById('wl-text'); if(!ta)return 0;
+    var seen={},n=0;
+    ta.value.split('\n').forEach(function(l){
+      var v=l.split('#')[0].trim().toLowerCase();
+      if(v&&!seen[v]){seen[v]=1;n++;}
+    });
+    return n;
+  }
+  function wlSync(){
+    var el=document.getElementById('wl-count'); if(el) el.textContent=wlCount();
+    var btn=document.getElementById('wl-save'); if(btn) btn.disabled=(wlCount()===0);
+    var warn=document.getElementById('wl-empty'); if(warn) warn.style.display=(wlCount()===0?'block':'none');
+  }
+  function wlLoad(){
+    fetch('/api/wordlist',{cache:'no-store'}).then(function(r){return r.json();}).then(function(j){
+      if(!j.ok)return;
+      var ta=document.getElementById('wl-text'); if(ta) ta.value=(j.words||[]).join('\n');
+      wlSync();
+    }).catch(function(){});
+  }
+  function wlSave(){
+    var ta=document.getElementById('wl-text'); if(!ta)return;
+    if(wlCount()===0){ msg('A wordlist não pode ficar vazia — informe ao menos um prefixo.','err'); return; }
+    var btn=document.getElementById('wl-save'); btn.disabled=true;
+    api('/api/wordlist',{method:'POST',body:JSON.stringify({words:ta.value})}).then(function(j){
+      msg('Wordlist salva com '+j.count+' prefixo(s). O próximo scan de subdomínios já usa a nova lista.');
+      ta.value=(j.words||[]).join('\n'); wlSync();
+    }).catch(function(e){ msg(e.message,'err'); }).then(function(){ wlSync(); });
+  }
+  window.__camp={edit:openEditor,del:del,save:save,close:closeEditor,
+                 novo:function(scope){ openEditor(scope,null); },
+                 wlSave:wlSave, wlSync:wlSync, wlReload:wlLoad,
+                 scanStart:startScan};
+  if(document.readyState!=='loading') load(); else document.addEventListener('DOMContentLoaded',load);
+})();
+</script>"""
+
+
+def build_campaigns_page() -> str:
+    def block(scope: str, label: str, unit: str, desc: str) -> str:
+        return (
+            '<div class="panel panel-pad" style="margin-bottom:16px">'
+            f'<h2>{_NAV_ICONS.get(scope, "")} {label} '
+            f'<span class="badge" id="camp-count-{scope}">&mdash;</span></h2>'
+            f'<p class="page-sub" style="margin:2px 0 12px">{desc}</p>'
+            f'<button class="btn btn-pdf" type="button" onclick="window.__camp&&window.__camp.novo(\'{scope}\')">'
+            f'&#x2b; Nova campanha</button>'
+            f'<div class="camp-grid" id="camp-list-{scope}" style="margin-top:12px"></div>'
+            '</div>')
+
+    body = (
+        '<style>'
+        '.camp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}'
+        '.camp-card{border:1px solid var(--border);border-radius:var(--radius-sm);'
+        'background:linear-gradient(180deg,var(--surface),var(--surface-2));padding:12px 13px}'
+        '.camp-card-hd{display:flex;align-items:center;gap:8px;margin-bottom:6px}'
+        '.camp-name{font-weight:700;font-size:14px;color:var(--text);word-break:break-all}'
+        '.camp-prev{color:var(--muted);font-size:12px;line-height:1.5;min-height:34px;'
+        'overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}'
+        '.camp-acts{display:flex;gap:6px;margin-top:10px}'
+        '.camp-acts .btn{padding:5px 11px;font-size:12px}'
+        '.btn-del{background:transparent;color:var(--red);border-color:var(--red)}'
+        '.btn-del:hover{background:rgba(244,63,94,.12)}'
+        '.camp-empty{color:var(--muted);font-size:13px;line-height:1.6;padding:10px 0}'
+        '#camp-editor{display:none;margin-bottom:16px;border-left:3px solid var(--accent)}'
+        '#camp-editor input,#camp-editor textarea{width:100%;background:var(--bg);color:var(--text);'
+        'border:1px solid var(--border);border-radius:var(--radius-sm);padding:9px 11px;font-size:13px}'
+        '#camp-editor textarea{min-height:150px;font-family:var(--mono);line-height:1.6;resize:vertical}'
+        '#camp-editor input:focus,#camp-editor textarea:focus{border-color:var(--accent);outline:none;'
+        'box-shadow:0 0 0 3px rgba(51,163,239,.12)}'
+        '#camp-editor label{display:block;font-size:12px;font-weight:600;color:var(--muted);margin:0 0 5px}'
+        '#camp-msg{display:none;margin-bottom:14px;font-size:13px}'
+        '#wl-text{width:100%;min-height:190px;background:var(--bg);color:var(--text);border:1px solid var(--border);'
+        'border-radius:var(--radius-sm);padding:9px 11px;font-family:var(--mono);font-size:12.5px;line-height:1.6;resize:vertical}'
+        '#wl-text:focus{border-color:var(--accent);outline:none;box-shadow:0 0 0 3px rgba(51,163,239,.12)}'
+        # Barra de progresso da execução sob demanda
+        '.scan-bar{height:9px;border-radius:999px;background:var(--surface-2);border:1px solid var(--border);overflow:hidden}'
+        '.scan-bar i{display:block;height:100%;background:linear-gradient(90deg,var(--accent),var(--accent-2));'
+        'transition:width .5s ease}'
+        '.scan-steps{margin-top:10px;display:flex;flex-direction:column;gap:3px}'
+        '.scan-step{display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--muted)}'
+        '.scan-step .si{width:14px;text-align:center;flex:none}'
+        '.scan-step .nm{min-width:120px;color:var(--text)}'
+        '.scan-step code{font-size:11.5px;color:var(--muted);opacity:.85}'
+        '.scan-step .dur{margin-left:auto;font-variant-numeric:tabular-nums}'
+        '#scan-btn:disabled{opacity:.55;cursor:not-allowed}'
+        '@keyframes camp-pulse{0%,100%{opacity:1}50%{opacity:.25}}'
+        '.spin{display:inline-block;animation:camp-pulse 1.1s ease-in-out infinite}'
+        '@media (prefers-reduced-motion:reduce){.spin{animation:none}.scan-bar i{transition:none}}'
+        '</style>'
+        # Serviço indisponível (a página depende do argus-web para ler/gravar os alvos)
+        '<div id="camp-off" class="panel panel-pad" style="display:none;text-align:center;padding:40px 24px">'
+        '<div style="font-weight:700;font-size:15px;color:var(--text);margin-bottom:6px">Gestão de campanhas indisponível</div>'
+        '<div style="color:var(--muted);font-size:13px;line-height:1.6;max-width:560px;margin:0 auto">Esta página é '
+        'servida pelo <code>argus-web</code>, que lê e grava os arquivos de alvos. '
+        'Verifique o serviço: <code>systemctl status argus-web</code>.</div></div>'
+
+        '<div id="camp-main" style="display:none">'
+        '<div id="camp-msg" class="panel panel-pad"></div>'
+
+        # Execução sob demanda — roda a sequência completa agora (não substitui o cron).
+        '<div class="panel panel-pad" style="margin-bottom:16px;border-left:3px solid var(--accent)">'
+        '<h2>&#9654; Executar agora</h2>'
+        '<div style="display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap">'
+        '<button class="btn btn-pdf" type="button" id="scan-btn" style="flex:none"'
+        ' onclick="window.__camp&&window.__camp.scanStart()">&#9654; Rodar todos os scans agora</button>'
+        '<div id="scan-box" style="flex:1;min-width:280px"></div>'
+        '</div></div>'
+
+        # Editor (criar / editar)
+        '<div id="camp-editor" class="panel panel-pad">'
+        '<h2 id="camp-ed-title">Nova campanha</h2>'
+        '<div style="display:grid;grid-template-columns:minmax(180px,260px) 1fr;gap:14px;margin-top:10px">'
+        '<div><label for="camp-ed-name">Nome da campanha</label>'
+        '<input id="camp-ed-name" type="text" maxlength="64" placeholder="EMPRESA" '
+        'aria-describedby="camp-ed-namehint">'
+        '<div id="camp-ed-namehint" class="page-sub" style="margin-top:6px;font-size:11.5px">'
+        'Letras, números, ponto, hífen ou underscore. Vira o nome do arquivo de alvos.</div></div>'
+        '<div><label for="camp-ed-targets">Alvos &mdash; <span id="camp-ed-unit">alvos</span></label>'
+        '<textarea id="camp-ed-targets" spellcheck="false"></textarea>'
+        '<div id="camp-ed-hint" class="page-sub" style="margin-top:6px;font-size:11.5px"></div></div>'
+        '</div>'
+        '<div style="display:flex;gap:8px;margin-top:14px">'
+        '<button class="btn btn-pdf" type="button" id="camp-ed-save" onclick="window.__camp&&window.__camp.save()">'
+        'Salvar campanha</button>'
+        '<button class="btn btn-clr" type="button" onclick="window.__camp&&window.__camp.close()">Cancelar</button>'
+        '</div></div>'
+
+        + block("monitor", "Monitor de Portas", "IP/CIDR",
+                "Alvos de varredura de portas: IPs e faixas CIDR. Gravados em "
+                "<code>monitor/targets/&lt;CAMPANHA&gt;.txt</code>.")
+        + block("submonitor", "Monitor de Subdomínios", "domínio",
+                "Domínios-base para descoberta de subdomínios. Gravados em "
+                "<code>submonitor/targets/&lt;CAMPANHA&gt;.txt</code>.")
+
+        # Wordlist de subdomínios (submonitor/subs.txt) — usada na descoberta por força bruta.
+        + '<div class="panel panel-pad" style="margin-bottom:16px">'
+          f'<h2>{_NAV_ICONS.get("submonitor", "")} Wordlist de subdomínios '
+          '<span class="badge"><span id="wl-count">&mdash;</span> prefixos</span></h2>'
+          '<p class="page-sub" style="margin:2px 0 12px">Prefixos testados em <b>cada domínio</b> das campanhas de '
+          'subdomínio (ex.: <code>api</code> &rarr; <code>api.empresa.com.br</code>). Um por linha, sem ponto e sem '
+          'domínio. Vale para todas as campanhas — arquivo <code>submonitor/subs.txt</code>.</p>'
+          '<label for="wl-text" style="display:block;font-size:12px;font-weight:600;color:var(--muted);margin:0 0 5px">'
+          'Prefixos</label>'
+          '<textarea id="wl-text" spellcheck="false" oninput="window.__camp&&window.__camp.wlSync()" '
+          'aria-describedby="wl-hint"></textarea>'
+          '<div id="wl-empty" style="display:none;color:var(--red);font-size:12.5px;margin-top:7px">'
+          '&#9888; A wordlist <b>não pode ficar vazia</b> — sem prefixos o scan não descobre subdomínios por força bruta.</div>'
+          '<div id="wl-hint" class="page-sub" style="margin-top:7px;font-size:11.5px">Quanto maior a lista, mais '
+          'completo <b>e mais demorado</b> o scan (cada prefixo vira uma consulta DNS por domínio).</div>'
+          '<div style="display:flex;gap:8px;margin-top:12px">'
+          '<button class="btn btn-pdf" type="button" id="wl-save" onclick="window.__camp&&window.__camp.wlSave()">'
+          'Salvar wordlist</button>'
+          '<button class="btn btn-clr" type="button" onclick="window.__camp&&window.__camp.wlReload()">'
+          'Descartar alterações</button>'
+          '</div></div>'
+
+        + '<p class="page-sub">As mudanças valem a partir do <b>próximo scan</b> (agendado no cron) ou quando você '
+          'rodar o scanner manualmente. Excluir uma campanha <b>não apaga</b> os achados já coletados — o histórico '
+          'continua disponível na Gestão de Achados.</p>'
+        '</div>'
+    )
+    return _portal_shell(
+        "campanhas", "Campanhas",
+        "Cadastre e edite o escopo monitorado: alvos do monitor de portas (IP/CIDR) e do monitor de subdomínios (domínios)",
+        body, extra_script=_CAMP_SCRIPT)
+
+
 def build_login_page() -> str:
     """Página de login com a identidade Argus (form-based, para o Apache
     `mod_auth_form`). É **self-contained** (CSS inline) e PÚBLICA — precisa ser
@@ -4442,6 +4787,7 @@ def write_portal(docroot: str) -> None:
     (d / "risk-guide.html").write_text(build_risk_guide(), encoding="utf-8")
     # Página de Correlação — lê os relatórios client-side; sempre regerada.
     (d / "correlacao.html").write_text(build_correlation_page(), encoding="utf-8")
+    (d / "campanhas.html").write_text(build_campaigns_page(), encoding="utf-8")
     for name, active, label in [
         ("findings_report.html",    "findings",    "Gestão de Achados"),
         ("monitor_report.html",     "monitor",     "Monitor de Portas"),

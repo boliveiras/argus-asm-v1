@@ -47,6 +47,8 @@ Execução (dev): python3 webapp.py    → http://127.0.0.1:8099
 Produção: serviço systemd como o app user, atrás do Apache (Fase 2.1b).
 """
 
+import datetime
+import json
 import os
 import sqlite3
 from pathlib import Path
@@ -57,7 +59,17 @@ try:
 except ImportError:                       # degrada com mensagem clara
     _FLASK_OK = False
 
+import campaigns as CAMP
 import findings as F
+
+try:
+    import runner as RUN  # constantes da execução sob demanda (não executa nada no import)
+except Exception:                   # deploy antigo sem runner.py — a API degrada com mensagem clara
+    RUN = None
+
+
+def _now_str() -> str:
+    return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 # ============================================================
 # CORRELAÇÃO — grafo da superfície (junta os bancos dos scanners)
@@ -511,6 +523,178 @@ def create_app():
             return jsonify(g)
         except Exception as exc:
             return jsonify(ok=False, error=str(exc)), 500
+
+    # ── Campanhas (targets/*.txt) — CRUD pela Web ──────────────────────
+    # Escrita em disco: nome em allowlist + contenção de caminho (campaigns.py),
+    # CSRF por header, toda ação auditada. Excluir remove só o alvo (histórico fica).
+
+    @app.get("/api/campaigns")
+    def list_campaigns():
+        try:
+            scope = str(request.args.get("scope", "")).strip()
+            scopes = [scope] if scope in CAMP.SCOPES else list(CAMP.SCOPES)
+            out = {s: CAMP.list_campaigns(s) for s in scopes}
+            return jsonify(ok=True, scopes={s: CAMP.SCOPES[s]["label"] for s in CAMP.SCOPES},
+                           campaigns=out)
+        except Exception as exc:
+            return jsonify(ok=False, error=str(exc)), 500
+
+    @app.post("/api/campaigns")
+    def create_campaign():
+        if not _csrf_ok():
+            _audit(request, "AUTHZ_DENY", "ação negada: header CSRF ausente",
+                   outcome="deny", action="campaign_create")
+            return jsonify(ok=False, error="CSRF: header ausente"), 403
+        data = request.get_json(silent=True) or {}
+        scope = str(data.get("scope", "")).strip()
+        name = str(data.get("name", "")).strip()
+        if scope not in CAMP.SCOPES:
+            return jsonify(ok=False, error="escopo inválido"), 400
+        try:
+            res = CAMP.save_campaign(scope, name, data.get("targets", []), overwrite=False)
+        except CAMP.CampaignError as exc:
+            return jsonify(ok=False, error=str(exc)), 400
+        except OSError as exc:
+            return jsonify(ok=False, error=f"sem permissão para gravar o alvo: {exc}"), 500
+        _audit(request, "CAMPAIGN_CREATE", f"campanha {scope}/{name} criada ({res['count']} alvo(s))",
+               outcome="success", action="campaign_create", obj=name, object_type="campaign")
+        return jsonify(ok=True, campaign=res)
+
+    @app.post("/api/campaigns/<scope>/<name>")
+    def update_campaign(scope, name):
+        if not _csrf_ok():
+            _audit(request, "AUTHZ_DENY", "ação negada: header CSRF ausente",
+                   outcome="deny", action="campaign_update")
+            return jsonify(ok=False, error="CSRF: header ausente"), 403
+        if scope not in CAMP.SCOPES:
+            return jsonify(ok=False, error="escopo inválido"), 400
+        data = request.get_json(silent=True) or {}
+        new_name = str(data.get("new_name", "") or "").strip()
+        try:
+            cur = name
+            renamed = None
+            if new_name and new_name != name:
+                renamed = CAMP.rename_campaign(scope, name, new_name)
+                cur = new_name
+                _audit(request, "CAMPAIGN_RENAME",
+                       f"campanha {scope}/{name} renomeada para {new_name} "
+                       f"({renamed['migrated']} registro(s) migrado(s))",
+                       outcome="success", action="campaign_rename", obj=new_name,
+                       object_type="campaign")
+            res = CAMP.save_campaign(scope, cur, data.get("targets", []), overwrite=True)
+        except CAMP.CampaignError as exc:
+            return jsonify(ok=False, error=str(exc)), 400
+        except OSError as exc:
+            return jsonify(ok=False, error=f"sem permissão para gravar o alvo: {exc}"), 500
+        _audit(request, "CAMPAIGN_UPDATE", f"campanha {scope}/{cur} atualizada ({res['count']} alvo(s))",
+               outcome="success", action="campaign_update", obj=cur, object_type="campaign")
+        return jsonify(ok=True, campaign=res, renamed=renamed)
+
+    @app.post("/api/campaigns/<scope>/<name>/delete")
+    def remove_campaign(scope, name):
+        if not _csrf_ok():
+            _audit(request, "AUTHZ_DENY", "ação negada: header CSRF ausente",
+                   outcome="deny", action="campaign_delete")
+            return jsonify(ok=False, error="CSRF: header ausente"), 403
+        if scope not in CAMP.SCOPES:
+            return jsonify(ok=False, error="escopo inválido"), 400
+        try:
+            res = CAMP.delete_campaign(scope, name)
+        except CAMP.CampaignError as exc:
+            return jsonify(ok=False, error=str(exc)), 404
+        except OSError as exc:
+            return jsonify(ok=False, error=f"sem permissão para remover o alvo: {exc}"), 500
+        _audit(request, "CAMPAIGN_DELETE",
+               f"campanha {scope}/{name} removida dos alvos (histórico preservado)",
+               outcome="success", action="campaign_delete", obj=name, object_type="campaign")
+        return jsonify(ok=True, **res)
+
+    # ── Execução sob demanda (botão Play) ──────────────────────────────
+    # A Web NÃO executa processo algum: apenas grava o arquivo de pedido. Um serviço
+    # systemd root (argus-scan.path → argus-scan.service) percebe e roda a sequência.
+
+    def _scan_state() -> dict:
+        """Estado atual da execução: pedido pendente + lock + status gravado pelo runner."""
+        if RUN is None:
+            return {"available": False, "running": False,
+                    "error": "runner não instalado (atualize a aplicação)"}
+        st: dict = {}
+        try:
+            if RUN.STATUS_FILE.exists():
+                st = json.loads(RUN.STATUS_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            st = {}
+        queued = RUN.REQUEST_FILE.exists()
+        active = RUN.LOCK_DIR.exists()
+        st["available"] = True
+        st["queued"] = queued
+        # `running` real = lock do worker OU pedido ainda na fila. Não confia só no
+        # JSON (se o worker morrer, o arquivo poderia ficar "running" para sempre).
+        st["running"] = bool(active or queued)
+        if queued and not active:
+            st.setdefault("current_label", "aguardando o serviço iniciar…")
+            st.setdefault("percent", 0)
+            st.setdefault("total", len(RUN.STEPS))
+        return st
+
+    @app.get("/api/scan/status")
+    def scan_status():
+        try:
+            # Envelope montado explicitamente: uma chave do status nunca colide com "ok".
+            return jsonify({**_scan_state(), "ok": True})
+        except Exception as exc:
+            return jsonify(ok=False, error=str(exc)), 500
+
+    @app.post("/api/scan/start")
+    def scan_start():
+        if not _csrf_ok():
+            _audit(request, "AUTHZ_DENY", "ação negada: header CSRF ausente",
+                   outcome="deny", action="scan_start")
+            return jsonify(ok=False, error="CSRF: header ausente"), 403
+        if RUN is None:
+            return jsonify(ok=False, error="runner não instalado — rode o install.sh novamente"), 503
+        state = _scan_state()
+        if state.get("running"):
+            # Trava de reentrada: já há execução em curso/na fila.
+            return jsonify({**state, "ok": False,
+                            "error": "já existe uma execução em andamento"}), 409
+        actor = _actor(request)
+        try:
+            RUN.STORE_DIR.mkdir(parents=True, exist_ok=True)
+            # O pedido carrega apenas o autor (texto), nunca comando ou parâmetro.
+            RUN.REQUEST_FILE.write_text(
+                json.dumps({"actor": actor, "at": _now_str()}, ensure_ascii=False),
+                encoding="utf-8")
+        except OSError as exc:
+            return jsonify(ok=False, error=f"sem permissão para enfileirar a execução: {exc}"), 500
+        _audit(request, "SCAN_START", "execução sob demanda enfileirada (todos os scanners)",
+               outcome="success", action="scan_start", obj="scan_request", object_type="scan")
+        return jsonify(ok=True, queued=True, running=True, total=len(RUN.STEPS),
+                       percent=0, current_label="aguardando o serviço iniciar…")
+
+    @app.get("/api/wordlist")
+    def get_wordlist():
+        try:
+            return jsonify(ok=True, **CAMP.read_wordlist())
+        except Exception as exc:
+            return jsonify(ok=False, error=str(exc)), 500
+
+    @app.post("/api/wordlist")
+    def set_wordlist():
+        if not _csrf_ok():
+            _audit(request, "AUTHZ_DENY", "ação negada: header CSRF ausente",
+                   outcome="deny", action="wordlist_update")
+            return jsonify(ok=False, error="CSRF: header ausente"), 403
+        data = request.get_json(silent=True) or {}
+        try:
+            res = CAMP.save_wordlist(data.get("words", []))
+        except CAMP.CampaignError as exc:
+            return jsonify(ok=False, error=str(exc)), 400
+        except OSError as exc:
+            return jsonify(ok=False, error=f"sem permissão para gravar a wordlist: {exc}"), 500
+        _audit(request, "WORDLIST_UPDATE", f"wordlist de subdomínios atualizada ({res['count']} prefixo(s))",
+               outcome="success", action="wordlist_update", obj="subs.txt", object_type="wordlist")
+        return jsonify(ok=True, **res)
 
     @app.get("/api/findings/<fid>")
     def get_finding(fid):

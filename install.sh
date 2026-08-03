@@ -95,6 +95,9 @@ if [ "$UNINSTALL" = true ]; then
   rm -f /usr/local/bin/argus-monitor /usr/local/bin/argus-submonitor /usr/local/bin/argus-credentials /usr/local/bin/argus-email /usr/local/bin/argus-typosquat /usr/local/bin/argus-ack /usr/local/bin/argus-finding /usr/local/bin/argus-reset
   systemctl disable --now argus-web 2>/dev/null || true
   rm -f /etc/systemd/system/argus-web.service
+  systemctl disable --now argus-scan.path 2>/dev/null || true
+  systemctl stop argus-scan.service 2>/dev/null || true
+  rm -f /etc/systemd/system/argus-scan.path /etc/systemd/system/argus-scan.service
   systemctl daemon-reload 2>/dev/null || true
   a2dissite argus-monitor 2>/dev/null || true
   rm -f "$APACHE_CONF" /etc/apache2/sites-enabled/argus-monitor.conf
@@ -196,6 +199,8 @@ copy_if_exists "core/reporter.py"                     "$BASE_DIR/reporter.py"
 copy_if_exists "core/ack.py"                          "$BASE_DIR/ack.py"
 copy_if_exists "core/findings.py"                     "$BASE_DIR/findings.py"
 copy_if_exists "core/webapp.py"                       "$BASE_DIR/webapp.py"
+copy_if_exists "core/campaigns.py"                    "$BASE_DIR/campaigns.py"
+copy_if_exists "core/runner.py"                       "$BASE_DIR/runner.py"
 copy_if_exists "core/logs.py"                         "$BASE_DIR/logs.py"
 copy_if_exists "argus-reset.sh"                       "$BASE_DIR/argus-reset.sh"
 copy_if_exists "scanners/monitor.py"                  "$MONITOR_DIR/monitor.py"
@@ -247,6 +252,37 @@ if $_acl_ok; then
 else
   warn "setfacl indisponível — o mapa de Correlação pode não ler os bancos (instale o pacote 'acl')"
 fi
+# Gestão de campanhas pela Web: o app user precisa ESCREVER os alvos. A permissão de
+# escrita é concedida APENAS nos dois diretórios targets (monitor/submonitor) — o resto
+# segue somente leitura. O nome do arquivo é validado por allowlist em campaigns.py.
+_aclw_ok=true
+for _td in "$MONITOR_DIR/targets" "$SUBMONITOR_DIR/targets"; do
+  setfacl -Rm  "u:$APP_USER:rwX" "$_td" 2>/dev/null || _aclw_ok=false
+  setfacl -dm  "u:$APP_USER:rwX" "$_td" 2>/dev/null || _aclw_ok=false
+done
+if $_aclw_ok; then
+  ok "ACL: $APP_USER pode gravar alvos em monitor/targets e submonitor/targets (Campanhas na Web)"
+else
+  warn "setfacl indisponível — a gestão de campanhas pela Web ficará somente leitura"
+fi
+# Wordlist de subdomínios: instala a base (100 prefixos) só se ainda não existir —
+# NUNCA sobrescreve a wordlist do usuário. A ACL é no ARQUIVO (a edição pela Web grava
+# in-place, preservando o inode), evitando dar escrita no diretório que guarda o banco.
+if [ ! -f "$SUBMONITOR_DIR/subs.txt" ]; then
+  if [ -f "assets/subs-default.txt" ]; then
+    cp "assets/subs-default.txt" "$SUBMONITOR_DIR/subs.txt"
+    ok "Wordlist inicial instalada (100 prefixos) → $SUBMONITOR_DIR/subs.txt"
+  else
+    printf 'www\nmail\napi\ndev\nadmin\nportal\nvpn\ntest\nstaging\nhomolog\n' > "$SUBMONITOR_DIR/subs.txt"
+    warn "assets/subs-default.txt ausente — wordlist mínima criada (10 prefixos)"
+  fi
+else
+  ok "Wordlist já existe — preservada ($SUBMONITOR_DIR/subs.txt)"
+fi
+chmod 644 "$SUBMONITOR_DIR/subs.txt" 2>/dev/null || true
+setfacl -m "u:$APP_USER:rw" "$SUBMONITOR_DIR/subs.txt" 2>/dev/null \
+  && ok "ACL: $APP_USER pode editar a wordlist pela Web" \
+  || warn "setfacl indisponível — a wordlist ficará somente leitura na Web"
 chown root:adm "$LOG_DIR_MONITOR" "$LOG_DIR_SUBMONITOR" "$LOG_DIR_CREDENTIALS" "$LOG_DIR_EMAIL" "$LOG_DIR_TYPOSQUAT"
 chmod 750 "$LOG_DIR_MONITOR" "$LOG_DIR_SUBMONITOR" "$LOG_DIR_CREDENTIALS" "$LOG_DIR_EMAIL" "$LOG_DIR_TYPOSQUAT"
 # Auditoria: o serviço argus-web (usuário $APP_USER) ESCREVE o audit.log; o grupo
@@ -802,6 +838,50 @@ if systemctl restart argus-web 2>/dev/null; then
   ok "Serviço argus-web ativo (127.0.0.1:8099, usuário $APP_USER)"
 else
   warn "Falha ao iniciar argus-web — verifique: journalctl -u argus-web"
+fi
+
+# ── Execução sob demanda (botão "Rodar agora" da Web) ──────────
+# Isolamento de privilégio: a Web (sem privilégio, NoNewPrivileges) apenas GRAVA
+# $BASE_DIR/store/scan_request. Esta unit .path percebe o arquivo e dispara o
+# serviço oneshot ROOT, que executa a sequência fixa de scanners. A Web nunca
+# executa processo algum — não há comando, caminho ou flag vindos do HTTP.
+cat > /etc/systemd/system/argus-scan.service << UNITEOF
+[Unit]
+Description=Argus ASM — execução sob demanda dos scanners (disparada pela Web)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Environment=PYTHONPATH=$BASE_DIR
+Environment=ARGUS_BASE=$BASE_DIR
+Environment=ARGUS_DB=$BASE_DIR/store/argus.db
+ExecStart=$PYTHON_BIN $BASE_DIR/runner.py
+# Um scan por vez: o runner também usa lock próprio (mkdir atômico).
+TimeoutStartSec=infinity
+StandardOutput=append:$LOG_DIR_MONITOR/scan_ondemand.log
+StandardError=append:$LOG_DIR_MONITOR/scan_ondemand.log
+UNITEOF
+
+cat > /etc/systemd/system/argus-scan.path << UNITEOF
+[Unit]
+Description=Argus ASM — observa o pedido de execução vindo da interface Web
+
+[Path]
+PathExists=$BASE_DIR/store/scan_request
+Unit=argus-scan.service
+
+[Install]
+WantedBy=multi-user.target
+UNITEOF
+
+systemctl daemon-reload 2>/dev/null
+systemctl enable argus-scan.path 2>/dev/null
+if systemctl restart argus-scan.path 2>/dev/null; then
+  ok "Execução sob demanda ativa (botão ▶ na Web dispara argus-scan.service como root)"
+else
+  warn "Falha ao ativar argus-scan.path — o botão ▶ da Web não vai executar"
 fi
 
 # ── 13. CRONS ─────────────────────────────────────────────────
