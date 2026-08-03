@@ -653,6 +653,15 @@ def create_app():
             return jsonify(ok=False, error="CSRF: header ausente"), 403
         if RUN is None:
             return jsonify(ok=False, error="runner não instalado — rode o install.sh novamente"), 503
+        # Sem nenhuma campanha cadastrada os scanners abortam por falta de alvo: avisa
+        # ANTES em vez de deixar a sequência inteira "falhar" sem explicação.
+        try:
+            has_targets = any(CAMP.list_campaigns(s) for s in CAMP.SCOPES)
+        except Exception:
+            has_targets = True          # na dúvida, não bloqueia
+        if not has_targets:
+            return jsonify(ok=False, error="nenhuma campanha cadastrada — cadastre alvos "
+                                           "antes de rodar os scans"), 400
         state = _scan_state()
         if state.get("running"):
             # Trava de reentrada: já há execução em curso/na fila.

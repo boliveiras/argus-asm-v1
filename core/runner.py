@@ -111,7 +111,7 @@ def _initial_state(actor: str) -> dict:
         "current_label": STEPS[0]["label"],
         "steps": [{"key": s["key"], "label": s["label"],
                    "cmd": " ".join(Path(c).name if i == 0 else c for i, c in enumerate(s["cmd"])),
-                   "status": "pending", "rc": None, "duration": 0} for s in STEPS],
+                   "status": "pending", "rc": None, "duration": 0, "detail": ""} for s in STEPS],
         # "succeeded" (e não "ok"): a API devolve o status com `ok=True` no envelope —
         # uma chave "ok" aqui colidiria com o campo de sucesso da própria resposta.
         "succeeded": 0, "failed": 0,
@@ -145,25 +145,36 @@ def run_all(actor: str = "web") -> int:
 
         print(f"[{idx + 1}/{len(STEPS)}] {step['label']} -> {' '.join(step['cmd'])}")
         t0 = time.monotonic()
-        rc, status = 1, "fail"
+        rc, status, detail = 1, "fail", ""
         try:
+            # Captura a saída: quando um passo falha, a última linha útil vai para o status
+            # e para o log — sem isso, a interface mostraria "falhou" sem dizer o porquê.
             proc = subprocess.run(  # nosec B603 - lista fixa de comandos, shell=False, sem entrada do usuário
                 step["cmd"], shell=False, timeout=STEP_TIMEOUT,
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False,
+                text=True, errors="replace")
             rc = proc.returncode
             status = "ok" if rc == 0 else "fail"
+            if rc != 0:
+                lines = [ln.strip() for ln in (proc.stdout or "").splitlines() if ln.strip()]
+                detail = " | ".join(lines[-3:])[:300]
+                for ln in lines[-15:]:
+                    print(f"    {ln}")
         except subprocess.TimeoutExpired:
             rc, status = -1, "timeout"
+            detail = f"excedeu {STEP_TIMEOUT}s"
             print(f"  [TIMEOUT] {step['label']} passou de {STEP_TIMEOUT}s", file=sys.stderr)
         except FileNotFoundError:
             rc, status = -2, "missing"
-            print(f"  [ERRO] comando não encontrado: {step['cmd'][0]}", file=sys.stderr)
+            detail = f"comando não encontrado: {step['cmd'][0]}"
+            print(f"  [ERRO] {detail}", file=sys.stderr)
         except Exception as exc:                       # nunca aborta a fila
             rc, status = -3, "fail"
+            detail = str(exc)[:300]
             print(f"  [ERRO] {step['label']}: {exc}", file=sys.stderr)
 
         dur = int(time.monotonic() - t0)
-        state["steps"][idx].update({"status": status, "rc": rc, "duration": dur})
+        state["steps"][idx].update({"status": status, "rc": rc, "duration": dur, "detail": detail})
         # Falha NÃO interrompe a sequência: os scanners são independentes.
         if status == "ok":
             state["succeeded"] += 1

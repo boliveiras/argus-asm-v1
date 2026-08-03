@@ -827,7 +827,10 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=true
-ReadWritePaths=$BASE_DIR/store $APACHE_DOCROOT $LOG_DIR_AUDIT
+# ProtectSystem=full deixa TODO o /etc somente-leitura para este serviço. Sem liberar
+# explicitamente os caminhos abaixo, a gestão de campanhas e a edição da wordlist pela
+# Web falham com "Read-only file system" — a ACL sozinha não basta (o systemd bloqueia antes).
+ReadWritePaths=$BASE_DIR/store $APACHE_DOCROOT $LOG_DIR_AUDIT $MONITOR_DIR/targets $SUBMONITOR_DIR/targets $SUBMONITOR_DIR/subs.txt
 
 [Install]
 WantedBy=multi-user.target

@@ -3645,7 +3645,10 @@ function camps(listId, arr, href){
   camps('ty-camps',ty?ty.campanhas:[],'/typosquat_report.html');
   // Estado do Dashboard: nenhum relatório gerado = 1ª execução pendente; relatórios
   // gerados mas sem nenhum achado = superfície limpa; com achados = esconde os dois.
-  const anyReport = !!(mon||sub||cre||eml||fnd||ty);
+  // "Já rodou?" = algum relatório de SCANNER com data de execução. A página de Gestão de
+  // Achados (fnd) é gerada sempre, mesmo sem scan algum: contá-la faria uma instalação
+  // recém-feita exibir "os scans já rodaram e nada foi encontrado" — falso conforto.
+  const anyReport = [mon,sub,cre,eml,ty].some(r => r && r.now);
   const totalAll = assets + g(cre,'total') + g(eml,'total') + g(fnd,'total') + g(ty,'total');
   const pend=document.getElementById('dash-empty'), cln=document.getElementById('dash-clean');
   if(pend) pend.style.display = anyReport ? 'none' : 'flex';
@@ -4463,7 +4466,9 @@ _CAMP_SCRIPT = r"""<script>
         st.steps.forEach(function(s){
           h+='<div class="scan-step"><span class="si">'+stepIcon(s.status)+'</span>'
             +'<span class="nm">'+esc(s.label)+'</span>'
-            +'<code>'+esc(s.cmd||'')+'</code>'
+            +(s.detail
+               ? '<span class="why" title="'+esc(s.detail)+'">'+esc(s.detail)+'</span>'
+               : '<code>'+esc(s.cmd||'')+'</code>')
             +'<span class="dur">'+(s.duration?fmtDur(s.duration):'')+'</span></div>';
         });
         h+='</div>';
@@ -4577,6 +4582,8 @@ def build_campaigns_page() -> str:
         '.scan-step .si{width:14px;text-align:center;flex:none}'
         '.scan-step .nm{min-width:120px;color:var(--text)}'
         '.scan-step code{font-size:11.5px;color:var(--muted);opacity:.85}'
+        '.scan-step .why{font-size:11.5px;color:var(--red);max-width:46%;overflow:hidden;'
+        'text-overflow:ellipsis;white-space:nowrap}'
         '.scan-step .dur{margin-left:auto;font-variant-numeric:tabular-nums}'
         '#scan-btn:disabled{opacity:.55;cursor:not-allowed}'
         '@keyframes camp-pulse{0%,100%{opacity:1}50%{opacity:.25}}'
