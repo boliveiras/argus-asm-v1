@@ -1530,6 +1530,10 @@ function render(){{
     const ab=r.abuse||{{}};
     const score=(ab.score!==undefined)?ab.score:-1;
     const torBadge=ab.is_tor?'<span class="tor-badge">TOR</span>':'';
+    const vtd=r.vt||{{}};
+    const vtBadge=(vtd.malicious>0)
+      ?` <span class="kev-badge" style="background:rgba(244,63,94,.14);color:#f43f5e;border-color:#f43f5e66" title="VirusTotal: ${{vtd.malicious}} motor(es) apontam malicioso${{vtd.suspicious?(' · '+vtd.suspicious+' suspeito(s)'):''}}${{vtd.as_owner?(' · '+esc(vtd.as_owner)):''}}">VT ${{vtd.malicious}}</span>`
+      :'';
     const lastRpt=ab.last_reported_at?ab.last_reported_at.substring(0,10):'';
     const ackR=r.ack_reason||'';
     const idb=r.internetdb||{{}};
@@ -1553,7 +1557,7 @@ function render(){{
       <td data-col="asn" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${{esc(r.asn)}}">${{esc(r.asn)}}</td>
       <td data-col="abuse_country">${{esc(ab.country||'')}}</td>
       <td data-col="risk" class="risk-${{esc(r.risk)}}">${{esc(r.risk)}}</td>
-      <td data-col="abuse_score"><span class="${{scoreClass(score)}}">${{scoreLabel(score)}}</span>${{torBadge}}</td>
+      <td data-col="abuse_score"><span class="${{scoreClass(score)}}">${{scoreLabel(score)}}</span>${{torBadge}}${{vtBadge}}</td>
       <td data-col="campanha">${{esc(r.campanha||'')}}</td>
       <td data-col="target">${{esc(r.target||'')}}</td>
       <td data-col="banner" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${{esc(r.banner||'')}}">${{esc(r.banner||'')}}</td>
@@ -4106,13 +4110,17 @@ _CORR_SCRIPT = r"""<script>
   var RAD={campaign:14,domain:11,subdomain:8,ip:9,email:9,cred:8,typo:9};
   var N={}, EDGES=[], EDGES_IP=[], ADJ={}, PAR={}, INDEG={}, open={}, POS={}, PIN={}, sel=null, _ids=[], _vis={}, selRoots=null;
   var viewMode='sub', sevSet={CRITICO:1,ALTO:1,MEDIO:1,BAIXO:1,INFO:1};
+  // MODO COMPACTO (padrão, estilo Maltego): subdomínio servido por um IP NÃO vira
+  // bolinha — o IP concentra e a lista aparece ao clicar. Com centenas de hosts,
+  // desenhar tudo travava a navegação. MAX_NOS é o teto de segurança do render.
+  var compacto=true, MAX_NOS=320, cortados=0;
   var drag=null, dragMoved=false, ox=0, oy=0, sx=0, sy=0, vb={x:0,y:0,w:960,h:600}, pan=null, dragging=false;
   function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
   function setTxt(id,v){var e=document.getElementById(id); if(e)e.textContent=v;}
   function showOnly(id){['corr-empty','corr-off','corr-main'].forEach(function(x){var e=document.getElementById(x);if(e)e.style.display=(x===id?'block':'none');});}
   function curCamp(){ var s=document.getElementById('corr-camp'); return s?s.value:'*'; }
   // Monta a lista de adjacência da visão ATUAL (por subdomínio ou por IP).
-  function rebuildAdj(){ var E=(viewMode==='ip')?EDGES_IP:EDGES; ADJ={}; PAR={}; INDEG={};
+  function rebuildAdj(){ var E=(viewMode==='ip'||compacto)?EDGES_IP:EDGES; ADJ={}; PAR={}; INDEG={};
     E.forEach(function(e){ (ADJ[e[0]]=ADJ[e[0]]||[]).push(e[1]); (PAR[e[1]]=PAR[e[1]]||[]).push(e[0]); INDEG[e[1]]=(INDEG[e[1]]||0)+1; }); }
   function start(){
     fetch('/api/correlation',{cache:'no-store'}).then(function(r){return r.ok?r.json():null;}).then(function(j){
@@ -4137,6 +4145,14 @@ _CORR_SCRIPT = r"""<script>
   // Troca a orientação do grafo (subdomínio↔IP): refaz adjacências e relança o layout.
   function setView(m){ viewMode=m; rebuildAdj(); POS={}; PIN={}; open={}; sel=null; selRoots=null; hideDetail(); render(curCamp()); }
   // Filtro de severidade (item 2): mostra só os níveis ligados (multi-seleção).
+  window.__corrCompacto=function(on){
+    // Preserva o que já estava aberto e as posições: alternar o agrupamento não pode
+    // fazer o usuário perder o ponto do mapa em que estava. Os ids não mudam, só as arestas.
+    compacto=!!on; rebuildAdj();
+    var d=document.getElementById('corr-detail'); if(d)d.style.display='none';
+    sel=null; selRoots=null;
+    render(curCamp());
+  };
   window.__corrSev=function(k){ if(k==='all'){ SEVKEYS.forEach(function(x){sevSet[x]=1;}); } else { sevSet[k]=sevSet[k]?0:1; }
     sel=null; selRoots=null; hideDetail(); syncSevButtons(); render(curCamp()); };
   function sevActive(){ return SEVKEYS.some(function(k){return !sevSet[k];}); }   // algum nível desligado?
@@ -4161,7 +4177,39 @@ _CORR_SCRIPT = r"""<script>
   // um IP compartilhado mantido não arrastar um subdomínio-irmão de outro nível.
   function sevFilter(vis){ var keep={}; Object.keys(vis).forEach(function(id){ if(isLeaf(id)&&sevSet[N[id].risk]) keep[id]=1; });
     var ch=true; while(ch){ ch=false; Object.keys(keep).forEach(function(id){ parentsOf(id).forEach(function(p){ if(vis[p]&&!keep[p]&&!isLeaf(p)){keep[p]=1;ch=true;} }); }); } return keep; }
-  function visible(rts){ if(sevActive()) return sevFilter(expandAll(rts)); return expandVisible(rts); }
+  function temIP(id){ return (ADJ[id]||[]).some(function(c){return N[c]&&N[c].type==='ip';})
+                        || parentsOf(id).some(function(p){return N[p]&&N[p].type==='ip';}); }
+  function compactar(vis){
+    // Remove do desenho os subdomínios já representados por um IP (a lista deles fica
+    // no painel do IP). Subdomínio sem IP continua visível — senão sumiria do mapa.
+    if(!compacto) return vis;
+    var out={};
+    Object.keys(vis).forEach(function(id){
+      if(N[id] && N[id].type==='subdomain' && temIP(id)) return;
+      out[id]=1;
+    });
+    return out;
+  }
+  function limitar(vis){
+    // Teto de nós: mantém contêineres e os de maior correlação/criticidade.
+    var ids=Object.keys(vis); cortados=0;
+    if(ids.length<=MAX_NOS) return vis;
+    var peso=function(id){
+      var t=N[id].type;
+      if(t==='campaign'||t==='domain') return 1e6;                 // estrutura sempre fica
+      var g=(N[id].deg||0)*100;                                    // mais correlação = mais peso
+      var r={CRITICO:40,ALTO:30,MEDIO:20,BAIXO:10}[N[id].risk]||0;
+      return g+r;
+    };
+    ids.sort(function(a,b){ return peso(b)-peso(a); });
+    var keep={}; ids.slice(0,MAX_NOS).forEach(function(id){keep[id]=1;});
+    cortados=ids.length-MAX_NOS;
+    return keep;
+  }
+  function visible(rts){
+    var v = sevActive() ? sevFilter(expandAll(rts)) : expandVisible(rts);
+    return limitar(compactar(v));
+  }
   function layout(ids,W,H){
     var freshSet={}, fresh=[];
     ids.forEach(function(id){ if(!POS[id]){ freshSet[id]=1; fresh.push(id); var p=null; parentsOf(id).forEach(function(s){ if(POS[s]) p=POS[s]; });
@@ -4190,12 +4238,15 @@ _CORR_SCRIPT = r"""<script>
     Object.keys(_vis).forEach(function(s){ (ADJ[s]||[]).forEach(function(t){ if(!_vis[t])return; var a=POS[s],b=POS[t],sh=isShared(t)||isShared(s);
       h+='<line data-s="'+esc(s)+'" data-t="'+esc(t)+'" x1="'+a.x.toFixed(0)+'" y1="'+a.y.toFixed(0)+'" x2="'+b.x.toFixed(0)+'" y2="'+b.y.toFixed(0)+'" stroke="'+(sh?'#fb923c':'var(--border-2)')+'" stroke-width="'+(sh?1.6:0.7)+'"/>'; }); });
     _ids.forEach(function(id){ var n=N[id],p=POS[id],x=+p.x.toFixed(0),y=+p.y.toFixed(0),r=RAD[n.type]||8,c=SEV[n.risk]||'#8a99b4',sh=isShared(id),ring=(kids(id)&&!open[id]);
+      // Hub: quanto mais subdomínios o IP concentra, maior a bolinha (raio limitado).
+      if(n.type==='ip'&&(n.deg||0)>1) r=Math.min(20,r+Math.round(Math.log2(n.deg)*2.2));
       h+='<g class="corr-node" tabindex="0" role="button" aria-label="'+esc(n.label)+', '+esc(TLBL[n.type]||n.type)+', risco '+esc(n.risk)+'" data-id="'+esc(id)+'">';
       h+='<title>'+esc(n.label)+' — '+esc(TLBL[n.type]||n.type)+'</title>';
       if(ring) h+='<circle cx="'+x+'" cy="'+y+'" r="'+(r+4)+'" fill="none" stroke="'+c+'" stroke-width="0.7" stroke-dasharray="2 2"/>';
       if(sh)   h+='<circle cx="'+x+'" cy="'+y+'" r="'+(r+4)+'" fill="none" stroke="#fb923c" stroke-width="1.6"/>';
       h+=shapeEl(n.type,x,y,r,c,(id===sel?'var(--text)':c),(id===sel?2.2:1));
       if(n.type==='campaign'||n.type==='domain'||sh||id===sel){ var lbl=n.label.length>26?n.label.slice(0,25)+'…':n.label;
+        if(n.type==='ip'&&(n.deg||0)>1) lbl+=' ('+n.deg+')';
         h+='<text x="'+x+'" y="'+(y+r+12)+'" text-anchor="middle" font-size="11" fill="var(--muted)">'+esc(lbl)+'</text>'; }
       h+='</g>';
     });
@@ -4216,6 +4267,14 @@ _CORR_SCRIPT = r"""<script>
   function render(camp){
     var rts=roots(camp); rts.forEach(function(r){ if(!(r in open)) open[r]=true; });
     _vis=visible(rts); _ids=Object.keys(_vis); layout(_ids,960,600); paint(); buildList();
+    var av=document.getElementById('corr-aviso');
+    if(av){
+      if(cortados>0){ av.style.display='block';
+        av.innerHTML='Mostrando os <b>'+MAX_NOS+'</b> itens de maior correlação e criticidade — '
+          +'<b>'+cortados+'</b> ficaram de fora para manter o mapa fluido. '
+          +'Use o filtro de campanha ou de criticidade para focar.'; }
+      else av.style.display='none';
+    }
   }
   function toSvg(cx,cy){ var svg=document.getElementById('corr-svg'); if(!svg||!svg.createSVGPoint)return null; var pt=svg.createSVGPoint(); pt.x=cx; pt.y=cy; var m=svg.getScreenCTM(); if(!m)return null; return pt.matrixTransform(m.inverse()); }
   function applyVB(){ var svg=document.getElementById('corr-svg'); if(svg)svg.setAttribute('viewBox',vb.x.toFixed(1)+' '+vb.y.toFixed(1)+' '+vb.w.toFixed(1)+' '+vb.h.toFixed(1)); }
@@ -4246,9 +4305,16 @@ _CORR_SCRIPT = r"""<script>
   }
   // Clicar liga e destaca o item + TODOS os relacionados (vale nos dois sentidos e nas duas visões):
   //  · subdomínio  → mostra o IP que ele resolve;  · IP → mostra todos os subdomínios que resolvem nele.
-  function selectNode(id){ var n=N[id]; if(!n)return; if(kids(id))open[id]=!open[id]; sel=id;
+  function selectNode(id){ var n=N[id]; if(!n)return;
+    // No modo compacto o IP NÃO se abre em bolinhas: seus subdomínios aparecem
+    // como lista no painel (é o que mantém o mapa leve com centenas de hosts).
+    var soLista = compacto && n.type==='ip';
+    if(kids(id) && !soLista) open[id]=!open[id];
+    sel=id;
     var rel=neighbors(id); selRoots={};
-    Object.keys(rel).forEach(function(rid){ revealAncestors(rid); rootsOf(rid).forEach(function(rt){selRoots[rt]=1;});
+    Object.keys(rel).forEach(function(rid){
+      if(compacto && N[rid] && N[rid].type==='subdomain') return;   // sub fica na lista, não vira nó
+      revealAncestors(rid); rootsOf(rid).forEach(function(rt){selRoots[rt]=1;});
       if(rid!==id && (ADJ[rid]||[]).indexOf(id)>=0) open[rid]=true; });  // pai de id: abre p/ garantir id visível
     rootsOf(id).forEach(function(rt){selRoots[rt]=1;});
     render(curCamp()); detail(id);
@@ -4258,8 +4324,24 @@ _CORR_SCRIPT = r"""<script>
     var sh=isShared(id);
     d.innerHTML='<div style="display:flex;align-items:center;gap:8px;margin-bottom:3px"><span style="width:12px;height:12px;border-radius:50%;background:'+(SEV[n.risk]||'#8a99b4')+';flex:none"></span><span style="font-size:15px;font-weight:700">'+esc(n.label)+'</span>'+(sh?' <span style="color:#fb923c;font-size:12px">(compartilhado · '+degOf(id)+' subdomínios)</span>':'')+'</div>'
       +'<div class="page-sub" style="margin-bottom:10px">'+esc(TLBL[n.type]||n.type)+(kids(id)?(' · clique no nó para '+(open[id]?'recolher':'expandir')):'')+'</div>'
-      +'<table style="width:100%;font-size:13px;border-top:1px solid var(--border)">'+rows+'</table>';
+      +'<table style="width:100%;font-size:13px;border-top:1px solid var(--border)">'+rows+'</table>'
+      + membrosHTML(n);
     d.style.display='block';
+  }
+  // Lista os subdomínios servidos por um IP — em vez de espalhar uma bolinha para
+  // cada um no grafo (que é o que deixava a navegação pesada).
+  function membrosHTML(n){
+    var ms=n.members||[]; if(!ms.length) return '';
+    var linhas=ms.map(function(m){
+      return '<tr><td style="padding:4px 8px 4px 0"><code>'+esc(m.host)+'</code></td>'
+        +'<td style="padding:4px 6px;text-align:right" class="risk-'+esc(m.risk)+'">'+esc(m.risk)+'</td>'
+        +'<td style="padding:4px 0;text-align:right;color:var(--muted)">'+esc(m.http||'')+'</td></tr>';
+    }).join('');
+    return '<div style="margin-top:12px;border-top:1px solid var(--border);padding-top:9px">'
+      +'<div style="font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;'
+      +'letter-spacing:.5px;margin-bottom:6px">Subdomínios neste IP ('+ms.length+')</div>'
+      +'<div style="max-height:230px;overflow:auto"><table style="width:100%;font-size:12.5px">'
+      +linhas+'</table></div></div>';
   }
   function buildList(){ var el=document.getElementById('corr-list'); if(!el)return;
     var subs=Object.keys(N).filter(function(id){return N[id].type==='subdomain';});
@@ -4339,6 +4421,16 @@ def build_correlation_page() -> str:
         '<span style="color:var(--steel-2)"><svg width="13" height="13" viewBox="0 0 14 14" style="vertical-align:-2px"><rect x="2" y="2" width="10" height="10" rx="1.5" fill="currentColor"/></svg> quadrado = credenciais</span>'
         '<span style="color:var(--steel-2)"><svg width="13" height="13" viewBox="0 0 14 14" style="vertical-align:-2px"><polygon points="7,1 12.2,4 12.2,10 7,13 1.8,10 1.8,4" fill="currentColor"/></svg> hexágono = typosquat</span>'
         '</div>'
+        # Modo compacto (padrão): o IP concentra seus subdomínios em vez de estourar
+        # uma bolinha para cada um — mantém o grafo legível e rápido.
+        '<div style="display:flex;align-items:center;gap:8px;margin:2px 0 10px;flex-wrap:wrap">'
+        '<label style="display:inline-flex;align-items:center;gap:7px;font-size:12.5px;cursor:pointer">'
+        '<input type="checkbox" id="corr-compacto" checked style="accent-color:var(--accent)" '
+        'onchange="window.__corrCompacto&&window.__corrCompacto(this.checked)">'
+        '<span>Agrupar subdomínios no IP <span class="page-sub" style="font-size:11.5px">'
+        '(recomendado — clique no IP para ver a lista)</span></span></label></div>'
+        '<div id="corr-aviso" class="page-sub" style="display:none;margin:0 0 10px;font-size:12px;'
+        'border-left:3px solid var(--orange);padding-left:9px"></div>'
         # Filtro de severidade (item 2): clique para mostrar SÓ os níveis ligados.
         '<div class="sevbar" role="group" aria-label="Filtrar por criticidade">'
         '<span style="font-size:12px;color:var(--muted)">mostrar:</span>'

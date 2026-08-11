@@ -224,22 +224,74 @@ def get_ip_report_safe(ip: str) -> dict:
 
 # ── enriquecimento em lote + elevação de risco ───────────────────────────────
 
-def enrich_results(results: list) -> None:
-    """Anexa `vt` a cada item que tenha IP público. Idempotente e tolerante a falha."""
+def _priority(rows: list) -> int:
+    """Quanto este IP merece uma consulta ao VirusTotal (maior = antes).
+
+    O plano gratuito permite ~4 consultas/minuto: varrer TODOS os IPs deixaria o
+    scan inviável (200 IPs ≈ 53 min só aqui). Em vez disso, gastamos o orçamento
+    onde há sinal — IP que já tem CVE, KEV, má reputação ou porta crítica é o que
+    realmente muda a decisão do analista. O resto entra nas próximas rodadas.
+    """
+    score = 0
+    for r in rows:
+        kev = (r.get("kev") or {}).get("kev_count", 0) or 0
+        idb = (r.get("internetdb") or {}).get("vuln_count", 0) or 0
+        abuse = (r.get("abuse") or {}).get("score", -1)
+        risk = str(r.get("risk", "")).upper()
+        if kev:                       score = max(score, 100)   # explorada in-the-wild
+        if idb:                       score = max(score, 80)    # CVE conhecida
+        if isinstance(abuse, int) and abuse > 0:
+            score = max(score, 60 + min(abuse // 10, 9))        # já tem denúncia
+        if risk == "CRITICO":         score = max(score, 50)
+        elif risk == "ALTO":          score = max(score, 40)
+    return score
+
+
+def enrich_results(results: list, budget: int | None = None) -> None:
+    """Anexa `vt` aos itens com IP público. Idempotente e tolerante a falha.
+
+    `budget` limita quantas CONSULTAS NOVAS podem ser feitas nesta execução (o que
+    já está em cache não conta). Os IPs são atendidos por prioridade: quem tem
+    sinal de risco primeiro; o restante fica para as próximas rodadas — assim a
+    cobertura cresce a cada dia sem travar o scan.
+    """
     if not has_api_key():
         return
-    ips = {}
+    ips: dict[str, list] = {}
     for r in results:
         ip = (r.get("ip") or "").strip()
         if ip and is_public_ip(ip):
             ips.setdefault(ip, []).append(r)
     if not ips:
         return
-    print(f"[VT] {len(ips)} IP(s) único(s) — VirusTotal (cache TTL {_CACHE_TTL // 3600}h)")
-    detected = 0
+    if budget is None:
+        budget = int(CONFIG.get("virustotal_scan_budget", 40))
+
+    # 1) Cache primeiro: é instantâneo e não consome cota nem orçamento.
+    pendentes: list[tuple[int, str]] = []
+    do_cache = 0
     for ip, rows in ips.items():
+        cached = _cache_get(_CACHE_DIR / f"{_safe_name(ip)}.json")
+        if cached is not None:
+            for r in rows:
+                r["vt"] = cached
+            do_cache += 1
+        else:
+            pendentes.append((_priority(rows), ip))
+
+    # 2) O que sobrou entra por prioridade, dentro do orçamento da execução.
+    pendentes.sort(key=lambda t: (-t[0], t[1]))
+    alvo = [ip for _, ip in pendentes[:max(0, budget)]]
+    adiados = len(pendentes) - len(alvo)
+    espera = int(len(alvo) * _THROTTLE_S / 60)
+    print(f"[VT] {len(ips)} IP(s) único(s) — {do_cache} do cache, {len(alvo)} nova(s) consulta(s)"
+          + (f", {adiados} adiado(s) p/ a próxima rodada" if adiados else "")
+          + (f" (~{espera} min)" if espera >= 1 else ""))
+
+    detected = 0
+    for ip in alvo:
         rep = get_ip_report_safe(ip)
-        for r in rows:
+        for r in ips[ip]:
             r["vt"] = rep
         if rep.get("detected"):
             detected += 1

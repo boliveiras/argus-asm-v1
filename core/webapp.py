@@ -135,7 +135,8 @@ def correlation_graph(base: str | None = None) -> dict:
     mons = _ro_rows(str(b / "monitor" / "monitor.db"),
                     f"SELECT campanha,ip,port,protocol,service,asn,risk,abuse_score,abuse_country,abuse_isp,"  # nosec B608 - colunas fixas, status via constante _ACTIVE
                     f"abuse_tor,abuse_reports,abuse_last,idb_vuln_count,idb_vulns,idb_tags,kev_count,kev_cves,"
-                    f"nvd_max_score,nvd_severity,nvd_scores FROM scans WHERE status IN {_ACTIVE}")
+                    f"nvd_max_score,nvd_severity,nvd_scores,vt_malicious,vt_suspicious,vt_reputation,vt_owner "
+                    f"FROM scans WHERE status IN {_ACTIVE}")
     creds = _ro_rows(str(b / "credentials" / "credentials.db"),
                      f"SELECT campanha,domain,total,employees,users,third_parties,top_url,risk "  # nosec B608 - colunas fixas, status via constante _ACTIVE
                      f"FROM domains WHERE status IN {_ACTIVE} AND total>0")
@@ -155,7 +156,8 @@ def correlation_graph(base: str | None = None) -> dict:
         a = ipagg.setdefault(ip, {"ports": set(), "asn": "", "risk": "INFO", "cve": 0, "kev": 0,
                                   "cvss": 0.0, "abuse": -1, "country": "", "isp": "", "tor": 0,
                                   "reports": 0, "last": "", "kev_cves": set(), "cves": set(),
-                                  "tags": set(), "services": set()})
+                                  "tags": set(), "services": set(),
+                                  "vt_mal": 0, "vt_sus": 0, "vt_rep": 0, "vt_owner": ""})
         if r.get("port"):
             a["ports"].add(f"{r.get('port')}/{r.get('protocol') or 'tcp'}")
         if r.get("service"):
@@ -171,6 +173,12 @@ def correlation_graph(base: str | None = None) -> dict:
             if c.strip(): a["cves"].add(c.strip())
         for t in (r.get("idb_tags") or "").split(","):
             if t.strip(): a["tags"].add(t.strip())
+        vm = int(r.get("vt_malicious") or 0)
+        if vm > a.get("vt_mal", 0):
+            a["vt_mal"] = vm
+            a["vt_sus"] = int(r.get("vt_suspicious") or 0)
+            a["vt_rep"] = int(r.get("vt_reputation") or 0)
+            a["vt_owner"] = r.get("vt_owner") or ""
         sc = r.get("abuse_score")
         if sc is not None and sc >= 0 and sc > a["abuse"]:
             a["abuse"] = int(sc); a["country"] = r.get("abuse_country") or ""
@@ -220,6 +228,7 @@ def correlation_graph(base: str | None = None) -> dict:
     edges: list = []                 # visão por subdomínio: campanha → domínio → subdomínio → IP
     edges_ip: list = []              # visão por IP:         campanha → domínio → IP → subdomínios
     ip_subcount: dict[str, int] = {} # nº de subdomínios que resolvem p/ cada IP (raio de explosão)
+    ip_members: dict[str, list] = {}  # subdomínios de cada IP — listados ao clicar, sem virar nó
 
     def node(nid, ntype, label, risk="INFO", detail=None):
         n = nodes.get(nid)
@@ -286,6 +295,9 @@ def correlation_graph(base: str | None = None) -> dict:
         if ip:
             ipid = "ip:" + ip
             ip_subcount[ipid] = ip_subcount.get(ipid, 0) + 1
+            ip_members.setdefault(ipid, []).append({"host": host, "risk": srisk,
+                                                    "http": r.get("http_status") or "",
+                                                    "camp": camp})
             ag = ipagg.get(ip, {})
             iprisk = _worse(ag.get("risk", "INFO"), srisk)
             det = [["ASN", ag.get("asn") or r.get("asn") or "—"],
@@ -303,6 +315,15 @@ def correlation_graph(base: str | None = None) -> dict:
                 det.append(["Explorada in-the-wild (KEV)", ", ".join(sorted(ag.get("kev_cves", []))) or "sim"])
             if ag.get("cvss", 0):
                 det.append(["CVSS máx (NVD)", f"{ag['cvss']:.1f}"])
+            if ag.get("vt_mal") or ag.get("vt_owner"):
+                _vt = f"{ag.get('vt_mal', 0)} motor(es) apontam malicioso"
+                if ag.get("vt_sus"):
+                    _vt += f" · {ag['vt_sus']} suspeito(s)"
+                if ag.get("vt_rep"):
+                    _vt += f" · reputação {ag['vt_rep']}"
+                det.append(["VirusTotal", _vt])
+                if ag.get("vt_owner"):
+                    det.append(["Provedor (VirusTotal)", ag["vt_owner"]])
             if ag.get("tags"):
                 det.append(["Tags (Shodan)", ", ".join(sorted(ag["tags"]))])
             node(ipid, "ip", ip, iprisk, det)
@@ -402,6 +423,10 @@ def correlation_graph(base: str | None = None) -> dict:
     for ipid, cnt in ip_subcount.items():
         if ipid in nodes:
             nodes[ipid]["deg"] = cnt
+            # Lista dos subdomínios servidos por este IP: o painel mostra ao clicar,
+            # em vez de desenhar uma bolinha para cada um (o que travava o grafo).
+            nodes[ipid]["members"] = sorted(ip_members.get(ipid, []),
+                                            key=lambda m: (_RANK.get(m["risk"], 4), m["host"]))[:500]
 
     # Detalhe sintético para campanhas e domínios (contagens).
     for n in nodes.values():

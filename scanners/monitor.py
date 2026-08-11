@@ -287,7 +287,11 @@ def init_database():
             kev_cves       TEXT DEFAULT '',
             nvd_max_score  REAL DEFAULT 0,
             nvd_severity   TEXT DEFAULT '',
-            nvd_scores     TEXT DEFAULT ''
+            nvd_scores     TEXT DEFAULT '',
+            vt_malicious   INTEGER DEFAULT 0,
+            vt_suspicious  INTEGER DEFAULT 0,
+            vt_reputation  INTEGER DEFAULT 0,
+            vt_owner       TEXT DEFAULT ''
         )
     """)
     # Migração idempotente: adiciona colunas que faltarem em bancos antigos.
@@ -302,7 +306,9 @@ def init_database():
                      ("idb_tags","TEXT DEFAULT ''"),("idb_ports","TEXT DEFAULT ''"),
                      ("kev_count","INTEGER DEFAULT 0"),("kev_cves","TEXT DEFAULT ''"),
                      ("nvd_max_score","REAL DEFAULT 0"),("nvd_severity","TEXT DEFAULT ''"),
-                     ("nvd_scores","TEXT DEFAULT ''")]:
+                     ("nvd_scores","TEXT DEFAULT ''"),
+                     ("vt_malicious","INTEGER DEFAULT 0"),("vt_suspicious","INTEGER DEFAULT 0"),
+                     ("vt_reputation","INTEGER DEFAULT 0"),("vt_owner","TEXT DEFAULT ''")]:
         try: cursor.execute(f"ALTER TABLE scans ADD COLUMN {col} {dfn}")
         except sqlite3.OperationalError: pass
     for col in ("waf",):
@@ -629,6 +635,15 @@ def _nvd_cols(result: dict) -> tuple:
     return (float(n.get("max_cvss", 0) or 0), str(n.get("max_severity", "") or ""), scores)
 
 
+def _vt_cols(result: dict) -> tuple:
+    """Resumo do VirusTotal para persistir: (motores maliciosos, suspeitos,
+    reputação da comunidade, provedor do AS). Permite o relatório reconstruir do
+    banco sem consultar a API de novo."""
+    v = result.get("vt") or {}
+    return (int(v.get("malicious", 0) or 0), int(v.get("suspicious", 0) or 0),
+            int(v.get("reputation", 0) or 0), str(v.get("as_owner", "") or "")[:80])
+
+
 def _abuse_cols(result: dict) -> tuple:
     """Extrai o resumo do AbuseIPDB (por IP) de um resultado para persistir no
     banco. Sem dados -> score -1 (= 'sem reputação')."""
@@ -663,6 +678,7 @@ def process_results(scan_results: list[dict], scanned_protocols=("tcp",)):
         ab = _abuse_cols(result)
         idb = _idb_cols(result)
         kev = _kev_cols(result)
+        vt  = _vt_cols(result)
         nvd = _nvd_cols(result)
         cursor.execute("SELECT id, status FROM scans WHERE ip=? AND port=? AND protocol=? ORDER BY id DESC LIMIT 1", key)
         existing = cursor.fetchone()
@@ -674,20 +690,22 @@ def process_results(scan_results: list[dict], scanned_protocols=("tcp",)):
                 "UPDATE scans SET last_seen=?,service=?,banner=?,state=?,risk=?,status=?,asn=?,campanha=?,"
                 "abuse_score=?,abuse_country=?,abuse_isp=?,abuse_usage=?,abuse_tor=?,abuse_reports=?,abuse_last=?,abuse_source=?,"
                 "idb_vuln_count=?,idb_vulns=?,idb_tags=?,idb_ports=?,kev_count=?,kev_cves=?,"
+                "vt_malicious=?,vt_suspicious=?,vt_reputation=?,vt_owner=?,"
                 "nvd_max_score=?,nvd_severity=?,nvd_scores=? WHERE id=?",
                 (now, result["service"], result["banner"], result["state"],
-                 result["risk"], new_status, result["asn"], result["campanha"], *ab, *idb, *kev, *nvd, existing[0]))
+                 result["risk"], new_status, result["asn"], result["campanha"], *ab, *idb, *kev, *vt, *nvd, existing[0]))
         else:
             result["status"] = "NOVO"; novos.append(result); syslog_port(result)
             cursor.execute(
                 "INSERT INTO scans (campanha,target,resolved_ip,ip,port,protocol,service,banner,state,ip_type,asn,risk,first_seen,last_seen,status,"
                 "abuse_score,abuse_country,abuse_isp,abuse_usage,abuse_tor,abuse_reports,abuse_last,abuse_source,"
                 "idb_vuln_count,idb_vulns,idb_tags,idb_ports,kev_count,kev_cves,"
+                "vt_malicious,vt_suspicious,vt_reputation,vt_owner,"
                 "nvd_max_score,nvd_severity,nvd_scores) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (result["campanha"],result["target"],result["resolved_ip"],result["ip"],result["port"],
                  result["protocol"],result["service"],result["banner"],result["state"],result["ip_type"],
-                 result["asn"],result["risk"],now,now,"NOVO", *ab, *idb, *kev, *nvd))
+                 result["asn"],result["risk"],now,now,"NOVO", *ab, *idb, *kev, *vt, *nvd))
 
     # Fechar apenas portas do(s) protocolo(s) varrido(s) E sem serem vistas há
     # ≥ CLOSE_GRACE_DAYS (carência contra "misses" transitórios).
@@ -712,12 +730,14 @@ def process_results(scan_results: list[dict], scanned_protocols=("tcp",)):
 _REPORT_COLS = ("campanha,target,resolved_ip,ip,port,protocol,service,banner,ip_type,asn,risk,status,"
                 "abuse_score,abuse_country,abuse_isp,abuse_usage,abuse_tor,abuse_reports,abuse_last,abuse_source,"
                 "idb_vuln_count,idb_vulns,idb_tags,idb_ports,kev_count,kev_cves,"
+                "vt_malicious,vt_suspicious,vt_reputation,vt_owner,"
                 "nvd_max_score,nvd_severity,nvd_scores")
 
 def _row_to_result(row) -> dict:
     (campanha,target,resolved_ip,ip,port,protocol,service,banner,ip_type,asn,risk,status,
      ab_score,ab_country,ab_isp,ab_usage,ab_tor,ab_reports,ab_last,ab_source,
      idb_vc,idb_vulns,idb_tags,idb_ports,kev_count,kev_cves,
+     vt_mal,vt_sus,vt_rep,vt_owner,
      nvd_max_score,nvd_severity,nvd_scores) = row
     abuse = None
     if ab_score is not None and ab_score >= 0:
@@ -737,6 +757,11 @@ def _row_to_result(row) -> dict:
     if (kev_count or 0) > 0:
         kev = {"kev_count": int(kev_count or 0),
                "kev_cves": [c for c in (kev_cves or "").split(",") if c]}
+    vt = None
+    if (vt_mal or 0) or (vt_sus or 0) or (vt_rep or 0) or (vt_owner or ""):
+        vt = {"malicious": int(vt_mal or 0), "suspicious": int(vt_sus or 0),
+              "reputation": int(vt_rep or 0), "as_owner": vt_owner or "",
+              "detected": int(vt_mal or 0) >= 2, "seen": True, "source": "db"}
     nvd = None
     if (nvd_max_score or 0) > 0:
         scores = {}
@@ -751,7 +776,7 @@ def _row_to_result(row) -> dict:
     return {"campanha":campanha or "","target":target or "","resolved_ip":resolved_ip or "",
             "ip":ip or "","port":port,"protocol":protocol or "","service":service or "",
             "banner":banner or "","state":"open","ip_type":ip_type or "","asn":asn or "",
-            "risk":risk or "BAIXO","status":status or "","abuse":abuse,"internetdb":internetdb,"kev":kev,"nvd":nvd}
+            "risk":risk or "BAIXO","status":status or "","abuse":abuse,"internetdb":internetdb,"kev":kev,"vt":vt,"nvd":nvd}
 
 def load_report_rows():
     """Monta a entrada do relatório a partir do estado COMPLETO do banco (TCP+UDP):

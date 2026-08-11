@@ -43,7 +43,7 @@ oficial de cada falha) — e tudo vira achado:
 ```mermaid
 flowchart LR
     A["Seus alvos<br/>(IPs e domínios)"] --> SC
-    TI["Inteligência de ameaças<br/>AbuseIPDB · Shodan · CISA KEV · NVD · crt.sh · RDAP"] --> SC
+    TI["Inteligência de ameaças<br/>AbuseIPDB · VirusTotal · Shodan · CISA KEV<br/>NVD · crt.sh · RDAP"] --> SC
     SC["Os 5 scanners<br/>Portas · Subdomínios · Credenciais<br/>E-mail · Domínios sósia"] --> DB[("Achados<br/>argus.db")]
     DB --> P["Portal web<br/>(você vê e trata)"]
     DB --> R["Relatórios + logs"]
@@ -92,6 +92,13 @@ como um grafo: você clica e expande — campanha → domínios → subdomínios
 e cada bolinha tem a **cor da sua criticidade**. Clicar em qualquer item abre o que se
 sabe dele (o enriquecimento).
 
+Quando a superfície é grande, desenhar centenas de bolinhas só atrapalha. Por isso o mapa
+vem **agrupado pelo IP**: cada IP aparece uma vez, com o tamanho e o número de hosts que
+ele concentra (`203.0.113.1 (50)`), e a lista completa desses hosts — ordenada da maior
+criticidade para a menor — abre ao clicar nele, junto do enriquecimento. Quem quiser ver
+tudo espalhado desliga o agrupamento em uma caixinha; o mapa avisa se precisou deixar
+itens de fora para continuar fluido.
+
 Exemplo (dados fictícios): `api` e `vpn` resolvem para o **mesmo IP**, que está exposto
 e tem uma CVE explorada:
 
@@ -131,6 +138,7 @@ Depois de instalado, você não precisa mais editar arquivo no servidor para ope
 | **Campanhas** | Cadastrar, editar, renomear e excluir os alvos — IPs/faixas (portas) e domínios (subdomínios). Renomear **leva o histórico junto**; excluir só tira do escopo e **preserva os achados**. |
 | **Wordlist** | Editar os prefixos usados na descoberta de subdomínios (`api`, `vpn`, `abt.cleverdata`…). Já vem com **100 prefixos** prontos e nunca aceita ficar vazia. |
 | **▶ Executar agora** | Roda a sequência completa na hora, sem esperar o agendamento, com **barra de progresso** etapa a etapa. Um de cada vez: enquanto roda, o botão fica travado. |
+| **Provedores** | Ligar/desligar cada fonte de inteligência e guardar as chaves de API — AbuseIPDB, VirusTotal, urlscan.io, NVD, CISA KEV, Shodan InternetDB, Hudson Rock, crt.sh e WHOIS. Nada de chave em arquivo no servidor: cadastra pela tela, e a tela nunca mostra a chave de volta (só o final mascarado). Fonte desligada é simplesmente pulada no scan. |
 | **Usuários** | Contas de acesso e perfis (veja abaixo). |
 
 ### Quem pode o quê

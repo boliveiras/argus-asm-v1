@@ -30,6 +30,7 @@
     "virustotal_cache_ttl_hours": 168,
     "virustotal_min_malicious": 2,
     "virustotal_throttle_seconds": 16,
+    "virustotal_scan_budget": 40,
     "nvd_api_key": "SUA_API_KEY_AQUI",
     "nvd_request_timeout": 20,
     "nvd_daily_request_limit": 1000,

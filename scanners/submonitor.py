@@ -235,7 +235,11 @@ def syslog_host(result: dict):
                  urlscan_ip     = str((result.get("urlscan") or {}).get("ip","")),
                  urlscan_asn    = str((result.get("urlscan") or {}).get("asnname","")),
                  urlscan_country= str((result.get("urlscan") or {}).get("country","")),
-                 urlscan_uuid   = str((result.get("urlscan") or {}).get("scan_uuid","")))
+                 urlscan_uuid   = str((result.get("urlscan") or {}).get("scan_uuid","")),
+                 vt_malicious   = str((result.get("virustotal") or {}).get("malicious","")),
+                 vt_suspicious  = str((result.get("virustotal") or {}).get("suspicious","")),
+                 vt_reputation  = str((result.get("virustotal") or {}).get("reputation","")),
+                 vt_owner       = str((result.get("virustotal") or {}).get("as_owner","")))
 
 def syslog_error(context: str, exc: Exception):
     syslog_write("ERR","SCAN_ERR",f"{context}: {exc}",
