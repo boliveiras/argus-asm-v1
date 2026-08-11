@@ -146,6 +146,12 @@ CLOSED_WINDOW_DAYS = 7
 CLOSE_GRACE_DAYS = int(os.environ.get("ARGUS_CLOSE_GRACE_DAYS", "3"))
 
 ASN_BATCH_SIZE = 100
+# Resolução de ASN: quantas vezes repetir e quanto esperar. A cota do ip-api é por
+# minuto, então vale a pena aguardar o reset em vez de desistir e gravar
+# "ASN desconhecido" — valor que fica visível no relatório até um scan futuro acertar.
+ASN_MAX_TENTATIVAS = 3
+ASN_ESPERA_ERRO    = 3      # segundos entre tentativas em erro genérico
+ASN_ESPERA_MAX     = 65     # teto de espera no HTTP 429 (janela do ip-api = 60s)
 
 # ============================================================
 # SYSLOG RFC 5424
@@ -418,29 +424,58 @@ def resolve_asn_bulk(results: list[dict]) -> None:
                 ip_indices.setdefault(r["ip"], []).append(idx)
     unique_ips = list(ip_indices.keys())
     if not unique_ips: return
-    print(f"[ASN] Resolvendo {len(unique_ips)} IPs novos...")
+    print(f"[ASN] Resolvendo {len(unique_ips)} IP(s) novo(s)...")
     cache: dict[str, str] = {}
     for i in range(0, len(unique_ips), ASN_BATCH_SIZE):
         batch = unique_ips[i:i+ASN_BATCH_SIZE]
-        try:
-            resp = requests.post("http://ip-api.com/batch",
-                json=[{"query":ip,"fields":"query,org,as,status"} for ip in batch], timeout=15)
-            if resp.status_code == 200:
-                for entry in resp.json():
-                    ip_key = entry.get("query","")
-                    cache[ip_key] = (entry.get("org") or entry.get("as") or "ASN desconhecido") if entry.get("status")=="success" else "ASN desconhecido"
-        except Exception: pass
+        # Retry com espera: a cota do ip-api é por minuto (HTTP 429 devolve o tempo de
+        # reset em X-Ttl). Sem repetir, um único soluço de rede/cota gravava
+        # "ASN desconhecido" no banco — e o registro só melhorava se um scan futuro
+        # desse sorte, porque _load_known_asn() ignora justamente esse valor.
+        for tentativa in range(1, ASN_MAX_TENTATIVAS + 1):
+            try:
+                resp = requests.post("http://ip-api.com/batch",
+                    json=[{"query":ip,"fields":"query,org,as,status"} for ip in batch], timeout=15)
+                if resp.status_code == 200:
+                    for entry in resp.json():
+                        ip_key = entry.get("query","")
+                        cache[ip_key] = (entry.get("org") or entry.get("as") or "ASN desconhecido") if entry.get("status")=="success" else "ASN desconhecido"
+                    break
+                if resp.status_code == 429:                      # cota da janela estourada
+                    espera = min(int(resp.headers.get("X-Ttl", 5) or 5) + 1, ASN_ESPERA_MAX)
+                    print(f"[ASN] cota do ip-api esgotada (HTTP 429) — aguardando {espera}s "
+                          f"(tentativa {tentativa}/{ASN_MAX_TENTATIVAS})")
+                    if tentativa < ASN_MAX_TENTATIVAS: time.sleep(espera)
+                    continue
+                print(f"[ASN] ip-api respondeu HTTP {resp.status_code} "
+                      f"(tentativa {tentativa}/{ASN_MAX_TENTATIVAS})")
+            except Exception as exc:                             # timeout, DNS, conexão
+                print(f"[ASN] ip-api falhou: {type(exc).__name__}: {exc} "
+                      f"(tentativa {tentativa}/{ASN_MAX_TENTATIVAS})")
+            if tentativa < ASN_MAX_TENTATIVAS: time.sleep(ASN_ESPERA_ERRO)
+    # Fallback por IP (ipinfo.io) para o que o batch não resolveu.
     for ip in unique_ips:
         if cache.get(ip,"ASN desconhecido") == "ASN desconhecido":
             try:
-                r = requests.get(f"https://ipinfo.io/{ip}/org", timeout=5)
+                r = requests.get(f"https://ipinfo.io/{ip}/org", timeout=8)
                 if r.status_code == 200 and r.text.strip(): cache[ip] = r.text.strip()
-            except Exception: pass
+                else: print(f"[ASN] ipinfo HTTP {r.status_code} para {ip}")
+            except Exception as exc:
+                print(f"[ASN] ipinfo falhou para {ip}: {type(exc).__name__}: {exc}")
+    nao_resolvidos = []
     for ip, indices in ip_indices.items():
         resolved = cache.get(ip, "ASN desconhecido")
         if resolved == "ASN desconhecido":
+            nao_resolvidos.append(ip)
             continue                    # falhou e é IP novo — mantém 'desconhecido', nunca rebaixa um bom
         for idx in indices: results[idx]["asn"] = resolved
+    ok = len(unique_ips) - len(nao_resolvidos)
+    print(f"[ASN] {ok}/{len(unique_ips)} resolvido(s)")
+    if nao_resolvidos:
+        # Visível de propósito: 'ASN desconhecido' na tela é consequência DISTO, e sem
+        # esta linha a causa (cota, timeout, DNS) não ficava registrada em lugar nenhum.
+        print(f"[ASN] sem resposta para: {', '.join(nao_resolvidos[:10])}"
+              + (f" (+{len(nao_resolvidos)-10})" if len(nao_resolvidos) > 10 else ""))
 
 # ============================================================
 # RISK

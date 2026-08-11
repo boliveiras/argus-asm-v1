@@ -142,6 +142,10 @@ CLOSE_GRACE_DAYS = int(os.environ.get("ARGUS_CLOSE_GRACE_DAYS", "3"))
 TIMEOUT     = 5
 CONCURRENCY = 25
 ASN_BATCH_SIZE = 100
+# Mesma política do monitor: repetir antes de desistir. Cota do ip-api é por minuto.
+ASN_MAX_TENTATIVAS = 3
+ASN_ESPERA_ERRO    = 3
+ASN_ESPERA_MAX     = 65
 PREFIXES = ["", "prod-", "hml-", "dev-", "aceite-"]
 
 # ============================================================
@@ -382,27 +386,47 @@ def get_ip_type(ip: str) -> str:
     except Exception: return "DESCONHECIDO"
 
 async def _batch_asn_ipapi(session: aiohttp.ClientSession, ips: list[str]) -> dict[str, str]:
+    """Resolve ASN em lote. Repete em 429 (a cota do ip-api é por minuto) e registra o
+    motivo de cada falha: sem isso, um soluço de rede virava "ASN desconhecido" gravado
+    no banco, sem nenhum registro de por quê."""
     result: dict[str, str] = {}
-    try:
-        async with session.post("http://ip-api.com/batch",
-            json=[{"query":ip,"fields":"query,org,as,status"} for ip in ips],
-            timeout=aiohttp.ClientTimeout(total=15)) as resp:
-            if resp.status == 200:
-                for entry in await resp.json(content_type=None):
-                    ip_key = entry.get("query","")
-                    result[ip_key] = (entry.get("org") or entry.get("as") or "ASN desconhecido") \
-                        if entry.get("status")=="success" else "ASN desconhecido"
-    except Exception: pass
+    for tentativa in range(1, ASN_MAX_TENTATIVAS + 1):
+        try:
+            async with session.post("http://ip-api.com/batch",
+                json=[{"query":ip,"fields":"query,org,as,status"} for ip in ips],
+                timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                if resp.status == 200:
+                    for entry in await resp.json(content_type=None):
+                        ip_key = entry.get("query","")
+                        result[ip_key] = (entry.get("org") or entry.get("as") or "ASN desconhecido")                             if entry.get("status")=="success" else "ASN desconhecido"
+                    return result
+                if resp.status == 429:
+                    espera = min(int(resp.headers.get("X-Ttl", 5) or 5) + 1, ASN_ESPERA_MAX)
+                    print(f"[ASN] cota do ip-api esgotada (HTTP 429) — aguardando {espera}s "
+                          f"(tentativa {tentativa}/{ASN_MAX_TENTATIVAS})")
+                    if tentativa < ASN_MAX_TENTATIVAS: await asyncio.sleep(espera)
+                    continue
+                print(f"[ASN] ip-api respondeu HTTP {resp.status} "
+                      f"(tentativa {tentativa}/{ASN_MAX_TENTATIVAS})")
+        except Exception as exc:
+            print(f"[ASN] ip-api falhou: {type(exc).__name__}: {exc} "
+                  f"(tentativa {tentativa}/{ASN_MAX_TENTATIVAS})")
+        if tentativa < ASN_MAX_TENTATIVAS: await asyncio.sleep(ASN_ESPERA_ERRO)
     return result
 
 async def _single_asn_ipinfo(session: aiohttp.ClientSession, ip: str) -> str:
+    ultimo = ""
     for url in (f"https://ipinfo.io/{ip}/org", f"http://ipinfo.io/{ip}/org"):
         try:
             async with session.get(url, timeout=aiohttp.ClientTimeout(total=TIMEOUT)) as resp:
                 if resp.status == 200:
                     text = (await resp.text()).strip()
                     if text: return text
-        except Exception: continue
+                ultimo = f"HTTP {resp.status}"
+        except Exception as exc:
+            ultimo = f"{type(exc).__name__}: {exc}"
+            continue
+    if ultimo: print(f"[ASN] ipinfo falhou para {ip}: {ultimo}")
     return "ASN desconhecido"
 
 def _load_known_asn() -> dict:
@@ -443,11 +467,18 @@ async def resolve_asn_bulk(session: aiohttp.ClientSession, results: list[dict]) 
     if failed:
         print(f"[ASN] Fallback ipinfo.io para {len(failed)} IPs...")
         await asyncio.gather(*[fallback(ip) for ip in failed])
+    nao_resolvidos = []
     for ip, indices in ip_indices.items():
         resolved = asn_cache.get(ip, "ASN desconhecido")
         if resolved == "ASN desconhecido":
+            nao_resolvidos.append(ip)
             continue                    # falhou e é IP novo — mantém 'desconhecido', nunca rebaixa um bom
         for idx in indices: results[idx]["asn"] = resolved
+    ok = len(unique_ips) - len(nao_resolvidos)
+    print(f"[ASN] {ok}/{len(unique_ips)} resolvido(s)")
+    if nao_resolvidos:
+        print(f"[ASN] sem resposta para: {', '.join(nao_resolvidos[:10])}"
+              + (f" (+{len(nao_resolvidos)-10})" if len(nao_resolvidos) > 10 else ""))
 
 # ============================================================
 # RISCO

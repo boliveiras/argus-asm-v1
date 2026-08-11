@@ -68,6 +68,10 @@ BIN = Path(os.environ.get("ARGUS_BIN", "/usr/local/bin"))
 
 # Timeout por passo (segundos). UDP e submonitor são naturalmente demorados.
 STEP_TIMEOUT = int(os.environ.get("ARGUS_STEP_TIMEOUT", str(4 * 60 * 60)))
+# Saída completa de cada etapa. O scan agendado grava stdout via cron; o disparado
+# pela web não tinha destino nenhum, então a saída sumia quando o passo terminava
+# bem — e diagnosticar depois virava impossível (foi o que aconteceu com o "[ASN]").
+LOG_DIR = Path(os.environ.get("ARGUS_SCAN_LOG_DIR", "/var/log/argus/scan"))
 
 # Sequência FIXA (constante de código — nunca vem da Web).
 STEPS: list[dict] = [
@@ -82,6 +86,25 @@ STEPS: list[dict] = [
 
 def _now() -> str:
     return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _gravar_saida(chave: str, cmd: list, rc: int, saida: str) -> None:
+    """Grava a saída completa da etapa em /var/log/argus/scan/<chave>.log.
+
+    Sobrescreve a cada execução: interessa o último run, não histórico infinito.
+    Nunca deixa o log derrubar o scan — problema de disco/permissão só avisa.
+    Modo 0640 root:adm segue o padrão dos demais logs do Argus (PCI 10.3).
+    """
+    try:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        destino = LOG_DIR / f"{chave}.log"
+        cabecalho = (f"# {' '.join(cmd)}\n"
+                     f"# fim: {time.strftime('%Y-%m-%d %H:%M:%S')} | rc={rc}\n\n")
+        fd = os.open(destino, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o640)
+        with os.fdopen(fd, "w", encoding="utf-8", errors="replace") as fh:
+            fh.write(cabecalho); fh.write(saida)
+    except Exception as exc:
+        print(f"  [AVISO] não consegui gravar o log de {chave}: {exc}", file=sys.stderr)
 
 
 def _write_status(state: dict) -> None:
@@ -155,6 +178,7 @@ def run_all(actor: str = "web") -> int:
                 text=True, errors="replace")
             rc = proc.returncode
             status = "ok" if rc == 0 else "fail"
+            _gravar_saida(step["key"], step["cmd"], rc, proc.stdout or "")
             if rc != 0:
                 lines = [ln.strip() for ln in (proc.stdout or "").splitlines() if ln.strip()]
                 detail = " | ".join(lines[-3:])[:300]
