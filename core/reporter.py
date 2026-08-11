@@ -701,6 +701,10 @@ _NAV_ICONS = {
     "campanhas":  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">'
                   '<circle cx="8" cy="8" r="5.6"/><circle cx="8" cy="8" r="2.2"/>'
                   '<path d="M8 .8v2.2M8 13v2.2M.8 8h2.2M13 8h2.2" stroke-linecap="round"/></svg>',
+    # Fontes de inteligência — antena/sinal (enriquecimento externo)
+    "provedores": '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">'
+                  '<circle cx="8" cy="11.6" r="1.7"/>'
+                  '<path d="M4.6 8.2a4.8 4.8 0 0 1 6.8 0M2.2 5.6a8.2 8.2 0 0 1 11.6 0" stroke-linecap="round"/></svg>',
     # Usuários — pessoa + contorno de grupo (contas e perfis de acesso)
     "usuarios":   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">'
                   '<circle cx="6.4" cy="5.4" r="2.6"/>'
@@ -739,6 +743,7 @@ def _topbar(active: str) -> str:
         ("email",       "/email_report.html",       "E-mail"),
         ("typosquat",   "/typosquat_report.html",   "Typosquat"),
         ("campanhas",   "/campanhas.html",          "Campanhas"),
+        ("provedores",  "/provedores.html",         "Fontes"),
         ("usuarios",    "/usuarios.html",           "Usuários"),
         ("risk",        "/risk-guide.html",         "Guia de Risco"),
     ]
@@ -4718,6 +4723,143 @@ def build_campaigns_page() -> str:
         body, extra_script=_CAMP_SCRIPT)
 
 
+_PROV_SCRIPT = r"""<script>
+(function(){
+  var LIST=[];
+  function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+  function show(id){['p-off','p-main'].forEach(function(x){var e=document.getElementById(x);if(e)e.style.display=(x===id?'block':'none');});}
+  function msg(text,kind){
+    var b=document.getElementById('p-msg'); if(!b)return;
+    if(!text){b.style.display='none';return;}
+    var col=kind==='err'?'var(--red)':'var(--green)';
+    b.style.display='block'; b.style.borderLeft='3px solid '+col;
+    b.innerHTML='<span style="color:'+col+';font-weight:700">'+(kind==='err'?'Erro':'Pronto')+'</span> &middot; '+esc(text);
+    if(kind!=='err') setTimeout(function(){b.style.display='none';},5000);
+  }
+  function api(url,body){
+    return fetch(url,{method:'POST',headers:{'Content-Type':'application/json','X-Requested-With':'argus'},
+      body:JSON.stringify(body)}).then(function(r){
+      return r.json().catch(function(){return {ok:false,error:'resposta inválida'};})
+        .then(function(j){ if(!r.ok||!j.ok) throw new Error(j.error||('HTTP '+r.status)); return j; });
+    });
+  }
+  function load(){
+    fetch('/api/providers',{cache:'no-store'}).then(function(r){return r.json();}).then(function(j){
+      if(!j.ok) throw 0;
+      LIST=j.providers||[]; show('p-main'); render();
+    }).catch(function(){ show('p-off'); });
+  }
+  function render(){
+    var host=document.getElementById('p-list'); if(!host)return;
+    var ativos=LIST.filter(function(p){return p.active;}).length;
+    var c=document.getElementById('p-count'); if(c) c.textContent=ativos+' de '+LIST.length;
+    host.innerHTML=LIST.map(function(p){
+      var estado = p.active ? '<span class="prov-on">em uso</span>'
+                 : (p.enabled ? '<span class="prov-warn">'+esc(p.blocked_reason||'indisponível')+'</span>'
+                              : '<span class="prov-off">desligada</span>');
+      var h='<div class="prov-card'+(p.active?' is-on':'')+'">'
+        +'<div class="prov-hd">'
+        +'<label class="sw" title="Ligar ou desligar esta fonte">'
+        +'<input type="checkbox" '+(p.enabled?'checked':'')+' data-write="1" '
+        +'onchange="__p.toggle(\''+esc(p.id)+'\',this.checked)"><span class="sl"></span></label>'
+        +'<span class="prov-nome">'+esc(p.label)+'</span>'+estado+'</div>'
+        +'<div class="prov-what">'+esc(p.what)+'</div>'
+        +'<div class="prov-meta">Usada em: <b>'+esc(p.used_by)+'</b> &middot; '+esc(p.free)+'</div>';
+      if(p.requires_key){
+        h+='<div class="prov-key">'
+          +'<input type="password" id="k-'+esc(p.id)+'" autocomplete="off" data-write="1" placeholder="'
+          +(p.has_key?('chave configurada ('+esc(p.key_hint)+') — digite para trocar'):'cole a chave de API aqui')+'">'
+          +'<button class="btn btn-pdf" type="button" data-write="1" onclick="__p.savekey(\''+esc(p.id)+'\')">Salvar</button>'
+          +(p.has_key?('<button class="btn btn-del" type="button" data-write="1" onclick="__p.delkey(\''+esc(p.id)+'\')">Remover</button>'):'')
+          +'</div>';
+        if(p.signup) h+='<div class="prov-meta">Não tem chave? <a href="'+esc(p.signup)+'" target="_blank" rel="noopener">criar conta</a></div>';
+      }
+      return h+'</div>';
+    }).join('');
+  }
+  function toggle(id,on){
+    api('/api/providers/'+encodeURIComponent(id),{enabled:on})
+      .then(function(){ msg('Fonte "'+id+'" '+(on?'ligada':'desligada')+'.'); load(); })
+      .catch(function(e){ msg(e.message,'err'); load(); });
+  }
+  function savekey(id){
+    var el=document.getElementById('k-'+id); var v=(el.value||'').trim();
+    if(!v){ msg('Cole a chave antes de salvar.','err'); return; }
+    api('/api/providers/'+encodeURIComponent(id),{key:v})
+      .then(function(){ el.value=''; msg('Chave de "'+id+'" salva. A fonte já vale no próximo scan.'); load(); })
+      .catch(function(e){ msg(e.message,'err'); });
+  }
+  function delkey(id){
+    if(!window.confirm('Remover a chave de "'+id+'"?\n\nA fonte deixa de ser consultada nos próximos scans.')) return;
+    api('/api/providers/'+encodeURIComponent(id),{key:''})
+      .then(function(){ msg('Chave de "'+id+'" removida.'); load(); })
+      .catch(function(e){ msg(e.message,'err'); });
+  }
+  window.__p={toggle:toggle,savekey:savekey,delkey:delkey};
+  if(document.readyState!=='loading') load(); else document.addEventListener('DOMContentLoaded',load);
+})();
+</script>"""
+
+
+def build_providers_page() -> str:
+    body = (
+        '<style>'
+        '.prov-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:12px}'
+        '.prov-card{border:1px solid var(--border);border-radius:var(--radius-sm);padding:13px 14px;'
+        'background:linear-gradient(180deg,var(--surface),var(--surface-2))}'
+        '.prov-card.is-on{border-left:3px solid var(--green)}'
+        '.prov-hd{display:flex;align-items:center;gap:9px;margin-bottom:7px}'
+        '.prov-nome{font-weight:700;font-size:14px;color:var(--text)}'
+        '.prov-on,.prov-off,.prov-warn{margin-left:auto;font-size:11px;font-weight:700;text-transform:uppercase;'
+        'letter-spacing:.4px;padding:2px 8px;border-radius:999px;border:1px solid}'
+        '.prov-on{color:var(--green);border-color:var(--green);background:rgba(52,211,153,.10)}'
+        '.prov-off{color:var(--muted);border-color:var(--border)}'
+        '.prov-warn{color:var(--orange);border-color:var(--orange);background:rgba(251,146,60,.10)}'
+        '.prov-what{font-size:12.5px;color:var(--text);line-height:1.5;margin-bottom:6px}'
+        '.prov-meta{font-size:11.5px;color:var(--muted);line-height:1.5}'
+        '.prov-key{display:flex;gap:6px;margin:10px 0 6px;flex-wrap:wrap}'
+        '.prov-key input{flex:1;min-width:150px;background:var(--bg);color:var(--text);border:1px solid var(--border);'
+        'border-radius:var(--radius-sm);padding:7px 10px;font-size:12.5px}'
+        '.prov-key input:focus{border-color:var(--accent);outline:none;box-shadow:0 0 0 3px rgba(51,163,239,.12)}'
+        '.prov-key .btn{padding:6px 12px;font-size:12px}'
+        # Interruptor
+        '.sw{position:relative;display:inline-block;width:38px;height:21px;flex:none}'
+        '.sw input{opacity:0;width:0;height:0}'
+        '.sw .sl{position:absolute;inset:0;background:var(--border-2);border-radius:999px;cursor:pointer;transition:.2s}'
+        '.sw .sl:before{content:"";position:absolute;height:15px;width:15px;left:3px;top:3px;background:#fff;'
+        'border-radius:50%;transition:.2s}'
+        '.sw input:checked + .sl{background:var(--green)}'
+        '.sw input:checked + .sl:before{transform:translateX(17px)}'
+        '.sw input:focus-visible + .sl{box-shadow:0 0 0 3px rgba(51,163,239,.35)}'
+        '#p-msg{display:none;margin-bottom:14px;font-size:13px}'
+        '</style>'
+
+        '<div id="p-off" class="panel panel-pad" style="display:none;text-align:center;padding:40px 24px">'
+        '<div style="font-weight:700;font-size:15px;margin-bottom:6px">Configuração de fontes indisponível</div>'
+        '<div style="color:var(--muted);font-size:13px">Esta página depende do serviço <code>argus-web</code>. '
+        'Verifique com: <code>systemctl status argus-web</code>.</div></div>'
+
+        '<div id="p-main" style="display:none">'
+        '<div id="p-msg" class="panel panel-pad"></div>'
+        '<div class="panel panel-pad">'
+        f'<h2>{_NAV_ICONS.get("provedores", "")} Fontes de inteligência '
+        '<span class="badge" id="p-count">&mdash;</span></h2>'
+        '<p class="page-sub" style="margin:2px 0 14px">Ligue apenas o que quiser usar nos scans. As fontes '
+        'que exigem chave só entram em ação depois que você informa a credencial — sem chave, elas ficam '
+        'de fora sem quebrar a varredura. As mudanças valem a partir do <b>próximo scan</b>.</p>'
+        '<div class="prov-grid" id="p-list"></div></div>'
+
+        '<p class="page-sub">As chaves ficam no servidor (<code>threatintel/config.json</code>, legível apenas '
+        'pelo serviço) e <b>nunca são exibidas de volta</b> — a tela mostra só os últimos dígitos. Ligar, desligar '
+        'ou trocar uma chave fica registrado na trilha de auditoria, sem o valor da credencial.</p>'
+        '</div>'
+    )
+    return _portal_shell(
+        "provedores", "Fontes de inteligência",
+        "Escolha quais fontes enriquecem os achados e configure as chaves de API",
+        body, extra_script=_PROV_SCRIPT)
+
+
 _USERS_SCRIPT = r"""<script>
 (function(){
   var ME=null, USERS=[], ROLES=[];
@@ -5038,6 +5180,7 @@ def write_portal(docroot: str) -> None:
     (d / "correlacao.html").write_text(build_correlation_page(), encoding="utf-8")
     (d / "campanhas.html").write_text(build_campaigns_page(), encoding="utf-8")
     (d / "usuarios.html").write_text(build_users_page(), encoding="utf-8")
+    (d / "provedores.html").write_text(build_providers_page(), encoding="utf-8")
     for name, active, label in [
         ("findings_report.html",    "findings",    "Gestão de Achados"),
         ("monitor_report.html",     "monitor",     "Monitor de Portas"),

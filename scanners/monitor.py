@@ -77,6 +77,11 @@ except ImportError:
     _cisa_kev = None  # enriquecimento KEV (CVE explorada in-the-wild) opcional
 
 try:
+    from threatintel.providers import virustotal as _virustotal
+except ImportError:
+    _virustotal = None  # reputação VirusTotal (opcional, exige chave)
+
+try:
     from threatintel.providers import nvd as _nvd
 except ImportError:
     _nvd = None  # enriquecimento NVD (CVSS oficial por CVE) opcional
@@ -355,6 +360,21 @@ def load_campaigns() -> list[tuple[str, list[str]]]:
             extra = f" ({skipped} inválido(s) ignorado(s))" if skipped else ""
             print(f"  [TARGETS] {f.stem}: {len(targets)} alvo(s){extra}")
     return campaigns
+
+
+# ── Fontes de inteligência: liga/desliga vindo da interface Web ──────────────
+try:
+    import providers as _prov  # /etc/argus/providers.py (mesmo PYTHONPATH)
+except Exception:
+    _prov = None
+
+def _fonte_ligada(pid: str) -> bool:
+    """A fonte está habilitada? Sem o módulo (instalação antiga), assume que sim —
+    o comportamento anterior é preservado."""
+    try:
+        return _prov.is_enabled(pid) if _prov else True
+    except Exception:
+        return True
 
 # ============================================================
 # IP TYPE / ASN
@@ -868,12 +888,13 @@ def main():
 
         if _THREATINTEL_AVAILABLE:
             print()
-            enrich_results(all_results)
-            for r in all_results:
-                r["risk"] = compute_final_risk(r["risk"], r["ip_type"], r.get("abuse"))
+            if _fonte_ligada("abuseipdb"):
+                enrich_results(all_results)
+                for r in all_results:
+                    r["risk"] = compute_final_risk(r["risk"], r["ip_type"], r.get("abuse"))
 
             # Shodan InternetDB (vulnerabilidades/CVE) — enriquece e eleva (leve)
-            if _internetdb is not None:
+            if _internetdb is not None and _fonte_ligada("internetdb"):
                 try:
                     _internetdb.enrich_results(all_results)
                     for r in all_results:
@@ -883,7 +904,7 @@ def main():
 
             # CISA KEV — cruza as CVEs do InternetDB com o catálogo de explorados
             # in-the-wild e eleva (KEV = alta confiança → CRÍTICO por padrão).
-            if _cisa_kev is not None:
+            if _cisa_kev is not None and _fonte_ligada("cisa_kev"):
                 try:
                     _cisa_kev.enrich_results(all_results)
                     for r in all_results:
@@ -891,8 +912,18 @@ def main():
                 except Exception as _exc:
                     print(f"[CISA-KEV] enriquecimento ignorado: {_exc}")
 
+            # VirusTotal — veredito agregado de antivírus/blocklists para o IP.
+            if _virustotal is not None and _fonte_ligada("virustotal"):
+                try:
+                    _virustotal.enrich_results(all_results)
+                    _n_vt = _virustotal.elevate(all_results)
+                    if _n_vt:
+                        print(f"[VT] {_n_vt} achado(s) elevado(s) por reputação do VirusTotal")
+                except Exception as _exc:
+                    print(f"[VT] enriquecimento ignorado: {_exc}")
+
             # NVD — pontua (CVSS oficial) as CVEs do InternetDB e eleva por severidade.
-            if _nvd is not None:
+            if _nvd is not None and _fonte_ligada("nvd"):
                 try:
                     _nvd.enrich_results(all_results)
                     for r in all_results:

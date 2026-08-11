@@ -61,6 +61,7 @@ except ImportError:                       # degrada com mensagem clara
 
 import campaigns as CAMP
 import findings as F
+import providers as PROV
 import users as USERS
 
 try:
@@ -642,6 +643,45 @@ def create_app():
                f"campanha {scope}/{name} removida dos alvos (histórico preservado)",
                outcome="success", action="campaign_delete", obj=name, object_type="campaign")
         return jsonify(ok=True, **res)
+
+    # ── Fontes de inteligência (liga/desliga + chaves) ─────────────────
+    # A chave nunca volta inteira: a resposta traz só o resumo mascarado. Alterar
+    # exige perfil de escrita (o guard global já barra o perfil somente leitura).
+
+    @app.get("/api/providers")
+    def list_providers_api():
+        try:
+            return jsonify(ok=True, providers=PROV.list_providers())
+        except Exception as exc:
+            return jsonify(ok=False, error=str(exc)), 500
+
+    @app.post("/api/providers/<pid>")
+    def update_provider_api(pid):
+        if not _csrf_ok():
+            return jsonify(ok=False, error="CSRF: header ausente"), 403
+        data = request.get_json(silent=True) or {}
+        try:
+            out = {}
+            if "enabled" in data:
+                out.update(PROV.set_enabled(pid, bool(data.get("enabled"))))
+                _audit(request, "PROVIDER_TOGGLE",
+                       f"fonte {pid} {'ligada' if data.get('enabled') else 'desligada'}",
+                       outcome="success", action="provider_toggle", obj=pid,
+                       object_type="provider")
+            if "key" in data:
+                # O VALOR da chave nunca entra no log de auditoria — só o fato.
+                out.update(PROV.set_key(pid, str(data.get("key") or "")))
+                _audit(request, "PROVIDER_KEY",
+                       f"chave de {pid} {'definida' if str(data.get('key') or '').strip() else 'removida'}",
+                       outcome="success", action="provider_key", obj=pid,
+                       object_type="provider")
+            if not out:
+                return jsonify(ok=False, error="informe 'enabled' e/ou 'key'"), 400
+        except PROV.ProviderError as exc:
+            return jsonify(ok=False, error=str(exc)), 400
+        except OSError as exc:
+            return jsonify(ok=False, error=f"sem permissão para gravar a configuração: {exc}"), 500
+        return jsonify(ok=True, **out)
 
     # ── Contas e perfis (RBAC) ─────────────────────────────────────────
     # Só o administrador da instalação gerencia contas (o guard global já barra os

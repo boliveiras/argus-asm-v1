@@ -37,7 +37,8 @@ Postura de segurança:
   • Nome de usuário em ALLOWLIST estrita: `:` ou quebra de linha corromperiam o
     htpasswd (uma linha = um usuário) e permitiriam forjar entradas.
   • Hash bcrypt (custo padrão da lib). O Apache valida bcrypt desde a versão 2.4.4.
-  • Escrita atômica do htpasswd: um arquivo truncado deixaria TODOS sem acesso.
+  • O htpasswd é gravado IN-PLACE: o serviço tem permissão apenas NESTE arquivo, e
+    nunca de criar/trocar arquivos em /etc/apache2 (onde vive a config do servidor).
   • A senha atual é exigida para o usuário trocar a própria senha.
 """
 
@@ -46,7 +47,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import tempfile
 from pathlib import Path
 
 try:                                  # dependência opcional: erro claro se faltar
@@ -149,25 +149,37 @@ def _read_htpasswd() -> dict:
 
 
 def _write_htpasswd(entries: dict) -> None:
-    """Grava de forma ATÔMICA — um htpasswd truncado tiraria o acesso de todos."""
+    """Grava a base de credenciais IN-PLACE (mesmo inode).
+
+    Não usa arquivo temporário + rename de propósito: criar o temporário exigiria
+    escrita no DIRETÓRIO (/etc/apache2), que guarda toda a configuração do servidor.
+    Gravando no próprio arquivo, basta a permissão nele — o serviço nunca recebe
+    poder de criar ou trocar arquivos na config do Apache. Isso também preserva a
+    ACL e o dono (root:www-data 640).
+
+    O conteúdo vai em UMA escrita seguida de fsync e, se algo falhar no meio, o
+    conteúdo anterior é restaurado — um htpasswd truncado deixaria todos sem acesso.
+    """
     path = htpasswd_path()
     body = "".join(f"{n}:{h}\n" for n, h in sorted(entries.items()))
-    fd, tmp = tempfile.mkstemp(prefix=".htpasswd.", dir=str(path.parent))
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        previous = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
+    except OSError:
+        previous = ""
+    try:
+        with open(path, "w", encoding="utf-8") as fh:
             fh.write(body)
             fh.flush()
             os.fsync(fh.fileno())
-        try:                                   # mantém o dono/modo originais (root:www-data 640)
-            st = path.stat()
-            os.chmod(tmp, st.st_mode & 0o7777)
-            os.chown(tmp, st.st_uid, st.st_gid)
-        except (OSError, AttributeError):
-            os.chmod(tmp, 0o640)
-        os.replace(tmp, path)
     except Exception:
-        try: os.unlink(tmp)
-        except OSError: pass
+        if previous:                       # tenta devolver o conteúdo original
+            try:
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write(previous)
+                    fh.flush()
+                    os.fsync(fh.fileno())
+            except OSError:
+                pass
         raise
 
 

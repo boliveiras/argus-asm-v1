@@ -95,6 +95,12 @@ except ImportError:
     _URLSCAN_AVAILABLE = False
     urlscan = None
 
+# Provider VirusTotal — reputação de IP agregando dezenas de motores (exige chave)
+try:
+    from threatintel.providers import virustotal as _virustotal
+except ImportError:
+    _virustotal = None
+
 # Provider WHOIS — idade, criação e expiração do domínio (cache em intel.db)
 try:
     from threatintel.providers import whois_lookup
@@ -291,6 +297,23 @@ def init_database():
 # Validação de entrada (segurança — OWASP A03): domínios/labels só podem conter
 # caracteres válidos de hostname. Rejeita metacaracteres que poderiam alterar a
 # URL/consulta DNS. Entradas legítimas não mudam; inválidas são ignoradas.
+
+# ── Fontes de inteligência: liga/desliga vindo da interface Web ──────────────
+try:
+    import providers as _prov  # /etc/argus/providers.py (mesmo PYTHONPATH)
+except Exception:
+    _prov = None
+
+
+def _fonte_ligada(pid: str) -> bool:
+    """A fonte está habilitada? Sem o módulo (instalação antiga), assume que sim —
+    preserva o comportamento anterior."""
+    try:
+        return _prov.is_enabled(pid) if _prov else True
+    except Exception:
+        return True
+
+
 _HOSTNAME_RE = re.compile(
     r"^(?=.{1,253}$)(?!-)[A-Za-z0-9_-]{1,63}(?<!-)(\.(?!-)[A-Za-z0-9_-]{1,63}(?<!-))*$")
 _LABEL_RE = re.compile(r"^(?!-)[A-Za-z0-9_-]{1,63}(?<!-)$")
@@ -683,7 +706,7 @@ def _build_candidates(campaigns: list[tuple[str, list[str]]],
                     candidates[(host, campanha)] = "wordlist"
 
     # 2. Candidatos do crt.sh (Certificate Transparency)
-    if _CRTSH_AVAILABLE:
+    if _CRTSH_AVAILABLE and _fonte_ligada("crtsh"):
         for campanha, domains in campaigns:
             for domain in domains:
                 discovered = crtsh.get_subdomains_safe(domain)
@@ -698,7 +721,7 @@ def _build_candidates(campaigns: list[tuple[str, list[str]]],
         print("  [CRT.SH] provider indisponível — pulando descoberta passiva")
 
     # 3. Candidatos do urlscan.io (Search API, passivo)
-    if _URLSCAN_AVAILABLE:
+    if _URLSCAN_AVAILABLE and _fonte_ligada("urlscan"):
         for campanha, domains in campaigns:
             for domain in domains:
                 discovered = urlscan.get_subdomains_safe(domain)
@@ -756,7 +779,7 @@ async def run_scan(campaigns: list[tuple[str, list[str]]], subs: list[str]) -> l
 
     # Enriquecimento WHOIS (idade/criação/expiração do domínio base)
     # Feito fora da sessão HTTP pois python-whois é síncrono (porta 43).
-    if _WHOIS_AVAILABLE and results:
+    if _WHOIS_AVAILABLE and results and _fonte_ligada("whois"):
         print("[WHOIS] Consultando dados de registro dos domínios...")
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, whois_lookup.enrich_with_whois, results)
@@ -766,7 +789,7 @@ async def run_scan(campaigns: list[tuple[str, list[str]]], subs: list[str]) -> l
 
     # Enriquecimento urlscan.io (contexto do último scan conhecido por host).
     # Síncrono (urllib) e fora da sessão HTTP — roda em executor.
-    if _URLSCAN_AVAILABLE and results:
+    if _URLSCAN_AVAILABLE and results and _fonte_ligada("urlscan"):
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, urlscan.enrich_results, results)
     return results
@@ -994,13 +1017,14 @@ def main():
 
         if _THREATINTEL_AVAILABLE:
             print()
-            _ti_enrich(results)
+            if _fonte_ligada("abuseipdb"):
+                _ti_enrich(results)
             for r in results:
                 base = calculate_base_risk(r["ip_type"])
                 r["risk"] = _ti_risk(base, r["ip_type"], r.get("abuse"))
 
             # Shodan InternetDB (vulnerabilidades/CVE) — enriquece e eleva (leve)
-            if _internetdb is not None:
+            if _internetdb is not None and _fonte_ligada("internetdb"):
                 try:
                     _internetdb.enrich_results(results)
                     for r in results:
@@ -1010,7 +1034,7 @@ def main():
 
             # CISA KEV — cruza as CVEs do InternetDB com o catálogo de explorados
             # in-the-wild e eleva (KEV = alta confiança → CRÍTICO por padrão).
-            if _cisa_kev is not None:
+            if _cisa_kev is not None and _fonte_ligada("cisa_kev"):
                 try:
                     _cisa_kev.enrich_results(results)
                     for r in results:
@@ -1018,8 +1042,18 @@ def main():
                 except Exception as _exc:
                     print(f"[CISA-KEV] enriquecimento ignorado: {_exc}")
 
+            # VirusTotal — veredito agregado de antivírus/blocklists para o IP.
+            if _virustotal is not None and _fonte_ligada("virustotal"):
+                try:
+                    _virustotal.enrich_results(results)
+                    _n_vt = _virustotal.elevate(results)
+                    if _n_vt:
+                        print(f"[VT] {_n_vt} achado(s) elevado(s) por reputação do VirusTotal")
+                except Exception as _exc:
+                    print(f"[VT] enriquecimento ignorado: {_exc}")
+
             # NVD — pontua (CVSS oficial) as CVEs do InternetDB e eleva por severidade.
-            if _nvd is not None:
+            if _nvd is not None and _fonte_ligada("nvd"):
                 try:
                     _nvd.enrich_results(results)
                     for r in results:

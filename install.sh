@@ -202,6 +202,7 @@ copy_if_exists "core/webapp.py"                       "$BASE_DIR/webapp.py"
 copy_if_exists "core/campaigns.py"                    "$BASE_DIR/campaigns.py"
 copy_if_exists "core/runner.py"                       "$BASE_DIR/runner.py"
 copy_if_exists "core/users.py"                        "$BASE_DIR/users.py"
+copy_if_exists "core/providers.py"                    "$BASE_DIR/providers.py"
 copy_if_exists "core/logs.py"                         "$BASE_DIR/logs.py"
 copy_if_exists "argus-reset.sh"                       "$BASE_DIR/argus-reset.sh"
 copy_if_exists "scanners/monitor.py"                  "$MONITOR_DIR/monitor.py"
@@ -220,6 +221,7 @@ copy_if_exists "threatintel/providers/hudsonrock.py"  "$THREATINTEL_DIR/provider
 copy_if_exists "threatintel/providers/internetdb.py"  "$THREATINTEL_DIR/providers/internetdb.py"
 copy_if_exists "threatintel/providers/cisa_kev.py"    "$THREATINTEL_DIR/providers/cisa_kev.py"
 copy_if_exists "threatintel/providers/nvd.py"         "$THREATINTEL_DIR/providers/nvd.py"
+copy_if_exists "threatintel/providers/virustotal.py"   "$THREATINTEL_DIR/providers/virustotal.py"
 copy_if_exists "threatintel/core/__init__.py"         "$THREATINTEL_DIR/core/__init__.py"
 copy_if_exists "threatintel/core/database.py"         "$THREATINTEL_DIR/core/database.py"
 copy_if_exists "threatintel/core/cache.py"            "$THREATINTEL_DIR/core/cache.py"
@@ -377,76 +379,12 @@ with open("$CONFIG_JSON", "w") as f:
 PYEOF
   ok "db_path e log_dir ajustados para $THREATINTEL_DIR"
 
-  CURRENT_KEY=$(python3 -c "import json; d=json.load(open('$CONFIG_JSON')); print(d.get('abuseipdb_api_key',''))" 2>/dev/null || echo "")
-  if [ "$CURRENT_KEY" = "SUA_API_KEY_AQUI" ] || [ -z "$CURRENT_KEY" ]; then
-    echo -e "\n  ${YELLOW}Cole sua API key do AbuseIPDB (deixe em branco para configurar depois):${NC}"
-    read -r -p "  API Key: " USER_API_KEY
-    if [ -n "$USER_API_KEY" ]; then
-      python3 - << PYEOF
-import json
-with open("$CONFIG_JSON") as f:
-    d = json.load(f)
-d["abuseipdb_api_key"] = "$USER_API_KEY"
-with open("$CONFIG_JSON", "w") as f:
-    json.dump(d, f, indent=4)
-PYEOF
-      chown "root:$APP_USER" "$CONFIG_JSON" 2>/dev/null || true
-      chmod 640 "$CONFIG_JSON"
-      ok "API key configurada"
-    else
-      warn "API key não configurada — edite $CONFIG_JSON depois"
-    fi
-  else
-    ok "API key já configurada"
-  fi
-
-  # ── urlscan.io API key ──
-  CURRENT_URLSCAN=$(python3 -c "import json; d=json.load(open('$CONFIG_JSON')); print(d.get('urlscan_api_key',''))" 2>/dev/null || echo "")
-  if [ "$CURRENT_URLSCAN" = "SUA_API_KEY_AQUI" ] || [ -z "$CURRENT_URLSCAN" ]; then
-    echo -e "\n  ${YELLOW}Cole sua API key do urlscan.io (deixe em branco para configurar depois):${NC}"
-    read -r -p "  urlscan API Key: " USER_URLSCAN_KEY
-    if [ -n "$USER_URLSCAN_KEY" ]; then
-      python3 - << PYEOF
-import json
-with open("$CONFIG_JSON") as f:
-    d = json.load(f)
-d["urlscan_api_key"] = "$USER_URLSCAN_KEY"
-with open("$CONFIG_JSON", "w") as f:
-    json.dump(d, f, indent=4)
-PYEOF
-      chown "root:$APP_USER" "$CONFIG_JSON" 2>/dev/null || true
-      chmod 640 "$CONFIG_JSON"
-      ok "API key do urlscan configurada"
-    else
-      warn "API key do urlscan não configurada — edite $CONFIG_JSON depois"
-    fi
-  else
-    ok "API key do urlscan já configurada"
-  fi
-
-  # ── NVD API key (opcional — eleva o rate-limit: 5→50 req/30s) ──
-  CURRENT_NVD=$(python3 -c "import json; d=json.load(open('$CONFIG_JSON')); print(d.get('nvd_api_key',''))" 2>/dev/null || echo "")
-  if [ "$CURRENT_NVD" = "SUA_API_KEY_AQUI" ] || [ -z "$CURRENT_NVD" ]; then
-    echo -e "\n  ${YELLOW}Cole sua API key do NVD/NIST — opcional, só eleva o rate-limit (deixe em branco para usar sem key):${NC}"
-    read -r -p "  NVD API Key: " USER_NVD_KEY
-    if [ -n "$USER_NVD_KEY" ]; then
-      python3 - << PYEOF
-import json
-with open("$CONFIG_JSON") as f:
-    d = json.load(f)
-d["nvd_api_key"] = "$USER_NVD_KEY"
-with open("$CONFIG_JSON", "w") as f:
-    json.dump(d, f, indent=4)
-PYEOF
-      chown "root:$APP_USER" "$CONFIG_JSON" 2>/dev/null || true
-      chmod 640 "$CONFIG_JSON"
-      ok "API key do NVD configurada"
-    else
-      warn "NVD sem key — funciona, mas com rate-limit baixo (edite $CONFIG_JSON depois)"
-    fi
-  else
-    ok "API key do NVD já configurada"
-  fi
+  # As chaves de API NÃO são mais pedidas aqui: quem opera configura cada fonte
+  # (ligar/desligar + chave) na página "Fontes" do portal, sem reinstalar. O serviço
+  # web precisa poder GRAVAR este arquivo — ACL restrita apenas a ele.
+  chown "root:$APP_USER" "$CONFIG_JSON" 2>/dev/null || true
+  chmod 640 "$CONFIG_JSON"
+  setfacl -m "u:$APP_USER:rw" "$CONFIG_JSON" 2>/dev/null     && ok "Fontes de inteligência: configuráveis na Web (chaves e liga/desliga)"     || warn "setfacl indisponível — a página Fontes ficará somente leitura"
 fi
 
 # ── 10. COMANDOS GLOBAIS ──────────────────────────────────────
@@ -847,7 +785,7 @@ ProtectHome=true
 # ProtectSystem=full deixa TODO o /etc somente-leitura para este serviço. Sem liberar
 # explicitamente os caminhos abaixo, a gestão de campanhas e a edição da wordlist pela
 # Web falham com "Read-only file system" — a ACL sozinha não basta (o systemd bloqueia antes).
-ReadWritePaths=$BASE_DIR/store $APACHE_DOCROOT $LOG_DIR_AUDIT $MONITOR_DIR/targets $SUBMONITOR_DIR/targets $SUBMONITOR_DIR/subs.txt $HTPASSWD_FILE /etc/apache2
+ReadWritePaths=$BASE_DIR/store $APACHE_DOCROOT $LOG_DIR_AUDIT $MONITOR_DIR/targets $SUBMONITOR_DIR/targets $SUBMONITOR_DIR/subs.txt $HTPASSWD_FILE $THREATINTEL_DIR/config.json
 
 [Install]
 WantedBy=multi-user.target
