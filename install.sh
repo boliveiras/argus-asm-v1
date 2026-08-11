@@ -66,6 +66,8 @@ LOG_DIR_CREDENTIALS="/var/log/argus/credentials"
 LOG_DIR_EMAIL="/var/log/argus/email"
 LOG_DIR_TYPOSQUAT="/var/log/argus/typosquat"
 LOG_DIR_AUDIT="/var/log/argus/audit"
+# Saída das etapas do scan disparado pela Web (o agendado grava via cron).
+LOG_DIR_SCAN="/var/log/argus/scan"
 
 APACHE_DOCROOT="/var/www/argus"
 APACHE_CONF="/etc/apache2/sites-available/argus-monitor.conf"
@@ -182,6 +184,7 @@ dirs=(
   "$LOG_DIR_EMAIL"
   "$LOG_DIR_TYPOSQUAT"
   "$LOG_DIR_AUDIT"
+  "$LOG_DIR_SCAN"
 )
 for d in "${dirs[@]}"; do mkdir -p "$d" && ok "$d"; done
 
@@ -311,8 +314,8 @@ chmod 644 "$SUBMONITOR_DIR/subs.txt" 2>/dev/null || true
 setfacl -m "u:$APP_USER:rw" "$SUBMONITOR_DIR/subs.txt" 2>/dev/null \
   && ok "ACL: $APP_USER pode editar a wordlist pela Web" \
   || warn "setfacl indisponível — a wordlist ficará somente leitura na Web"
-chown root:adm "$LOG_DIR_MONITOR" "$LOG_DIR_SUBMONITOR" "$LOG_DIR_CREDENTIALS" "$LOG_DIR_EMAIL" "$LOG_DIR_TYPOSQUAT"
-chmod 750 "$LOG_DIR_MONITOR" "$LOG_DIR_SUBMONITOR" "$LOG_DIR_CREDENTIALS" "$LOG_DIR_EMAIL" "$LOG_DIR_TYPOSQUAT"
+chown root:adm "$LOG_DIR_MONITOR" "$LOG_DIR_SUBMONITOR" "$LOG_DIR_CREDENTIALS" "$LOG_DIR_EMAIL" "$LOG_DIR_TYPOSQUAT" "$LOG_DIR_SCAN"
+chmod 750 "$LOG_DIR_MONITOR" "$LOG_DIR_SUBMONITOR" "$LOG_DIR_CREDENTIALS" "$LOG_DIR_EMAIL" "$LOG_DIR_TYPOSQUAT" "$LOG_DIR_SCAN"
 # Auditoria: o serviço argus-web (usuário $APP_USER) ESCREVE o audit.log; o grupo
 # adm LÊ. setgid (2750) faz os logs herdarem o grupo adm — proteção do log (PCI 10.3).
 chown "$APP_USER:adm" "$LOG_DIR_AUDIT" && chmod 2750 "$LOG_DIR_AUDIT"
