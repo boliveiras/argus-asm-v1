@@ -58,9 +58,14 @@ _TIMEOUT     = int(CONFIG.get("request_timeout", 15))
 _MAX_AGE     = int(CONFIG.get("max_age_in_days", 90))
 _API_URL     = "https://api.abuseipdb.com/api/v2/check"
 
-# Resultado vazio padrão para IPs não consultáveis
+# Resultado vazio padrão para IPs não consultáveis.
+# score = -1 significa "SEM REPUTAÇÃO CONHECIDA", nunca "limpo": este dict é devolvido
+# quando a consulta NÃO aconteceu (sem chave, chave rejeitada, cota estourada, rede
+# fora, IP privado). Com 0 aqui, uma falha de infraestrutura aparecia na tela como
+# "0% Limpo" — falso negativo perigoso. -1 já é entendido como ausência de dado por
+# reputation.py (não eleva risco) e pela interface (mostra "sem dados").
 _EMPTY_RESULT: dict = {
-    "abuse_confidence_score": 0,
+    "abuse_confidence_score": -1,
     "country_code":           "",
     "usage_type":             "",
     "isp":                    "",

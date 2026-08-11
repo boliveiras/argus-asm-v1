@@ -96,6 +96,19 @@ def _internetdb_to_js(idb: dict | None) -> dict:
     }
 
 
+def _vt_to_js(vt: dict | None) -> dict:
+    """Normaliza o veredito do VirusTotal para serialização JS segura."""
+    if not vt:
+        return {"malicious": 0, "suspicious": 0, "reputation": 0, "as_owner": "", "seen": False}
+    return {
+        "malicious":  int(vt.get("malicious",  0) or 0),
+        "suspicious": int(vt.get("suspicious", 0) or 0),
+        "reputation": int(vt.get("reputation", 0) or 0),
+        "as_owner":   str(vt.get("as_owner",   "") or ""),
+        "seen":       bool(vt.get("seen", True)),
+    }
+
+
 def _kev_to_js(kev: dict | None) -> dict:
     """Normaliza o intel CISA KEV (CVEs exploradas in-the-wild) para JS seguro."""
     if not kev:
@@ -217,7 +230,7 @@ def _common_css() -> str:
   @media (max-width:920px){ .summary { grid-template-columns:1fr; } }
   .panel { background:linear-gradient(180deg,var(--surface),var(--surface-2)); border:1px solid var(--border);
            border-radius:var(--radius); box-shadow:var(--shadow); }
-  .kpi-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(118px,1fr)); gap:1px; background:var(--border);
+  .kpi-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(118px,100%),1fr)); gap:1px; background:var(--border);
               border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; }
   .kpi { background:linear-gradient(180deg,var(--surface),var(--surface-2)); padding:15px 16px 15px 18px; position:relative; }
   /* O número é o herói: cor sólida de alto contraste (--text). A severidade é
@@ -250,7 +263,10 @@ def _common_css() -> str:
     color:var(--text); padding:8px 11px; outline:none; font-size:13px; }
   .toolbar input[type=text] { flex:1; min-width:220px; }
   .toolbar input[type=text]:focus, .toolbar select:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(51,163,239,.12); }
-  .toolbar select { cursor:pointer; }
+  /* select nunca pode ficar maior que a tela: a opção longa ("Por subdomínio…")
+     empurrava a página inteira no celular. */
+  .toolbar select { cursor:pointer; max-width:100%; }
+  @media (max-width:640px){ .toolbar select { width:100%; } }
   .btn { padding:8px 14px; border-radius:var(--radius-sm); border:1px solid transparent; font-size:13px; font-weight:600;
          cursor:pointer; display:inline-flex; align-items:center; gap:7px; transition:.15s; }
   .btn:hover { transform:translateY(-1px); }
@@ -448,7 +464,7 @@ def _common_css() -> str:
   .pillar svg { width:30px; height:30px; color:var(--accent); }
   .pillar span { font-size:11px; letter-spacing:2px; text-transform:uppercase; font-weight:600; color:var(--muted); }
   .hero-desc { color:var(--muted); max-width:700px; margin:20px auto 4px; font-size:13.5px; line-height:1.6; text-align:center; }
-  .hub-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:14px; }
+  .hub-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(250px,100%),1fr)); gap:14px; }
   .hub-card { display:flex; gap:14px; align-items:flex-start; padding:18px; text-decoration:none; color:inherit;
               background:linear-gradient(180deg,var(--surface),var(--surface-2)); border:1px solid var(--border);
               border-radius:var(--radius); box-shadow:var(--shadow); transition:.15s; }
@@ -1077,8 +1093,26 @@ function scoreClass(s) {
   if(s<=75) return 'score-high';
   return 'score-critical';
 }
+// Motivo de não haver reputação — para o analista não confundir "não checado" com
+// "checado e limpo". Vem do campo source do provider.
+function abuseMotivo(ab){
+  var f=(ab&&ab.source)||'';
+  if(f==='auth_error')  return 'AbuseIPDB não consultado: chave de API rejeitada (HTTP 401). Revise em Fontes.';
+  if(f==='no_api_key')  return 'AbuseIPDB não consultado: nenhuma chave de API configurada (página Fontes).';
+  if(f==='no_quota')    return 'AbuseIPDB não consultado: cota diária esgotada.';
+  if(f==='rate_limited')return 'AbuseIPDB não consultado: limite de requisições atingido (HTTP 429).';
+  if(f==='private')     return 'IP privado — não possui reputação pública.';
+  if(f==='invalid')     return 'IP inválido para consulta de reputação.';
+  if(f.indexOf('http_')===0) return 'AbuseIPDB respondeu HTTP '+f.slice(5)+'.';
+  if(f==='cache')       return 'Resultado vindo do cache local.';
+  if(f==='api')         return 'Consultado agora na API do AbuseIPDB.';
+  return 'Sem consulta de reputação para este IP.';
+}
+// Célula de enriquecimento sem valor: mostra traço em vez de vazio, para o
+// analista distinguir "a fonte não informou" de "a coluna está quebrada".
+function ou(v){ return (v===undefined||v===null||v==='')?'—':v; }
 function scoreLabel(s) {
-  if(s<0) return 'N/A';
+  if(s<0) return 'sem dados';
   if(s===0) return '0% Limpo';
   if(s<=25) return s+'% Baixo';
   if(s<=50) return s+'% Medio';
@@ -1242,6 +1276,7 @@ def _monitor_rows_to_js(rows: list[dict]) -> str:
             "abuse":       _abuse_to_js(r.get("abuse")),
             "internetdb":  _internetdb_to_js(r.get("internetdb")),
             "kev":         _kev_to_js(r.get("kev")),
+            "vt":          _vt_to_js(r.get("vt") or r.get("virustotal")),
             "nvd":         _nvd_to_js(r.get("nvd")),
         })
     return json.dumps(safe, ensure_ascii=False).replace("<", "\\u003c")
@@ -1328,7 +1363,7 @@ def generate_monitor_report(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Argus · Monitor de Portas</title>
+<title>Monitor de Portas — Argus</title>
 <link rel="icon" type="image/svg+xml" href="{_FAVICON}">
 <style>{css}</style>
 </head>
@@ -1555,18 +1590,18 @@ function render(){{
       <td data-col="protocol">${{esc(r.protocol)}}</td>
       <td data-col="service">${{esc(r.service)}}</td>
       <td data-col="asn" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${{esc(r.asn)}}">${{esc(r.asn)}}</td>
-      <td data-col="abuse_country">${{esc(ab.country||'')}}</td>
+      <td data-col="abuse_country">${{ou(esc(ab.country||''))}}</td>
       <td data-col="risk" class="risk-${{esc(r.risk)}}">${{esc(r.risk)}}</td>
-      <td data-col="abuse_score"><span class="${{scoreClass(score)}}">${{scoreLabel(score)}}</span>${{torBadge}}${{vtBadge}}</td>
+      <td data-col="abuse_score" title="${{esc(abuseMotivo(ab))}}"><span class="${{scoreClass(score)}}">${{scoreLabel(score)}}</span>${{torBadge}}${{vtBadge}}</td>
       <td data-col="campanha">${{esc(r.campanha||'')}}</td>
       <td data-col="target">${{esc(r.target||'')}}</td>
       <td data-col="banner" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${{esc(r.banner||'')}}">${{esc(r.banner||'')}}</td>
       <td data-col="idb_vulns">${{cveCell}}</td>
       <td data-col="status">${{esc(r.status||'')}}</td>
       <td data-col="ack_reason" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${{esc(ackR)}}">${{esc(ackR)}}</td>
-      <td data-col="abuse_isp">${{esc(ab.isp||'')}}</td>
+      <td data-col="abuse_isp">${{ou(esc(ab.isp||''))}}</td>
       <td data-col="abuse_reports">${{esc(ab.total_reports!==undefined&&ab.total_reports>=0?ab.total_reports:'')}}</td>
-      <td data-col="abuse_last">${{esc(lastRpt)}}</td>
+      <td data-col="abuse_last">${{ou(esc(lastRpt))}}</td>
     </tr>`;
   }});
   tbody.innerHTML=html;
@@ -1648,6 +1683,7 @@ def _submonitor_rows_to_js(rows: list[dict]) -> str:
             "urlscan":     _urlscan_to_js(r.get("urlscan")),
             "internetdb":  _internetdb_to_js(r.get("internetdb")),
             "kev":         _kev_to_js(r.get("kev")),
+            "vt":          _vt_to_js(r.get("vt") or r.get("virustotal")),
             "nvd":         _nvd_to_js(r.get("nvd")),
         })
     return json.dumps(safe, ensure_ascii=False).replace("<", "\\u003c")
@@ -1723,7 +1759,7 @@ def generate_submonitor_report(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Argus · Monitor de Subdomínios</title>
+<title>Monitor de Subdomínios — Argus</title>
 <link rel="icon" type="image/svg+xml" href="{_FAVICON}">
 <style>{css}</style>
 </head>
@@ -1960,6 +1996,10 @@ function render(){{
     const ab=r.abuse||{{}};
     const score=(ab.score!==undefined)?ab.score:-1;
     const torBadge=ab.is_tor?'<span class="tor-badge">TOR</span>':'';
+    const vtd=r.vt||{{}};
+    const vtBadge=(vtd.malicious>0)
+      ?` <span class="kev-badge" style="background:rgba(244,63,94,.14);color:#f43f5e;border-color:#f43f5e66" title="VirusTotal: ${{vtd.malicious}} motor(es) apontam malicioso${{vtd.suspicious?(' · '+vtd.suspicious+' suspeito(s)'):''}}${{vtd.as_owner?(' · '+esc(vtd.as_owner)):''}}">VT ${{vtd.malicious}}</span>`
+      :'';
     const lastRpt=ab.last_reported_at?ab.last_reported_at.substring(0,10):'';
     const dnssecBadge=(r.dnssec==='HABILITADO')?'<span class="dnssec-on">HABILITADO</span>':'<span class="dnssec-off">DESABILITADO</span>';
     let sslBadge;
@@ -2014,9 +2054,9 @@ function render(){{
       <td data-col="risk" class="risk-${{esc(r.risk)}}">${{esc(r.risk)}}</td>
       <td data-col="status"><span class="status-${{esc(r.status)}}" title="${{esc(ackR)}}">${{esc(r.status)}}</span></td>
       <td data-col="ip_type"><span class="ip-${{esc(r.ip_type)}}">${{esc(r.ip_type)}}</span></td>
-      <td data-col="abuse_score"><span class="${{scoreClass(score)}}">${{scoreLabel(score)}}</span>${{torBadge}}</td>
-      <td data-col="abuse_country">${{esc(ab.country||'')}}</td>
-      <td data-col="abuse_isp">${{esc(ab.isp||'')}}</td>
+      <td data-col="abuse_score" title="${{esc(abuseMotivo(ab))}}"><span class="${{scoreClass(score)}}">${{scoreLabel(score)}}</span>${{torBadge}}${{vtBadge}}</td>
+      <td data-col="abuse_country">${{ou(esc(ab.country||''))}}</td>
+      <td data-col="abuse_isp">${{ou(esc(ab.isp||''))}}</td>
       <td data-col="idb_vulns">${{cveCell}}</td>
       <td data-col="dnssec">${{dnssecBadge}}</td>
       <td data-col="ssl_status">${{sslBadge}}</td>
@@ -2026,7 +2066,7 @@ function render(){{
       <td data-col="whois_age_days">${{esc(ageVal)}}</td>
       <td data-col="whois_creation">${{esc(r.whois_creation||'')}}</td>
       <td data-col="whois_expiry">${{esc(r.whois_expiry||'')}}</td>
-      <td data-col="whois_registrar" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${{esc(r.whois_registrar||'')}}">${{esc(r.whois_registrar||'')}}</td>
+      <td data-col="whois_registrar" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${{esc(r.whois_registrar||'')||'não informado pela fonte (RDAP)'}}">${{ou(esc(r.whois_registrar||''))}}</td>
       <td data-col="ack_reason" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${{esc(ackR)}}">${{esc(ackR)}}</td>
     </tr>`;
   }});
@@ -2170,7 +2210,7 @@ def generate_credentials_report(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Argus · Exposição de Credenciais</title>
+<title>Exposição de Credenciais — Argus</title>
 <link rel="icon" type="image/svg+xml" href="{_FAVICON}">
 <style>{css}</style>
 </head>
@@ -2239,7 +2279,7 @@ def generate_credentials_report(
     <th onclick="doSort('campanha')"     >Campanha     <span class="si" id="si-campanha"     >&#x21C5;</span></th>
     <th onclick="doSort('domain')"       >Domínio      <span class="si" id="si-domain"       >&#x21C5;</span></th>
     <th onclick="doSort('risk')"         >Risco        <span class="si" id="si-risk"         >&#x21C5;</span></th>
-    <th data-opt="1" onclick="doSort('employees')"    >Funcionários <span class="si" id="si-employees"    >&#x21C5;</span></th>
+    <th data-essential="1" onclick="doSort('employees')"    >Funcionários <span class="si" id="si-employees"    >&#x21C5;</span></th>
     <th data-opt="1" onclick="doSort('users')"        >Usuários     <span class="si" id="si-users"        >&#x21C5;</span></th>
     <th data-opt="1" onclick="doSort('third_parties')">Terceiros    <span class="si" id="si-third_parties">&#x21C5;</span></th>
     <th onclick="doSort('total')"        >Total        <span class="si" id="si-total"        >&#x21C5;</span></th>
@@ -2468,7 +2508,7 @@ def generate_email_report(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Argus · Postura de E-mail</title>
+<title>Postura de E-mail — Argus</title>
 <link rel="icon" type="image/svg+xml" href="{_FAVICON}">
 <style>{css}</style>
 </head>
@@ -2539,7 +2579,7 @@ def generate_email_report(
     <th data-opt="1" onclick="doSort('has_mx')"       >MX           <span class="si" id="si-has_mx"      >&#x21C5;</span></th>
     <th onclick="doSort('spf_status')"   >SPF          <span class="si" id="si-spf_status"  >&#x21C5;</span></th>
     <th onclick="doSort('dmarc_status')" >DMARC        <span class="si" id="si-dmarc_status">&#x21C5;</span></th>
-    <th data-opt="1" onclick="doSort('dkim_status')"  >DKIM         <span class="si" id="si-dkim_status" >&#x21C5;</span></th>
+    <th data-essential="1" onclick="doSort('dkim_status')"  >DKIM         <span class="si" id="si-dkim_status" >&#x21C5;</span></th>
     <th onclick="doSort('risk')"         >Risco        <span class="si" id="si-risk"        >&#x21C5;</span></th>
     <th onclick="doSort('status')"       >Status       <span class="si" id="si-status"      >&#x21C5;</span></th>
     <th data-opt="1" onclick="doSort('ack_reason')"   >Motivo       <span class="si" id="si-ack_reason"  >&#x21C5;</span></th>
@@ -2812,7 +2852,7 @@ def generate_typosquat_report(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Argus · Typosquat</title>
+<title>Typosquat — Argus</title>
 <link rel="icon" type="image/svg+xml" href="{_FAVICON}">
 <style>{css}</style>
 </head>
@@ -2891,7 +2931,7 @@ def generate_typosquat_report(
     <th onclick="doSort('domain')"      >Sósia        <span class="si" id="si-domain"      >&#x21C5;</span></th>
     <th data-opt="1" onclick="doSort('fuzzer')"      >Técnica      <span class="si" id="si-fuzzer"      >&#x21C5;</span></th>
     <th data-opt="1" onclick="doSort('ip')"          >IP           <span class="si" id="si-ip"          >&#x21C5;</span></th>
-    <th data-opt="1" onclick="doSort('mx')"          >MX           <span class="si" id="si-mx"          >&#x21C5;</span></th>
+    <th data-essential="1" onclick="doSort('mx')"          >MX           <span class="si" id="si-mx"          >&#x21C5;</span></th>
     <th data-opt="1" onclick="doSort('whois_age_days')">Registro   <span class="si" id="si-whois_age_days">&#x21C5;</span></th>
     <th onclick="doSort('risk')"        >Risco        <span class="si" id="si-risk"        >&#x21C5;</span></th>
     <th onclick="doSort('status')"      >Status       <span class="si" id="si-status"      >&#x21C5;</span></th>
@@ -3223,7 +3263,7 @@ def generate_findings_report(snapshot: dict, output_path: str = "findings_report
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Argus · Gestão de Achados</title>
+<title>Gestão de Achados — Argus</title>
 <link rel="icon" type="image/svg+xml" href="{_FAVICON}">
 <style>{css}</style>
 <style>
@@ -3887,7 +3927,7 @@ def build_dashboard() -> str:
         '<span class="ic2">&#9656;</span><div><div class="nm">Abrir mapa de correlação</div>'
         '<div class="dt">subdomínios × IPs · ponto único de falha</div></div></a></div>'
     )
-    sources = ('<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:16px">'
+    sources = ('<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(290px,100%),1fr));gap:16px">'
                + findings_panel + mon_panel + sub_panel + corr_panel + cred_panel + email_panel + typo_panel + '</div>')
     # Estado vazio do Dashboard (mesmo padrão das páginas internas): desfaz a ambiguidade
     # "zero por falta de coleta" × "zero por ausência de risco". JS ajusta após carregar.
@@ -4697,7 +4737,9 @@ def build_campaigns_page() -> str:
 
     body = (
         '<style>'
-        '.camp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}'
+        '.camp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(260px,100%),1fr));gap:12px}'
+        '.camp-split{display:grid;grid-template-columns:minmax(180px,260px) 1fr;gap:14px;margin-top:10px}'
+        '@media(max-width:640px){.camp-split{grid-template-columns:1fr}}'
         '.camp-card{border:1px solid var(--border);border-radius:var(--radius-sm);'
         'background:linear-gradient(180deg,var(--surface),var(--surface-2));padding:12px 13px}'
         '.camp-card-hd{display:flex;align-items:center;gap:8px;margin-bottom:6px}'
@@ -4759,7 +4801,7 @@ def build_campaigns_page() -> str:
         # Editor (criar / editar)
         '<div id="camp-editor" class="panel panel-pad">'
         '<h2 id="camp-ed-title">Nova campanha</h2>'
-        '<div style="display:grid;grid-template-columns:minmax(180px,260px) 1fr;gap:14px;margin-top:10px">'
+        '<div class="camp-split">'
         '<div><label for="camp-ed-name">Nome da campanha</label>'
         '<input id="camp-ed-name" type="text" maxlength="64" placeholder="EMPRESA" '
         'aria-describedby="camp-ed-namehint">'
@@ -4896,7 +4938,7 @@ _PROV_SCRIPT = r"""<script>
 def build_providers_page() -> str:
     body = (
         '<style>'
-        '.prov-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:12px}'
+        '.prov-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(330px,100%),1fr));gap:12px}'
         '.prov-card{border:1px solid var(--border);border-radius:var(--radius-sm);padding:13px 14px;'
         'background:linear-gradient(180deg,var(--surface),var(--surface-2))}'
         '.prov-card.is-on{border-left:3px solid var(--green)}'
@@ -5064,7 +5106,7 @@ def build_users_page() -> str:
         '#u-list select{background:var(--bg);color:var(--text);border:1px solid var(--border);'
         'border-radius:var(--radius-sm);padding:5px 8px;font-size:12.5px}'
         '#u-list .btn{padding:5px 10px;font-size:12px}'
-        '.u-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;align-items:end}'
+        '.u-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(180px,100%),1fr));gap:12px;align-items:end}'
         '.u-form label{display:block;font-size:12px;font-weight:600;color:var(--muted);margin:0 0 5px}'
         '.u-form input,.u-form select{width:100%;background:var(--bg);color:var(--text);'
         'border:1px solid var(--border);border-radius:var(--radius-sm);padding:9px 11px;font-size:13px}'

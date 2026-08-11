@@ -193,6 +193,27 @@ copy_if_exists() {
   else warn "$1 não encontrado — pulando"; fi
 }
 
+# Merge de config preservando o que já está em produção. Sem destino → copia o do
+# repo (instalação nova). Com destino → mantém todos os valores atuais (chaves de
+# API, toggles) e apenas acrescenta as chaves novas do repo.
+merge_ti_config() {
+  local src="$SCRIPT_DIR/$1" dst="$2"
+  if [ ! -f "$src" ]; then warn "$1 não encontrado — pulando"; return; fi
+  if [ ! -f "$dst" ]; then cp "$src" "$dst" && ok "$1 → $dst (novo)"; return; fi
+  if "$PYTHON_BIN" - "$src" "$dst" <<'PYEOF'
+import json, sys
+novo, atual = sys.argv[1], sys.argv[2]
+with open(novo, encoding="utf-8") as f: base = json.load(f)
+with open(atual, encoding="utf-8") as f: viv = json.load(f)
+add = [k for k in base if k not in viv]
+base.update(viv)                      # o que está em produção sempre vence
+with open(atual, "w", encoding="utf-8") as f: json.dump(base, f, indent=4, ensure_ascii=False)
+print(",".join(add))
+PYEOF
+  then ok "$1 → $dst (chaves e liga/desliga preservados)"
+  else warn "não consegui mesclar $1 — config atual mantido intacto"; fi
+}
+
 # Os módulos vivem em pastas no REPO (core/ e scanners/), mas o layout de RUNTIME
 # em /etc/argus continua o mesmo (plano) — por isso os imports não mudam.
 copy_if_exists "core/reporter.py"                     "$BASE_DIR/reporter.py"
@@ -211,7 +232,11 @@ copy_if_exists "scanners/credentials.py"     "$CREDENTIALS_DIR/credentials.py"
 copy_if_exists "scanners/emailauth.py"       "$EMAIL_DIR/emailauth.py"
 copy_if_exists "scanners/typosquat.py"       "$TYPOSQUAT_DIR/typosquat.py"
 copy_if_exists "threatintel/__init__.py"              "$THREATINTEL_DIR/__init__.py"
-copy_if_exists "threatintel/config.json"              "$THREATINTEL_DIR/config.json"
+# ATENÇÃO: config.json NÃO é copiado por cima — ele guarda as chaves de API e os
+# liga/desliga que quem opera cadastrou na página "Fontes". Sobrescrever aqui
+# apagaria tudo isso a cada reinstalação. O merge abaixo preserva o que existe e
+# só acrescenta campos novos que a versão nova do repo trouxe.
+merge_ti_config "threatintel/config.json"              "$THREATINTEL_DIR/config.json"
 copy_if_exists "threatintel/providers/__init__.py"    "$THREATINTEL_DIR/providers/__init__.py"
 copy_if_exists "threatintel/providers/abuseipdb.py"   "$THREATINTEL_DIR/providers/abuseipdb.py"
 copy_if_exists "threatintel/providers/crtsh.py"       "$THREATINTEL_DIR/providers/crtsh.py"

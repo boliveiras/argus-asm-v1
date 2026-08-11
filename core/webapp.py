@@ -205,13 +205,15 @@ def correlation_graph(base: str | None = None) -> dict:
         if score < 0:
             c = abuse_cache.get(ip)
             if c is not None:
-                score = int(c.get("abuse_confidence_score") or 0)
+                _sc = c.get("abuse_confidence_score")
+                score = int(_sc) if _sc is not None else -1
                 country = c.get("country_code") or ""; isp = c.get("isp") or ""
                 tor = int(c.get("is_tor") or 0); reports = int(c.get("total_reports") or 0)
                 last = c.get("last_reported_at") or ""
         if score < 0:
             return [["Reputação (AbuseIPDB)", "sem dados"]]
-        rows = [["Reputação (AbuseIPDB)", f"{score}%" + (" · TOR" if tor else "")]]
+        _rep = "0% · sem denúncias" if score == 0 else f"{score}%"
+        rows = [["Reputação (AbuseIPDB)", _rep + (" · TOR" if tor else "")]]
         if isp:     rows.append(["Provedor (ISP)", isp])
         if country: rows.append(["País", country])
         if reports: rows.append(["Denúncias", str(reports) + (f" · última {last[:10]}" if last else "")])
