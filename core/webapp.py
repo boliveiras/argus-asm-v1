@@ -871,12 +871,22 @@ def create_app():
             # Trava de reentrada: já há execução em curso/na fila.
             return jsonify({**state, "ok": False,
                             "error": "já existe uma execução em andamento"}), 409
+        # Campanha opcional: restringe a execução a um único alvo cadastrado. O escopo
+        # cresce por multiplicação (cada domínio custa uma wordlist inteira), então
+        # rodar uma campanha por vez é o que mantém a execução dentro do tempo limite.
+        campanha = str((request.get_json(silent=True) or {}).get("campanha", "") or "").strip()
+        if campanha:
+            conhecidas = {c["name"] for s in CAMP.SCOPES for c in CAMP.list_campaigns(s)}
+            if campanha not in conhecidas:
+                return jsonify(ok=False, error=f"campanha desconhecida: {campanha}"), 400
         actor = _actor(request)
         try:
             RUN.STORE_DIR.mkdir(parents=True, exist_ok=True)
-            # O pedido carrega apenas o autor (texto), nunca comando ou parâmetro.
+            # O pedido carrega apenas texto (autor e campanha já validada contra a
+            # lista existente), nunca comando ou parâmetro de execução.
             RUN.REQUEST_FILE.write_text(
-                json.dumps({"actor": actor, "at": _now_str()}, ensure_ascii=False),
+                json.dumps({"actor": actor, "at": _now_str(), "campanha": campanha},
+                           ensure_ascii=False),
                 encoding="utf-8")
         except OSError as exc:
             return jsonify(ok=False, error=f"sem permissão para enfileirar a execução: {exc}"), 500

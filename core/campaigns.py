@@ -77,6 +77,35 @@ def valid_name(name: str) -> bool:
     return bool(_NAME_RE.match(name))
 
 
+def campanha_pedida() -> str:
+    """Campanha escolhida para esta execução, via ARGUS_CAMPANHA. Vazio = todas.
+
+    Existe porque o escopo cresce por multiplicação: cada domínio novo custa uma
+    wordlist inteira de consultas. Poder rodar uma campanha por vez mantém cada
+    execução dentro do tempo limite sem precisar reduzir a cobertura das outras.
+    """
+    return os.environ.get("ARGUS_CAMPANHA", "").strip()
+
+
+def filtrar_campanhas(arquivos):
+    """Filtra a lista de arquivos de campanha pela escolhida em ARGUS_CAMPANHA.
+
+    Nome inválido nunca vira caminho: compara com o `stem` já existente, então
+    não há como escapar do diretório de targets por aqui.
+    """
+    alvo = campanha_pedida()
+    arquivos = list(arquivos)
+    if not alvo:
+        return arquivos
+    escolhidos = [f for f in arquivos if f.stem == alvo]
+    if not escolhidos:
+        disponiveis = ", ".join(sorted(f.stem for f in arquivos)) or "(nenhuma)"
+        raise FileNotFoundError(
+            f"Campanha {alvo!r} não encontrada neste escopo. Disponíveis: {disponiveis}")
+    print(f"  [CAMPANHA] execução restrita a {alvo}")
+    return escolhidos
+
+
 def valid_target(scope: str, value: str) -> bool:
     """Alvo válido para o escopo: IP/CIDR (monitor) ou hostname (submonitor)."""
     value = (value or "").strip()

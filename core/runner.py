@@ -141,22 +141,37 @@ def _initial_state(actor: str) -> dict:
     }
 
 
-def _read_request_actor() -> str:
-    """Quem pediu (registrado pela Web no arquivo de pedido). Só para auditoria."""
+def _read_request() -> tuple[str, str]:
+    """Quem pediu e para qual campanha, lidos do pedido gravado pela Web.
+
+    Nada daqui vira comando: o autor é texto de auditoria e a campanha entra como
+    variável de ambiente, que os scanners conferem contra os arquivos de alvo já
+    existentes. A sanitização aqui é defesa em profundidade.
+    """
     try:
         raw = REQUEST_FILE.read_text(encoding="utf-8").strip()
         data = json.loads(raw) if raw.startswith("{") else {}
         actor = str(data.get("actor", "") or "")
-        # Sanitiza: o valor vem de fora, então só é usado como texto curto no status.
-        return "".join(ch for ch in actor if ch.isalnum() or ch in "._-@ ")[:64] or "web"
+        actor = "".join(ch for ch in actor if ch.isalnum() or ch in "._-@ ")[:64] or "web"
+        camp = str(data.get("campanha", "") or "")
+        camp = "".join(ch for ch in camp if ch.isalnum() or ch in "._-")[:64]
+        return actor, camp
     except Exception:
-        return "web"
+        return "web", ""
 
 
-def run_all(actor: str = "web") -> int:
+def run_all(actor: str = "web", campanha: str = "") -> int:
     state = _initial_state(actor)
+    state["campanha"] = campanha
     _write_status(state)
-    print(f"[ARGUS] Execução sob demanda iniciada por '{actor}' — {len(STEPS)} etapa(s)")
+    escopo = f"campanha {campanha}" if campanha else "todas as campanhas"
+    print(f"[ARGUS] Execução sob demanda iniciada por '{actor}' ({escopo}) "
+          f"— {len(STEPS)} etapa(s)")
+    # Herdada pelos subprocessos: cada scanner restringe os alvos a esta campanha.
+    if campanha:
+        os.environ["ARGUS_CAMPANHA"] = campanha
+    else:
+        os.environ.pop("ARGUS_CAMPANHA", None)
 
     for idx, step in enumerate(STEPS):
         state["current"] = idx + 1
@@ -184,9 +199,17 @@ def run_all(actor: str = "web") -> int:
                 detail = " | ".join(lines[-3:])[:300]
                 for ln in lines[-15:]:
                     print(f"    {ln}")
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as exc:
             rc, status = -1, "timeout"
-            detail = f"excedeu {STEP_TIMEOUT}s"
+            # A saída parcial vem no próprio TimeoutExpired. Sem gravá-la aqui, o log
+            # sumia justamente no caso em que ele mais importa: a etapa que estourou.
+            parcial = exc.output or ""
+            if isinstance(parcial, bytes):
+                parcial = parcial.decode("utf-8", "replace")
+            _gravar_saida(step["key"], step["cmd"], rc, parcial)
+            ultimas = [ln.strip() for ln in parcial.splitlines() if ln.strip()][-3:]
+            detail = (f"excedeu {STEP_TIMEOUT}s"
+                      + (" · última saída: " + " | ".join(ultimas) if ultimas else ""))[:300]
             print(f"  [TIMEOUT] {step['label']} passou de {STEP_TIMEOUT}s", file=sys.stderr)
         except FileNotFoundError:
             rc, status = -2, "missing"
@@ -218,7 +241,7 @@ def run_all(actor: str = "web") -> int:
 
 
 def main() -> int:
-    actor = _read_request_actor()
+    actor, campanha = _read_request()
     # Consome o pedido ANTES de rodar: senão a unit .path redispararia em loop.
     try:
         REQUEST_FILE.unlink()
@@ -238,7 +261,7 @@ def main() -> int:
         return 1
 
     try:
-        return run_all(actor)
+        return run_all(actor, campanha)
     finally:
         try:
             LOCK_DIR.rmdir()

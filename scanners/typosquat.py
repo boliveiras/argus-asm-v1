@@ -47,6 +47,16 @@ import time
 import uuid
 from pathlib import Path
 
+# Filtro de campanha (ARGUS_CAMPANHA): permite rodar uma campanha por vez, sem
+# reduzir a cobertura das demais. Import tolerante — sem o módulo, roda tudo.
+try:
+    from campaigns import filtrar_campanhas as _filtrar_campanhas
+except Exception:                                   # pragma: no cover
+    def _filtrar_campanhas(arquivos):
+        return list(arquivos)
+
+
+
 try:
     from reporter import generate_typosquat_report
 except ImportError:
@@ -252,7 +262,7 @@ def _resolve_targets_dir() -> Path:
 def load_campaigns() -> list[tuple[str, list[str]]]:
     target_path = _resolve_targets_dir()
     campaigns = []
-    for f in sorted(target_path.glob("*.txt")):
+    for f in _filtrar_campanhas(sorted(target_path.glob("*.txt"))):
         domains, seen = [], set()
         for raw in f.read_text(encoding="utf-8").splitlines():
             line = raw.split("#", 1)[0].strip().lower()

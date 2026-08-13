@@ -4546,7 +4546,7 @@ _CAMP_SCRIPT = r"""<script>
   }
   function load(){
     api('/api/campaigns',{cache:'no-store'}).then(function(j){
-      DATA=j.campaigns||{}; show('camp-main'); render(); wlLoad(); pollScan();
+      DATA=j.campaigns||{}; show('camp-main'); render(); encherSeletorScan(DATA); wlLoad(); pollScan();
     }).catch(function(){ show('camp-off'); });
   }
   function render(){
@@ -4677,10 +4677,27 @@ _CAMP_SCRIPT = r"""<script>
   }
   function startScan(){
     var btn=document.getElementById('scan-btn'); if(btn) btn.disabled=true;   // trava imediata
-    api('/api/scan/start',{method:'POST',body:'{}'}).then(function(j){
-      msg('Execução iniciada — acompanhe o progresso abaixo.');
+    var sel=document.getElementById('scan-camp');
+    var camp=sel?sel.value:'';
+    api('/api/scan/start',{method:'POST',body:JSON.stringify({campanha:camp})}).then(function(j){
+      msg('Execução iniciada'+(camp?(' — somente a campanha '+camp):' para todas as campanhas')
+          +'. Acompanhe o progresso abaixo.');
       renderScan(j); pollScan();
     }).catch(function(e){ msg(e.message,'err'); pollScan(); });
+  }
+  // Preenche o seletor com as campanhas cadastradas (união dos dois escopos).
+  function encherSeletorScan(dados){
+    var sel=document.getElementById('scan-camp'); if(!sel) return;
+    var nomes={};
+    Object.keys(dados||{}).forEach(function(escopo){
+      (dados[escopo]||[]).forEach(function(c){ nomes[c.name]=1; });
+    });
+    var atual=sel.value;
+    sel.innerHTML='<option value="">Todas as campanhas</option>';
+    Object.keys(nomes).sort().forEach(function(nome){
+      var o=document.createElement('option'); o.value=nome; o.textContent=nome; sel.appendChild(o);
+    });
+    sel.value=atual;
   }
 
   // ── Wordlist de subdomínios (submonitor/subs.txt) ──
@@ -4793,8 +4810,14 @@ def build_campaigns_page() -> str:
         '<div class="panel panel-pad" style="margin-bottom:16px;border-left:3px solid var(--accent)">'
         '<h2>&#9654; Executar agora</h2>'
         '<div style="display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap">'
-        '<button class="btn btn-pdf" type="button" id="scan-btn" data-write="1" style="flex:none"'
-        ' onclick="window.__camp&&window.__camp.scanStart()">&#9654; Rodar todos os scans agora</button>'
+        '<div style="display:flex;gap:8px;align-items:center;flex:none;flex-wrap:wrap">'
+        '<label for="scan-camp" class="page-sub" style="font-size:12px">Escopo:</label>'
+        '<select id="scan-camp" data-write="1" aria-label="Campanha a executar"'
+        ' title="Rodar uma campanha por vez mantém cada execução dentro do tempo limite">'
+        '<option value="">Todas as campanhas</option></select>'
+        '<button class="btn btn-pdf" type="button" id="scan-btn" data-write="1"'
+        ' onclick="window.__camp&&window.__camp.scanStart()">&#9654; Rodar agora</button>'
+        '</div>'
         '<div id="scan-box" style="flex:1;min-width:280px"></div>'
         '</div></div>'
 

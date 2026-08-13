@@ -49,6 +49,16 @@ from pathlib import Path
 
 import requests
 
+# Filtro de campanha (ARGUS_CAMPANHA): permite rodar uma campanha por vez, sem
+# reduzir a cobertura das demais. Import tolerante — sem o módulo, roda tudo.
+try:
+    from campaigns import filtrar_campanhas as _filtrar_campanhas
+except Exception:                                   # pragma: no cover
+    def _filtrar_campanhas(arquivos):
+        return list(arquivos)
+
+
+
 try:
     import nmap
 except ImportError:
@@ -351,7 +361,7 @@ def load_campaigns() -> list[tuple[str, list[str]]]:
             f"Diretório de targets não encontrado: {target_path.absolute()}\n"
             f"Crie o diretório e adicione arquivos .txt com os IPs/hosts."
         )
-    campaign_files = sorted(target_path.glob("*.txt"))
+    campaign_files = _filtrar_campanhas(sorted(target_path.glob("*.txt")))
     if not campaign_files:
         raise FileNotFoundError(f"Nenhum arquivo .txt encontrado em {target_path.absolute()}")
     campaigns = []

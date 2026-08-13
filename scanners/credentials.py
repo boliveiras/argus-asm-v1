@@ -39,6 +39,16 @@ import time
 import uuid
 from pathlib import Path
 
+# Filtro de campanha (ARGUS_CAMPANHA): permite rodar uma campanha por vez, sem
+# reduzir a cobertura das demais. Import tolerante — sem o módulo, roda tudo.
+try:
+    from campaigns import filtrar_campanhas as _filtrar_campanhas
+except Exception:                                   # pragma: no cover
+    def _filtrar_campanhas(arquivos):
+        return list(arquivos)
+
+
+
 try:
     from threatintel.providers import hudsonrock
     _HR_AVAILABLE = True
@@ -230,7 +240,7 @@ def _valid_domain(s: str) -> bool:
 
 def load_campaigns() -> list[tuple[str, list[str]]]:
     target_path = _resolve_targets_dir()
-    campaign_files = sorted(target_path.glob("*.txt"))
+    campaign_files = _filtrar_campanhas(sorted(target_path.glob("*.txt")))
     campaigns = []
     for f in campaign_files:
         domains, skipped = [], 0
