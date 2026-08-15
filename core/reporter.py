@@ -4871,7 +4871,8 @@ def build_campaigns_page() -> str:
         '<button class="btn btn-pdf" type="button" id="scan-btn" data-write="1"'
         ' onclick="window.__camp&&window.__camp.scanStart()">&#9654; Rodar agora</button>'
         '</div>'
-        '<div id="scan-box" style="flex:1;min-width:280px"></div>'
+        # min-width em min(): 280px fixo nao cabia em telas de 320px (estourava 14px).
+        '<div id="scan-box" style="flex:1;min-width:min(280px,100%)"></div>'
         '</div></div>'
 
         # Editor (criar / editar)
