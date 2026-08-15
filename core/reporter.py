@@ -4631,7 +4631,14 @@ _CAMP_SCRIPT = r"""<script>
     var running=!!st.running;
     if(btn){
       btn.disabled=running||st.available===false;
-      btn.innerHTML=running?'&#9203; Executando…':'&#9654; Rodar todos os scans agora';
+      btn.innerHTML=running?'&#9203; Executando…':'&#9654; Rodar agora';
+    }
+    // O escopo trava junto com o botão: mexer no seletor durante a execução não
+    // muda nada do que já está rodando, e deixá-lo ativo sugere o contrário.
+    var selCamp=document.getElementById('scan-camp');
+    if(selCamp){
+      selCamp.disabled=running||st.available===false;
+      if(running&&st.campanha) selCamp.value=st.campanha;
     }
     if(st.available===false){
       box.innerHTML='<div class="page-sub">Execução sob demanda indisponível: '+esc(st.error||'')+'</div>';
@@ -4679,6 +4686,7 @@ _CAMP_SCRIPT = r"""<script>
     var btn=document.getElementById('scan-btn'); if(btn) btn.disabled=true;   // trava imediata
     var sel=document.getElementById('scan-camp');
     var camp=sel?sel.value:'';
+    if(sel) sel.disabled=true;
     api('/api/scan/start',{method:'POST',body:JSON.stringify({campanha:camp})}).then(function(j){
       msg('Execução iniciada'+(camp?(' — somente a campanha '+camp):' para todas as campanhas')
           +'. Acompanhe o progresso abaixo.');
@@ -4756,6 +4764,10 @@ def build_campaigns_page() -> str:
         '<style>'
         '.camp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(260px,100%),1fr));gap:12px}'
         '.camp-split{display:grid;grid-template-columns:minmax(180px,260px) 1fr;gap:14px;margin-top:10px}'
+        '.scan-ctl{display:flex;gap:8px;align-items:center;flex-wrap:wrap;min-width:0}'
+        '.scan-ctl select{max-width:100%}'
+        '@media(max-width:640px){.scan-ctl{width:100%}'
+        '.scan-ctl select,.scan-ctl .btn{width:100%;flex:1 1 100%}}'
         '@media(max-width:640px){.camp-split{grid-template-columns:1fr}}'
         '.camp-card{border:1px solid var(--border);border-radius:var(--radius-sm);'
         'background:linear-gradient(180deg,var(--surface),var(--surface-2));padding:12px 13px}'
@@ -4810,7 +4822,7 @@ def build_campaigns_page() -> str:
         '<div class="panel panel-pad" style="margin-bottom:16px;border-left:3px solid var(--accent)">'
         '<h2>&#9654; Executar agora</h2>'
         '<div style="display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap">'
-        '<div style="display:flex;gap:8px;align-items:center;flex:none;flex-wrap:wrap">'
+        '<div class="scan-ctl">'
         '<label for="scan-camp" class="page-sub" style="font-size:12px">Escopo:</label>'
         '<select id="scan-camp" data-write="1" aria-label="Campanha a executar"'
         ' title="Rodar uma campanha por vez mantém cada execução dentro do tempo limite">'
