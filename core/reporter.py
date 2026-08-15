@@ -226,35 +226,44 @@ def _common_css() -> str:
   .actions select:focus { box-shadow:0 0 0 3px rgba(51,163,239,.12); }
 
   /* ── Painel de resumo: KPIs + donut ──────────────────── */
-  .summary { display:grid; grid-template-columns:1fr 260px; gap:16px; margin-bottom:20px; }
-  @media (max-width:920px){ .summary { grid-template-columns:1fr; } }
+  /* align-items:start: sem isso a faixa de KPIs esticava ate a altura do painel de
+     risco, criando cartoes ocos de ~215px com o numero perdido no topo. */
+  .summary { display:grid; grid-template-columns:1fr; gap:12px; margin-bottom:20px; }
   .panel { background:linear-gradient(180deg,var(--surface),var(--surface-2)); border:1px solid var(--border);
            border-radius:var(--radius); box-shadow:var(--shadow); }
-  .kpi-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(118px,100%),1fr)); gap:1px; background:var(--border);
+  /* Flex em vez de grid: com grid, um numero de KPIs que nao fecha a ultima linha
+     deixava o fundo do proprio grid a mostra — aquele retangulo cinza vazio. No
+     flex os itens da ultima linha crescem e ocupam o vao. */
+  .kpi-grid { display:flex; flex-wrap:wrap; gap:1px; background:var(--border);
               border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; }
-  .kpi { background:linear-gradient(180deg,var(--surface),var(--surface-2)); padding:15px 16px 15px 18px; position:relative; }
+  .kpi { flex:1 1 118px; min-width:0; background:var(--surface); padding:14px 16px 13px 17px; position:relative; }
   /* O número é o herói: cor sólida de alto contraste (--text). A severidade é
      comunicada pela barra lateral colorida (acento), não pela cor do número. */
-  .kpi::before { content:''; position:absolute; left:0; top:12px; bottom:12px; width:4px; border-radius:0 3px 3px 0; background:var(--border-2); }
-  .kpi .v { font-size:25px; font-weight:800; line-height:1; letter-spacing:-.5px; color:var(--text); }
-  .kpi .l { font-size:11.5px; color:var(--muted); margin-top:6px; text-transform:uppercase; letter-spacing:.5px; }
-  .kpi.sev-crit::before{ background:var(--red); width:5px; }
+  .kpi::before { content:''; position:absolute; left:0; top:0; bottom:0; width:3px; background:var(--border-2); }
+  .kpi .v { font-size:27px; font-weight:800; line-height:1.05; letter-spacing:-.6px; color:var(--text);
+            font-variant-numeric:tabular-nums; }
+  .kpi .l { font-size:11px; color:var(--muted); margin-top:5px; text-transform:uppercase; letter-spacing:.5px;
+            white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .kpi.sev-crit::before{ background:var(--red); width:4px; }
   .kpi.sev-alto::before{ background:var(--orange); }
   .kpi.sev-med::before{ background:var(--yellow); }
   .kpi.sev-novo::before{ background:var(--accent); }
   .kpi.sev-rein::before{ background:var(--accent-2); }
   .kpi.sev-abus::before{ background:var(--pink); }
 
-  .donut-card { padding:16px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; }
-  .donut-card h2 { font-size:13px; color:var(--muted); text-transform:uppercase; letter-spacing:.9px; align-self:flex-start; font-weight:700; }
+  .donut-card { padding:13px 16px 14px; display:flex; flex-direction:column; gap:8px; }
+  .donut-card h2 { font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.9px; font-weight:700; margin:0; }
   .donut-flex { display:flex; align-items:center; gap:16px; width:100%; }
   .donut { width:120px; height:120px; flex:none; }
   .donut .tot { font-size:24px; font-weight:800; fill:var(--text); }
   .donut .totl { font-size:9.5px; fill:var(--muted); letter-spacing:1px; }
-  .legend { display:flex; flex-direction:column; gap:7px; font-size:12px; }
-  .legend-item { display:flex; align-items:center; gap:8px; color:var(--muted); }
+  .legend { display:flex; flex-wrap:wrap; gap:6px 22px; font-size:12px; }
+  .legend-item { display:flex; align-items:center; gap:7px; color:var(--muted); }
   .legend-item .dot { width:9px; height:9px; border-radius:3px; flex:none; }
-  .legend-item b { color:var(--text); font-variant-numeric:tabular-nums; margin-left:auto; padding-left:14px; }
+  .legend-item b { color:var(--text); font-variant-numeric:tabular-nums; padding-left:2px; }
+  /* Em coluna (relatorios) a legenda continua empilhada com o numero a direita. */
+  .legend.legend-col { flex-direction:column; flex-wrap:nowrap; gap:7px; }
+  .legend.legend-col .legend-item b { margin-left:auto; padding-left:14px; }
 
   /* ── Toolbar / filtros ───────────────────────────────── */
   .toolbar { display:flex; align-items:center; gap:9px; margin-bottom:12px; flex-wrap:wrap; }
@@ -318,9 +327,17 @@ def _common_css() -> str:
   .colmenu-body label:hover { background:var(--surface); }
   .colmenu-body input[type=checkbox] { accent-color:var(--accent); width:14px; height:14px; cursor:pointer; }
 
-  .tabs { display:flex; gap:4px; margin-bottom:14px; border-bottom:1px solid var(--border); }
+  /* As abas rolam na horizontal quando nao cabem (em 320px elas estouravam 67px e
+     empurravam a pagina). Rolagem em vez de quebra de linha mantem a fileira unica
+     e a borda inferior continua sendo uma linha so. */
+  .tabs { display:flex; gap:4px; margin-bottom:14px; border-bottom:1px solid var(--border);
+          overflow-x:auto; overflow-y:hidden; scrollbar-width:thin; -webkit-overflow-scrolling:touch; }
+  .tabs::-webkit-scrollbar { height:3px; }
+  .tabs::-webkit-scrollbar-thumb { background:var(--border-2); border-radius:3px; }
   .tab { padding:9px 16px; border-radius:var(--radius-sm) var(--radius-sm) 0 0; border:1px solid transparent; border-bottom:none;
-         cursor:pointer; font-weight:600; font-size:13px; color:var(--muted); background:transparent; transition:.15s; margin-bottom:-1px; }
+         cursor:pointer; font-weight:600; font-size:13px; color:var(--muted); background:transparent; transition:.15s; margin-bottom:-1px;
+         flex:none; white-space:nowrap; }
+  @media (max-width:400px){ .tab { padding:9px 11px; font-size:12.5px; } }
   .tab:hover { color:var(--text); }
   .tab.active { color:var(--accent); background:var(--surface); border-color:var(--border); }
   .tab .badge { display:inline-block; background:var(--bg); color:var(--steel-2); border-radius:999px; padding:1px 8px; font-size:11px; margin-left:6px; }
@@ -485,7 +502,12 @@ def _common_css() -> str:
   .exec-grid { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
   @media (max-width:820px){ .exec-grid { grid-template-columns:1fr; } }
   .exec-grid h3 { font-size:11.5px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; margin-bottom:9px; }
-  .exec-risks, .exec-recs { list-style:none; display:flex; flex-direction:column; gap:7px; }
+  /* padding:0 zera o recuo padrao de lista do navegador (40px), que somado a largura
+     do painel empurrava a pagina em telas de 320px. overflow-wrap quebra hostname
+     longo em vez de deixar a linha vazar. */
+  .exec-risks, .exec-recs { list-style:none; display:flex; flex-direction:column; gap:7px;
+                            margin:0; padding:0; min-width:0; }
+  .exec-risks li, .exec-recs li { overflow-wrap:anywhere; }
   .exec-risks li { font-size:12.5px; color:var(--text); }
   .exec-risks .sv { font-weight:800; margin-right:7px; font-size:11px; }
   .exec-recs li { font-size:12.5px; color:#cbd5e1; line-height:1.5; padding-left:18px; position:relative; }
@@ -502,7 +524,13 @@ def _common_css() -> str:
   .panel-pad { padding:18px 20px; }
   .panel-pad h2 { font-size:14px; color:var(--accent); text-transform:uppercase; letter-spacing:.7px;
                   margin-bottom:14px; display:flex; align-items:center; gap:8px; }
-  .panel-pad h2 .badge { margin-left:auto; }
+  /* O badge nunca quebra em duas linhas nem empurra o titulo: fica colado a direita,
+     em tamanho fixo, e o titulo e que cede espaco. */
+  /* flex:0 1 auto (nao 'none'): o badge encolhe com reticencias quando a linha aperta,
+     em vez de empurrar a pagina — o carimbo de data/hora estourava a 320px. */
+  .panel-pad h2 .badge { margin-left:auto; flex:0 1 auto; min-width:0; white-space:nowrap;
+                         overflow:hidden; text-overflow:ellipsis; align-self:center; }
+  .panel-pad h2 > span:not(.badge), .panel-pad h2 { min-width:0; }
   /* Ícone do título: o SVG do nav não traz width/height — sem isto o flex estica ele. */
   .panel-pad h2 > svg { width:16px; height:16px; flex:none; }
   .list-row { display:flex; align-items:flex-start; gap:12px; padding:11px 0; border-bottom:1px solid var(--border); }
@@ -882,7 +910,7 @@ def _donut(counts: dict, title: str = "Distribuição de Risco") -> str:
         f'<svg class="donut" viewBox="0 0 120 120">{arcs}'
         f'<text class="tot" x="60" y="60" text-anchor="middle" dominant-baseline="central">{total}</text>'
         '<text class="totl" x="60" y="78" text-anchor="middle">ATIVOS</text></svg>'
-        f'<div class="legend">{legend}</div></div></div>'
+        f'<div class="legend legend-col">{legend}</div></div></div>'
     )
 
 
