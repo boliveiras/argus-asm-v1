@@ -513,6 +513,7 @@ def _common_css() -> str:
   .exec-recs li { font-size:12.5px; color:#cbd5e1; line-height:1.5; padding-left:18px; position:relative; }
   .exec-recs li::before { content:'\\2192'; position:absolute; left:0; color:var(--accent); font-weight:700; }
   .exec-none { color:var(--green); font-size:13px; }
+  .ver-tag { font-variant-numeric:tabular-nums; opacity:.75; margin-left:6px; }
 
   /* Accordion (recolhe seções secundárias p/ reduzir densidade) */
   .acc > summary { cursor:pointer; list-style:none; display:flex; align-items:center; gap:8px;
@@ -855,11 +856,23 @@ def _topbar(active: str) -> str:
 
 def _footer() -> str:
     year = datetime.datetime.now().year
+    # A versão é buscada em /version e preenchida aqui: confere num relance se a
+    # interface aberta é a do último commit, sem precisar abrir o endpoint.
     return (
         '<div class="footer">'
         '<span>Argus — plataforma de monitoramento de superfície de ataque</span>'
-        f'<span>Gerado automaticamente pelo Argus · &copy; {year}</span>'
+        f'<span>Gerado automaticamente pelo Argus · &copy; {year} '
+        '<span id="app-version" class="ver-tag" title="Versão em execução"></span></span>'
         '</div>'
+        '<script>'
+        'fetch("/version",{cache:"no-store"}).then(function(r){return r.ok?r.json():null;})'
+        '.then(function(j){ if(!j)return; var e=document.getElementById("app-version"); if(!e)return;'
+        ' e.textContent="v"+j.version+(j.commit?(" ("+j.commit+")"):"")+(j.dirty?" ·modificado":"");'
+        ' e.title="Versão "+j.version+(j.commit?(" · commit "+j.commit):"")'
+        '   +(j.built?(" · instalado em "+j.built):"")'
+        '   +(j.dirty?" · ATENÇÃO: instalado com alterações não commitadas":"");'
+        '}).catch(function(){});'
+        '</script>'
     )
 
 

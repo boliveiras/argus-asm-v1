@@ -562,6 +562,26 @@ def create_app():
             repo.close()
             return None, "ambiguous"
 
+    @app.get("/version")
+    @app.get("/api/version")
+    def version():
+        """Versão em execução, para comparar produção com o último commit do repo.
+
+        Lê o arquivo gravado pelo instalador — a aplicação NUNCA roda git em runtime
+        (produção não precisa ter o .git, e chamar git num handler web é superfície
+        desnecessária). Só devolve versão, commit e data: nada de caminho de
+        instalação, hostname ou versão de dependência.
+        """
+        dados = {"version": "desconhecida", "commit": "", "built": "", "dirty": False}
+        try:
+            bruto = json.loads((Path(_argus_base()) / "version.json").read_text(encoding="utf-8"))
+            for campo in dados:
+                if campo in bruto:
+                    dados[campo] = bruto[campo]
+        except Exception:
+            pass                      # sem o arquivo, responde "desconhecida" em vez de falhar
+        return jsonify(**dados)
+
     @app.get("/api/health")
     def health():
         try:

@@ -392,6 +392,30 @@ for rcfile in /root/.zshrc /root/.bashrc "/home/$APP_USER/.zshrc" "/home/$APP_US
 done
 
 # ── 9. THREAT INTEL — API KEYS + CAMINHOS ────────────────────
+step "8b. Registrando a versão instalada"
+# O endpoint /version compara o que roda em produção com o último commit do repo.
+# O commit é capturado AQUI, na instalação: assim o servidor não precisa do .git nem
+# roda git em runtime. "dirty" avisa que instalou com mudança não commitada.
+APP_VERSION="$(cat "$SCRIPT_DIR/VERSION" 2>/dev/null | tr -d '[:space:]')"
+[ -n "$APP_VERSION" ] || APP_VERSION="desconhecida"
+APP_COMMIT="$(git -C "$SCRIPT_DIR" rev-parse --short HEAD 2>/dev/null || echo "")"
+if git -C "$SCRIPT_DIR" diff --quiet HEAD 2>/dev/null; then APP_DIRTY="false"; else APP_DIRTY="true"; fi
+[ -n "$APP_COMMIT" ] || APP_DIRTY="false"
+cat > "$BASE_DIR/version.json" <<VERSIONEOF
+{
+    "version": "$APP_VERSION",
+    "commit": "$APP_COMMIT",
+    "built": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+    "dirty": $APP_DIRTY
+}
+VERSIONEOF
+chown "root:$APP_USER" "$BASE_DIR/version.json" 2>/dev/null || true
+chmod 640 "$BASE_DIR/version.json" 2>/dev/null || true
+ok "Versão $APP_VERSION (commit ${APP_COMMIT:-n/d}) registrada em $BASE_DIR/version.json"
+if [ "$APP_DIRTY" = "true" ]; then
+  warn "Instalando com alterações NÃO commitadas — /version vai marcar dirty=true"
+fi
+
 step "9. Configurando Threat Intel (AbuseIPDB + urlscan.io)"
 CONFIG_JSON="$THREATINTEL_DIR/config.json"
 if [ -f "$CONFIG_JSON" ]; then
@@ -752,6 +776,20 @@ if [ "$INSTALL_APACHE" = true ]; then
         RequestHeader set X-Remote-User "expr=%{REMOTE_USER}"
         ProxyPass        "http://127.0.0.1:8099/api/"
         ProxyPassReverse "http://127.0.0.1:8099/api/"
+    </Location>
+
+    # /version fica atrás da MESMA autenticação: versão e commit facilitam
+    # fingerprinting, e deixar aberto contradiz o que o próprio Argus aponta.
+    <Location "/version">
+        AuthType form
+        AuthName "Argus"
+        AuthFormProvider file
+        AuthUserFile ${HTPASSWD_FILE}
+        AuthFormLoginRequiredLocation "/login.html"
+        Session On
+        Require valid-user
+        ProxyPass        "http://127.0.0.1:8099/version"
+        ProxyPassReverse "http://127.0.0.1:8099/version"
     </Location>
 
     ErrorLog  \${APACHE_LOG_DIR}/argus-monitor-error.log
