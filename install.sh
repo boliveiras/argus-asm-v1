@@ -99,7 +99,9 @@ if [ "$UNINSTALL" = true ]; then
   rm -f /etc/systemd/system/argus-web.service
   systemctl disable --now argus-scan.path 2>/dev/null || true
   systemctl stop argus-scan.service 2>/dev/null || true
+  systemctl disable --now argus-logpush.timer 2>/dev/null || true
   rm -f /etc/systemd/system/argus-scan.path /etc/systemd/system/argus-scan.service
+  rm -f /etc/systemd/system/argus-logpush.timer /etc/systemd/system/argus-logpush.service
   systemctl daemon-reload 2>/dev/null || true
   a2dissite argus-monitor 2>/dev/null || true
   rm -f "$APACHE_CONF" /etc/apache2/sites-enabled/argus-monitor.conf
@@ -226,6 +228,14 @@ copy_if_exists "core/webapp.py"                       "$BASE_DIR/webapp.py"
 copy_if_exists "core/campaigns.py"                    "$BASE_DIR/campaigns.py"
 copy_if_exists "core/runner.py"                       "$BASE_DIR/runner.py"
 copy_if_exists "core/users.py"                        "$BASE_DIR/users.py"
+copy_if_exists "core/logpush.py"                      "$BASE_DIR/logpush.py"
+copy_if_exists "core/logpush_config.py"               "$BASE_DIR/logpush_config.py"
+copy_if_exists "core/logpush_fmt.py"                  "$BASE_DIR/logpush_fmt.py"
+mkdir -p "$BASE_DIR/logpush_dest"
+copy_if_exists "core/logpush_dest/__init__.py"        "$BASE_DIR/logpush_dest/__init__.py"
+copy_if_exists "core/logpush_dest/base.py"            "$BASE_DIR/logpush_dest/base.py"
+copy_if_exists "core/logpush_dest/s3.py"              "$BASE_DIR/logpush_dest/s3.py"
+copy_if_exists "core/logpush_dest/webhook.py"         "$BASE_DIR/logpush_dest/webhook.py"
 copy_if_exists "core/providers.py"                    "$BASE_DIR/providers.py"
 copy_if_exists "core/logs.py"                         "$BASE_DIR/logs.py"
 copy_if_exists "argus-reset.sh"                       "$BASE_DIR/argus-reset.sh"
@@ -659,6 +669,16 @@ if [ "$INSTALL_APACHE" = true ]; then
     ok "python3-bcrypt disponível"
   fi
 
+  # boto3: usado só pelo destino S3 do Logpush. Ausente, a página avisa e os
+  # demais destinos seguem funcionando.
+  if ! "$PYTHON_BIN" -c "import boto3" 2>/dev/null; then
+    apt-get install -y python3-boto3 >/dev/null 2>&1 \
+      && ok "python3-boto3 instalado (envio de logs para S3)" \
+      || warn "python3-boto3 ausente — o destino S3 do Logpush ficará indisponível"
+  else
+    ok "python3-boto3 disponível"
+  fi
+
   # Passphrase para criptografar o cookie de sessão (mod_session_crypto).
   # Arquivo 640 root:www-data — fora do vhost (que é world-readable).
   SESSION_KEY_FILE="/etc/apache2/argus-session.key"
@@ -906,6 +926,65 @@ if systemctl restart argus-scan.path 2>/dev/null; then
   ok "Execução sob demanda ativa (botão ▶ na Web dispara argus-scan.service como root)"
 else
   warn "Falha ao ativar argus-scan.path — o botão ▶ da Web não vai executar"
+fi
+
+# ── 12b. LOGPUSH ──────────────────────────────────────────────
+step "12b. Configurando o envio de logs (Logpush)"
+
+# Config com credencial de bucket / URL de webhook: mesma postura do config das
+# fontes — só o app user lê e escreve, "outros" não têm acesso.
+if [ ! -f "$BASE_DIR/logpush.json" ]; then
+  echo '{}' > "$BASE_DIR/logpush.json"
+fi
+chown "root:$APP_USER" "$BASE_DIR/logpush.json" 2>/dev/null || true
+chmod 640 "$BASE_DIR/logpush.json"
+setfacl -m "u:$APP_USER:rw" "$BASE_DIR/logpush.json" 2>/dev/null   && ok "Logpush: configurável pela Web"   || warn "setfacl indisponível — a página Logpush ficará somente leitura"
+
+# Os logs são 750 root:adm; sem estar no grupo adm o serviço não consegue LER.
+usermod -aG adm "$APP_USER" 2>/dev/null   && ok "$APP_USER no grupo adm (leitura dos logs)"   || warn "não consegui adicionar $APP_USER ao grupo adm — o logpush não lerá os logs"
+
+cat > /etc/systemd/system/argus-logpush.service << LPSERVICE
+[Unit]
+Description=Argus ASM — envia os logs para o destino configurado
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=$APP_USER
+Environment=ARGUS_BASE=$BASE_DIR
+Environment=PYTHONPATH=$BASE_DIR
+ExecStart=$PYTHON_BIN $BASE_DIR/logpush.py
+# Só precisa LER os logs e ESCREVER o próprio ponteiro.
+ProtectSystem=full
+ProtectHome=yes
+NoNewPrivileges=yes
+PrivateTmp=yes
+ReadWritePaths=$BASE_DIR/store
+# Saída vai para o journal (journalctl -u argus-logpush): o diretório de logs é
+# 750 root:adm, então o grupo lê mas não escreve — apontar um arquivo ali faria
+# o serviço falhar já na partida.
+LPSERVICE
+
+cat > /etc/systemd/system/argus-logpush.timer << LPTIMER
+[Unit]
+Description=Argus ASM — logpush a cada 5 minutos
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+Unit=argus-logpush.service
+
+[Install]
+WantedBy=timers.target
+LPTIMER
+
+systemctl daemon-reload 2>/dev/null
+systemctl enable argus-logpush.timer 2>/dev/null
+if systemctl restart argus-logpush.timer 2>/dev/null; then
+  ok "Logpush ativo (verifica a cada 5 min; só envia se estiver ligado na Web)"
+else
+  warn "Falha ao ativar argus-logpush.timer"
 fi
 
 # ── 13. CRONS ─────────────────────────────────────────────────

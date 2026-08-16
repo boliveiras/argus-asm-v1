@@ -83,6 +83,24 @@ reaparecer. **Mitigado e Falso positivo são decisão sua**, ninguém marca por 
 evita a gangorra clássica: uma falha de rede fazia o item "sumir", virar mitigado sozinho
 e voltar como novo na rodada seguinte. O histórico fica sempre guardado.
 
+## Levar os logs para fora
+
+O Argus costuma rodar longe de quem o acompanha — numa VPS, de propósito, para
+enxergar a empresa como um estranho enxerga. O **Logpush** resolve isso: o que ele
+registra segue para onde você já olha.
+
+Para um **bucket S3**, cada evento vira um arquivo — pronto para o SIEM consumir.
+Para um **chat**, vira uma mensagem que dá para ler:
+
+> 🔴 CRÍTICO · Nova porta exposta
+> campanha: RIOCARD · ip: 104.18.9.141 · port: 443
+> 15/08/2026 13:35
+
+No chat você marca quais severidades quer receber; deixar todas ligadas costuma
+virar ruído, e a tela avisa. Os logs continuam na máquina (a rotação semanal segue
+valendo) — o que vai para fora é uma cópia. Se o destino cair, nada se perde: o
+envio recomeça exatamente de onde parou.
+
 ## Tudo conectado — o mapa de correlação
 
 Achado solto conta pouco. O que importa é como as coisas se ligam: **um mesmo IP
@@ -139,6 +157,7 @@ Depois de instalado, você não precisa mais editar arquivo no servidor para ope
 | **Wordlist** | Editar os prefixos usados na descoberta de subdomínios (`api`, `vpn`, `abt.cleverdata`…). Já vem com **100 prefixos** prontos e nunca aceita ficar vazia. |
 | **▶ Executar agora** | Roda a sequência completa na hora, sem esperar o agendamento, com **barra de progresso** etapa a etapa. Um de cada vez: enquanto roda, o botão fica travado. |
 | **Provedores** | Ligar/desligar cada fonte de inteligência e guardar as chaves de API — AbuseIPDB, VirusTotal, urlscan.io, NVD, CISA KEV, Shodan InternetDB, Hudson Rock, crt.sh e WHOIS. Nada de chave em arquivo no servidor: cadastra pela tela, e a tela nunca mostra a chave de volta (só o final mascarado). Fonte desligada é simplesmente pulada no scan. |
+| **Logpush** | Enviar os logs para um bucket S3 ou para um chat (Google Chat, Slack, Discord, Teams, Telegram). Você escolhe o que sai e, no chat, quais severidades. |
 | **Usuários** | Contas de acesso e perfis (veja abaixo). |
 
 ### Quem pode o quê
