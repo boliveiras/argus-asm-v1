@@ -43,9 +43,8 @@ class WebhookDestination(LogDestination):
         """Isolado para o teste injetar sem tocar na rede."""
         return requests.post(url, json=payload, timeout=_TIMEOUT)
 
-    def send(self, mensagens: list[Mensagem]) -> None:
-        if not mensagens:
-            return
+    def _preparar(self) -> tuple[str, str, str]:
+        """Valida a configuração e devolve (url, plataforma, chat_id)."""
         url = str(self.cfg.get("webhook_url") or "").strip()
         if not url_segura(url):
             # A URL NÃO entra no erro: quem a tem posta no canal, então ela é
@@ -55,18 +54,43 @@ class WebhookDestination(LogDestination):
         chat_id = str(self.cfg.get("webhook_chat_id") or "").strip()
         if plataforma == "telegram" and not chat_id:
             raise LogPushError("Telegram exige chat_id")
+        return url, plataforma, chat_id
+
+    def _entregar(self, m: Mensagem, url: str, plataforma: str, chat_id: str) -> None:
+        """Posta UMA mensagem. Não consulta o filtro de severidade."""
+        payload = para_chat(m, plataforma)
+        if plataforma == "telegram":
+            payload["chat_id"] = chat_id
+        try:
+            resp = self._post(url, payload)
+        except Exception as exc:
+            raise LogPushError(
+                f"falha de rede no webhook: {type(exc).__name__}") from exc
+        if resp.status_code >= 300:
+            corpo = (getattr(resp, "text", "") or "")[:120]
+            raise LogPushError(f"webhook respondeu HTTP {resp.status_code}: {corpo}")
+
+    def send(self, mensagens: list[Mensagem]) -> None:
+        if not mensagens:
+            return
+        url, plataforma, chat_id = self._preparar()
         permitidas = set(severidades_ligadas(self.cfg))
         for m in mensagens:
             if m.severidade not in permitidas:
                 continue
-            payload = para_chat(m, plataforma)
-            if plataforma == "telegram":
-                payload["chat_id"] = chat_id
-            try:
-                resp = self._post(url, payload)
-            except Exception as exc:
-                raise LogPushError(
-                    f"falha de rede no webhook: {type(exc).__name__}") from exc
-            if resp.status_code >= 300:
-                corpo = (getattr(resp, "text", "") or "")[:120]
-                raise LogPushError(f"webhook respondeu HTTP {resp.status_code}: {corpo}")
+            self._entregar(m, url, plataforma, chat_id)
+
+    def testar(self) -> str:
+        """Prova de conexão — ignora o filtro de severidade de propósito.
+
+        A mensagem de teste é INFO; passando pelo filtro (padrão CRÍTICO+ALTO)
+        ela seria descartada e a tela diria "teste OK" sem nada ter saído. Um
+        teste que aprova sem enviar é pior do que não ter teste.
+        """
+        import datetime
+        url, plataforma, chat_id = self._preparar()
+        self._entregar(Mensagem(
+            origem="teste", texto="Argus — teste de conexão do logpush",
+            quando=datetime.datetime.now(), severidade="INFO",
+            msgid="LOGPUSH_TEST"), url, plataforma, chat_id)
+        return f"mensagem de teste enviada para {plataforma}"

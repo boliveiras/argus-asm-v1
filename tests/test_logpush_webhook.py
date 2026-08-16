@@ -73,6 +73,26 @@ class TestPayload(unittest.TestCase):
             d.send([msg()])
 
 
+class TestTesteDeConexao(unittest.TestCase):
+    def test_teste_envia_mesmo_com_info_fora_do_filtro(self):
+        # padrão é CRÍTICO+ALTO; a mensagem de teste é INFO. Se o filtro valesse
+        # aqui, a tela diria "teste OK" sem nada ter saído.
+        d = destino()
+        detalhe = d.testar()
+        self.assertEqual(len(d.enviadas), 1)
+        self.assertIn("google_chat", detalhe)
+
+    def test_teste_falha_quando_a_url_e_invalida(self):
+        d = W.WebhookDestination({"destino": "webhook", "webhook_url": "http://10.0.0.1/h"})
+        with self.assertRaises(B.LogPushError):
+            d.testar()
+
+    def test_teste_de_telegram_sem_chat_id_falha(self):
+        d = destino(webhook_plataforma="telegram", webhook_chat_id="")
+        with self.assertRaises(B.LogPushError):
+            d.testar()
+
+
 class TestSeguranca(unittest.TestCase):
     def test_url_insegura_levanta(self):
         d = W.WebhookDestination({"destino": "webhook",
