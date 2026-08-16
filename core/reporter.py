@@ -750,6 +750,10 @@ _NAV_ICONS = {
     "provedores": '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">'
                   '<circle cx="8" cy="11.6" r="1.7"/>'
                   '<path d="M4.6 8.2a4.8 4.8 0 0 1 6.8 0M2.2 5.6a8.2 8.2 0 0 1 11.6 0" stroke-linecap="round"/></svg>',
+    # Logpush — caixa com seta saindo (os logs deixam a máquina rumo ao destino)
+    "logpush":    '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">'
+                  '<path d="M8 10.5V2.6M5.4 5.2 8 2.6l2.6 2.6" stroke-linecap="round" stroke-linejoin="round"/>'
+                  '<path d="M2.6 9.4v3.2c0 .5.4.8.9.8h9c.5 0 .9-.3.9-.8V9.4" stroke-linecap="round"/></svg>',
     # Usuários — pessoa + contorno de grupo (contas e perfis de acesso)
     "usuarios":   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">'
                   '<circle cx="6.4" cy="5.4" r="2.6"/>'
@@ -789,6 +793,7 @@ def _topbar(active: str) -> str:
         ("typosquat",   "/typosquat_report.html",   "Typosquat"),
         ("campanhas",   "/campanhas.html",          "Campanhas"),
         ("provedores",  "/provedores.html",         "Fontes"),
+        ("logpush",     "/logpush.html",            "Logpush"),
         ("usuarios",    "/usuarios.html",           "Usuários"),
         ("risk",        "/risk-guide.html",         "Guia de Risco"),
     ]
@@ -5071,6 +5076,184 @@ def build_providers_page() -> str:
         body, extra_script=_PROV_SCRIPT)
 
 
+_LOGPUSH_SCRIPT = r"""<script>
+(function(){
+  var CAT=null, CFG={};
+  function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+  function msg(t,tipo){
+    var e=document.getElementById('lp-msg'); if(!e)return;
+    e.style.display='block';
+    e.style.borderLeft='3px solid var('+(tipo==='err'?'--red':'--green')+')';
+    e.style.paddingLeft='11px';
+    e.textContent=t;
+  }
+  function api(url,opt){
+    opt=opt||{};
+    opt.headers=Object.assign({'Content-Type':'application/json','X-Requested-With':'argus'},opt.headers||{});
+    return fetch(url,opt).then(function(r){return r.json().then(function(j){
+      if(!r.ok||j.ok===false) throw new Error(j.error||('HTTP '+r.status)); return j;});});
+  }
+  function avisarFlood(){
+    var todas=CAT.severidades.every(function(s){
+      var e=document.getElementById('sev-'+s); return e&&e.checked;});
+    var av=document.getElementById('lp-flood');
+    if(av) av.style.display=todas?'block':'none';
+  }
+  function pintarCampos(){
+    var destino=document.getElementById('lp-destino').value;
+    var d=CAT.destinos.filter(function(x){return x.id===destino;})[0];
+    var host=document.getElementById('lp-campos'); host.innerHTML='';
+    if(!d) return;
+    d.campos.forEach(function(c){
+      var v=CFG[c.nome]!==undefined?CFG[c.nome]:(c.padrao||'');
+      var lab=document.createElement('label');
+      lab.textContent=c.label; lab.setAttribute('for','lp-'+c.nome);
+      var inp;
+      if(c.nome==='webhook_plataforma'){
+        inp=document.createElement('select');
+        CAT.plataformas.forEach(function(p){
+          var o=document.createElement('option'); o.value=p; o.textContent=p; inp.appendChild(o);});
+      } else {
+        inp=document.createElement('input');
+        inp.type=c.segredo?'password':'text';
+        if(c.segredo){ inp.placeholder=v?('configurado ('+v+') — digite para trocar'):'não configurado'; v=''; }
+      }
+      inp.id='lp-'+c.nome; inp.value=v; inp.setAttribute('data-write','1');
+      host.appendChild(lab); host.appendChild(inp);
+    });
+    var bloco=document.getElementById('lp-sev-bloco');
+    if(bloco) bloco.style.display=(destino==='webhook')?'block':'none';
+  }
+  function carregar(){
+    api('/api/logpush',{cache:'no-store'}).then(function(j){
+      CAT=j; CFG=j.config||{};
+      document.getElementById('lp-main').style.display='';
+      document.getElementById('lp-ligado').checked=!!CFG.logpush_ligado;
+      var og=document.getElementById('lp-origens'); og.innerHTML='';
+      j.origens.forEach(function(o){
+        var l=document.createElement('label');
+        l.innerHTML='<input type="checkbox" data-write="1" id="origem-'+esc(o.id)+'"'+
+          (CFG['origem_'+o.id]?' checked':'')+'> '+esc(o.label);
+        og.appendChild(l);
+      });
+      var sg=document.getElementById('lp-sev'); sg.innerHTML='';
+      j.severidades.forEach(function(s){
+        var marcado=(CFG['sev_'+s]!==undefined)?CFG['sev_'+s]:(s==='CRITICO'||s==='ALTO');
+        var l=document.createElement('label');
+        l.innerHTML='<input type="checkbox" data-write="1" id="sev-'+esc(s)+'"'+
+          (marcado?' checked':'')+'> '+esc(s);
+        sg.appendChild(l);
+        l.querySelector('input').addEventListener('change',avisarFlood);
+      });
+      var sel=document.getElementById('lp-destino'); sel.innerHTML='';
+      j.destinos.forEach(function(d){
+        var o=document.createElement('option'); o.value=d.id; o.textContent=d.label; sel.appendChild(o);});
+      sel.value=CFG.destino||'s3';
+      sel.onchange=pintarCampos;
+      pintarCampos(); avisarFlood();
+      if(j.estado&&j.estado.ultimo) msg('Último envio: '+j.estado.ultimo);
+      if(window.__argusRbacApply) window.__argusRbacApply();
+    }).catch(function(){
+      document.getElementById('lp-off').style.display='';
+    });
+  }
+  function salvar(){
+    var corpo={logpush_ligado:document.getElementById('lp-ligado').checked,
+               destino:document.getElementById('lp-destino').value};
+    CAT.origens.forEach(function(o){
+      corpo['origem_'+o.id]=document.getElementById('origem-'+o.id).checked;});
+    CAT.severidades.forEach(function(s){
+      corpo['sev_'+s]=document.getElementById('sev-'+s).checked;});
+    var d=CAT.destinos.filter(function(x){return x.id===corpo.destino;})[0];
+    d.campos.forEach(function(c){
+      var e=document.getElementById('lp-'+c.nome);
+      if(e&&e.value!=='') corpo[c.nome]=e.value;});
+    api('/api/logpush',{method:'POST',body:JSON.stringify(corpo)})
+      .then(function(){ msg('Configuração salva.'); carregar(); })
+      .catch(function(e){ msg(e.message,'err'); });
+  }
+  function testar(){
+    msg('Enviando mensagem de teste…');
+    api('/api/logpush/test',{method:'POST',body:'{}'})
+      .then(function(j){ msg('Teste OK — '+(j.detalhe||'enviado')); })
+      .catch(function(e){ msg('Teste falhou: '+e.message,'err'); });
+  }
+  document.addEventListener('DOMContentLoaded',function(){
+    document.getElementById('lp-salvar').addEventListener('click',salvar);
+    document.getElementById('lp-testar').addEventListener('click',testar);
+    carregar();
+  });
+})();
+</script>"""
+
+
+def build_logpush_page() -> str:
+    """Página de configuração do envio de logs para fora."""
+    body = (
+        '<style>'
+        '.lp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(190px,100%),1fr));gap:9px}'
+        '.lp-grid label{display:flex;gap:8px;align-items:center;font-size:13px;min-width:0}'
+        '#lp-campos label{display:block;font-size:12px;color:var(--muted);margin-top:10px}'
+        '#lp-campos input,#lp-campos select{width:100%;max-width:100%;background:var(--bg);'
+        'color:var(--text);border:1px solid var(--border);border-radius:var(--radius-sm);'
+        'padding:8px 10px;font-size:13px;margin-top:3px}'
+        '#lp-msg{display:none;margin-bottom:14px;font-size:13px}'
+        '#lp-destino{max-width:100%;background:var(--bg);color:var(--text);'
+        'border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 10px;font-size:13px}'
+        '</style>'
+
+        '<div id="lp-off" class="panel panel-pad" style="display:none;text-align:center;padding:40px 24px">'
+        '<div style="font-weight:700;font-size:15px;margin-bottom:6px">Configuração de envio indisponível</div>'
+        '<div style="color:var(--muted);font-size:13px">Esta página depende do serviço <code>argus-web</code>. '
+        'Verifique com: <code>systemctl status argus-web</code>.</div></div>'
+
+        '<div id="lp-main" style="display:none">'
+        '<div id="lp-msg" class="panel panel-pad"></div>'
+
+        '<div class="panel panel-pad" style="margin-bottom:16px">'
+        f'<h2>{_NAV_ICONS.get("logpush", "")} Envio de logs</h2>'
+        '<p class="page-sub" style="margin:2px 0 12px">Manda o que o Argus registra para um bucket '
+        'ou para um chat. Serve para quando a aplicação roda longe de você: os logs continuam aqui '
+        '(a rotação semanal segue valendo) e uma cópia vai para onde você acompanha. Se o destino '
+        'cair, nada se perde — o envio recomeça de onde parou.</p>'
+        '<label style="display:flex;gap:8px;align-items:center">'
+        '<input type="checkbox" id="lp-ligado" data-write="1"> <b>Ligado</b></label></div>'
+
+        '<div class="panel panel-pad" style="margin-bottom:16px">'
+        '<h2>O que enviar</h2>'
+        '<p class="page-sub" style="margin:2px 0 12px">Ao ligar uma origem, o envio começa do ponto '
+        'atual — o histórico anterior não é reenviado.</p>'
+        '<div id="lp-origens" class="lp-grid"></div></div>'
+
+        '<div class="panel panel-pad" style="margin-bottom:16px">'
+        '<h2>Para onde</h2>'
+        '<label for="lp-destino" class="page-sub">Destino</label><br>'
+        '<select id="lp-destino" data-write="1"></select>'
+        '<div id="lp-campos"></div>'
+        '<div id="lp-sev-bloco" style="display:none;margin-top:16px">'
+        '<div class="page-sub" style="margin-bottom:7px">Enviar quais severidades</div>'
+        '<div id="lp-sev" class="lp-grid"></div>'
+        '<div id="lp-flood" class="page-sub" style="display:none;margin-top:9px;'
+        'border-left:3px solid var(--orange);padding-left:9px">'
+        '&#9888;&#65039; Com todas as severidades ligadas, uma execução pode disparar centenas de '
+        'mensagens (flood). A maioria dos serviços de chat aplica limite de taxa e passa a descartar.'
+        '</div></div>'
+        '<div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap">'
+        '<button class="btn btn-pdf" type="button" id="lp-salvar" data-write="1">Salvar</button>'
+        '<button class="btn" type="button" id="lp-testar" data-write="1">Testar conexão</button>'
+        '</div></div>'
+
+        '<p class="page-sub">As credenciais ficam no servidor (<code>logpush.json</code>, legível apenas '
+        'pelo serviço) e <b>nunca são exibidas de volta</b> — a tela mostra só os últimos dígitos. '
+        'Cada alteração fica registrada na trilha de auditoria, sem o valor da credencial.</p>'
+        '</div>'
+    )
+    return _portal_shell(
+        "logpush", "Logpush",
+        "Envie os logs do Argus para um bucket S3 ou para um chat",
+        body, extra_script=_LOGPUSH_SCRIPT)
+
+
 _USERS_SCRIPT = r"""<script>
 (function(){
   var ME=null, USERS=[], ROLES=[];
@@ -5392,6 +5575,7 @@ def write_portal(docroot: str) -> None:
     (d / "campanhas.html").write_text(build_campaigns_page(), encoding="utf-8")
     (d / "usuarios.html").write_text(build_users_page(), encoding="utf-8")
     (d / "provedores.html").write_text(build_providers_page(), encoding="utf-8")
+    (d / "logpush.html").write_text(build_logpush_page(), encoding="utf-8")
     for name, active, label in [
         ("findings_report.html",    "findings",    "Gestão de Achados"),
         ("monitor_report.html",     "monitor",     "Monitor de Portas"),

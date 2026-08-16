@@ -61,6 +61,7 @@ except ImportError:                       # degrada com mensagem clara
 
 import campaigns as CAMP
 import findings as F
+import logpush_config as LPC
 import providers as PROV
 import users as USERS
 
@@ -561,6 +562,77 @@ def create_app():
         except ValueError:
             repo.close()
             return None, "ambiguous"
+
+    @app.get("/api/logpush")
+    def logpush_get():
+        """Catálogo + configuração atual. Segredo SEMPRE mascarado."""
+        cfg = dict(LPC.ler())
+        seguro = {}
+        for d in LPC.DESTINOS:
+            for campo in d["campos"]:
+                nome = campo["nome"]
+                if nome not in cfg:
+                    continue
+                seguro[nome] = LPC.mascarar(cfg[nome]) if campo["segredo"] else cfg[nome]
+        for chave, valor in cfg.items():
+            if chave.startswith(("origem_", "sev_")) or chave in ("destino", "logpush_ligado"):
+                seguro[chave] = valor
+        try:
+            import logpush as LP
+            ultimo = max((m.get("enviado_em", "") for m in LP.ler_estado().values()),
+                         default="")
+        except Exception:
+            ultimo = ""
+        return jsonify(ok=True, config=seguro, estado={"ultimo": ultimo},
+                       origens=LPC.ORIGENS, destinos=LPC.DESTINOS,
+                       plataformas=LPC.PLATAFORMAS, severidades=LPC.SEVERIDADES)
+
+    @app.post("/api/logpush")
+    def logpush_set():
+        if not _csrf_ok():
+            _audit(request, "AUTHZ_DENY", "ação negada: header CSRF ausente",
+                   outcome="deny", action="logpush_set")
+            return jsonify(ok=False, error="CSRF: header ausente"), 403
+        dados = request.get_json(silent=True) or {}
+        cfg = dict(LPC.ler())
+        for chave, valor in dados.items():
+            # Campo de segredo em branco ou mascarado = "não mudar": a interface
+            # devolve o valor mascarado, e gravá-lo destruiria o segredo real.
+            if isinstance(valor, str) and valor.startswith("••••"):
+                continue
+            cfg[chave] = valor
+        url = str(cfg.get("webhook_url") or "").strip()
+        if cfg.get("destino") == "webhook" and url and not LPC.url_segura(url):
+            return jsonify(ok=False,
+                           error="URL de webhook inválida: exige https e host público"), 400
+        try:
+            LPC.gravar(cfg)
+        except OSError as exc:
+            return jsonify(ok=False,
+                           error=f"sem permissão para gravar a configuração: {exc}"), 500
+        _audit(request, "LOGPUSH_SET",
+               f"configuração de logpush alterada (destino={cfg.get('destino', '')})",
+               outcome="success", action="logpush_set", obj="logpush", object_type="config")
+        return jsonify(ok=True)
+
+    @app.post("/api/logpush/test")
+    def logpush_test():
+        if not _csrf_ok():
+            return jsonify(ok=False, error="CSRF: header ausente"), 403
+        try:
+            from logpush_dest import s3 as _s3  # noqa: F401 - registra o destino
+            from logpush_dest import webhook as _wh  # noqa: F401 - registra o destino
+            from logpush_dest.base import LogPushError, criar
+            detalhe = criar(LPC.ler()).testar()
+        except LogPushError as exc:
+            _audit(request, "LOGPUSH_TEST", f"teste de logpush falhou: {exc}",
+                   outcome="failure", action="logpush_test")
+            return jsonify(ok=False, error=str(exc)), 400
+        except Exception as exc:
+            return jsonify(ok=False, error=f"{type(exc).__name__}: {exc}"), 500
+        _audit(request, "LOGPUSH_TEST", "teste de logpush bem-sucedido",
+               outcome="success", action="logpush_test")
+        return jsonify(ok=True, detalhe=detalhe)
 
     @app.get("/version")
     @app.get("/api/version")
