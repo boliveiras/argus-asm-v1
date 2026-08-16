@@ -36,6 +36,11 @@ class TestPagina(unittest.TestCase):
     def test_severidade_padrao_e_critico_e_alto(self):
         self.contem("s==='CRITICO'||s==='ALTO'", "marcação padrão de severidade")
 
+    def test_esconde_campo_de_outra_plataforma(self):
+        # o Chat ID é do Telegram; aparecer no Google Chat só gera dúvida
+        self.contem("data-so-plataforma", "atributo de campo por plataforma")
+        self.contem("function aplicarPlataforma()", "função que aplica o filtro")
+
     def test_avisa_sobre_flood(self):
         self.assertIn("flood", self.html.lower())
 

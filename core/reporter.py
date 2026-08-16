@@ -5099,6 +5099,15 @@ _LOGPUSH_SCRIPT = r"""<script>
     var av=document.getElementById('lp-flood');
     if(av) av.style.display=todas?'block':'none';
   }
+  // Campo marcado com so_plataforma só aparece na plataforma dele — pedir
+  // "Chat ID" a quem escolheu Google Chat só gera dúvida sobre o que preencher.
+  function aplicarPlataforma(){
+    var sel=document.getElementById('lp-webhook_plataforma');
+    var atual=sel?sel.value:'';
+    document.querySelectorAll('#lp-campos [data-so-plataforma]').forEach(function(bloco){
+      bloco.style.display=(bloco.getAttribute('data-so-plataforma')===atual)?'':'none';
+    });
+  }
   function pintarCampos(){
     var destino=document.getElementById('lp-destino').value;
     var d=CAT.destinos.filter(function(x){return x.id===destino;})[0];
@@ -5106,6 +5115,8 @@ _LOGPUSH_SCRIPT = r"""<script>
     if(!d) return;
     d.campos.forEach(function(c){
       var v=CFG[c.nome]!==undefined?CFG[c.nome]:(c.padrao||'');
+      var bloco=document.createElement('div');
+      if(c.so_plataforma) bloco.setAttribute('data-so-plataforma',c.so_plataforma);
       var lab=document.createElement('label');
       lab.textContent=c.label; lab.setAttribute('for','lp-'+c.nome);
       var inp;
@@ -5113,16 +5124,20 @@ _LOGPUSH_SCRIPT = r"""<script>
         inp=document.createElement('select');
         CAT.plataformas.forEach(function(p){
           var o=document.createElement('option'); o.value=p; o.textContent=p; inp.appendChild(o);});
+        inp.addEventListener('change',aplicarPlataforma);
       } else {
         inp=document.createElement('input');
         inp.type=c.segredo?'password':'text';
         if(c.segredo){ inp.placeholder=v?('configurado ('+v+') — digite para trocar'):'não configurado'; v=''; }
+        else if(c.ajuda){ inp.placeholder=c.ajuda; }
       }
       inp.id='lp-'+c.nome; inp.value=v; inp.setAttribute('data-write','1');
-      host.appendChild(lab); host.appendChild(inp);
+      bloco.appendChild(lab); bloco.appendChild(inp);
+      host.appendChild(bloco);
     });
-    var bloco=document.getElementById('lp-sev-bloco');
-    if(bloco) bloco.style.display=(destino==='webhook')?'block':'none';
+    aplicarPlataforma();
+    var sevBloco=document.getElementById('lp-sev-bloco');
+    if(sevBloco) sevBloco.style.display=(destino==='webhook')?'block':'none';
   }
   function carregar(){
     api('/api/logpush',{cache:'no-store'}).then(function(j){

@@ -62,9 +62,14 @@ DESTINOS: list[dict] = [
      ]},
     {"id": "webhook", "label": "Webhook (chat)",
      "campos": [
-         {"nome": "webhook_url",        "label": "URL do webhook",     "segredo": True},
-         {"nome": "webhook_plataforma", "label": "Plataforma",         "segredo": False, "padrao": "google_chat"},
-         {"nome": "webhook_chat_id",    "label": "Chat ID (Telegram)", "segredo": False},
+         {"nome": "webhook_url",        "label": "URL do webhook", "segredo": True},
+         {"nome": "webhook_plataforma", "label": "Plataforma",     "segredo": False, "padrao": "google_chat"},
+         # so_plataforma: campo que só faz sentido para uma plataforma. A interface
+         # esconde nas demais — pedir "Chat ID (Telegram)" a quem escolheu Google
+         # Chat só gera dúvida sobre o que preencher.
+         {"nome": "webhook_chat_id",    "label": "Chat ID",        "segredo": False,
+          "so_plataforma": "telegram",
+          "ajuda": "Identificador do chat ou grupo no Telegram (ex.: -1001234567890)"},
      ]},
 ]
 DEST_POR_ID = {d["id"]: d for d in DESTINOS}
