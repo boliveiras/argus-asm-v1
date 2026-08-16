@@ -45,11 +45,40 @@ set -euo pipefail
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
 
-ok()   { echo -e "  ${GREEN}✓${NC}  $*"; }
-warn() { echo -e "  ${YELLOW}⚠${NC}  $*"; }
-err()  { echo -e "  ${RED}✗${NC}  $*"; exit 1; }
-info() { echo -e "  ${CYAN}→${NC}  $*"; }
-step() { echo -e "\n${BOLD}$*${NC}"; }
+# ── Saída ────────────────────────────────────────────────────
+# A tela mostra só o que exige decisão ou atenção: progresso, avisos, erros e o
+# prompt de senha. Cada passo bem-sucedido vai para o log — instalação que dá
+# certo não precisa ser lida linha a linha, e instalação que falha precisa do
+# detalhe completo, que fica no arquivo.
+INSTALL_LOG="/var/log/argus-install.log"
+VERBOSE=false
+PASSO_ATUAL=0
+PASSO_TOTAL=19
+ROTULO=""
+
+_log() { printf '%s  %s\n' "$(date '+%H:%M:%S')" "$*" >> "$INSTALL_LOG" 2>/dev/null || true; }
+
+# Apaga a linha da barra antes de escrever algo permanente na tela.
+_limpa() { printf '\r\033[K'; }
+
+barra() {
+  local pct=$(( PASSO_TOTAL > 0 ? PASSO_ATUAL * 100 / PASSO_TOTAL : 0 ))
+  local cheio=$(( pct * 28 / 100 )) i preenchido="" vazio=""
+  for ((i=0; i<cheio; i++));  do preenchido+="█"; done
+  for ((i=cheio; i<28; i++)); do vazio+="·"; done
+  # Escapes ANSI literais: printf com aspas simples não expande as variáveis de cor.
+  printf '\r  \033[36m%s\033[0m%s \033[1m%3d%%\033[0m  %-34.34s' \
+         "$preenchido" "$vazio" "$pct" "$ROTULO"
+}
+
+ok()   { _log "OK   $*";   $VERBOSE && { _limpa; echo -e "  ${GREEN}✓${NC}  $*"; }; barra; }
+info() { _log "INFO $*";   $VERBOSE && { _limpa; echo -e "  ${CYAN}→${NC}  $*"; }; barra; }
+warn() { _log "WARN $*";   _limpa; echo -e "  ${YELLOW}⚠${NC}  $*"; barra; }
+err()  { _log "ERRO $*";   _limpa; echo -e "  ${RED}✗${NC}  $*"
+         echo -e "  ${YELLOW}Detalhes em $INSTALL_LOG${NC}"; exit 1; }
+step() { PASSO_ATUAL=$(( PASSO_ATUAL + 1 )); ROTULO="${*#*. }"; _log ""; _log "== $*"; barra; }
+# Usada antes de qualquer coisa que leia do teclado.
+pausa_barra() { _limpa; }
 
 # ── Configurações (edite aqui se necessário) ─────────────────
 BASE_DIR="/etc/argus"
@@ -75,7 +104,15 @@ APACHE_PORT=8443
 APACHE_USER="monitor"
 APACHE_PASS=""
 
-APP_USER="kali"
+# Conta de SERVIÇO: sem login, sem home, sem senha. Roda o argus-web e o
+# argus-logpush. Separar da conta de pessoa é o que garante que um serviço
+# exposto na rede não carregue os privilégios de quem administra a máquina.
+APP_USER="argus"
+APP_GROUP="argus"
+# Quem invocou o instalador (a pessoa). Entra no grupo argus para poder rodar os
+# comandos na mão — argus-submonitor e afins gravam nos mesmos bancos.
+HUMAN_USER="${SUDO_USER:-${USER:-root}}"
+[ "$HUMAN_USER" = "root" ] && HUMAN_USER=""
 PYTHON_BIN=$(which python3 2>/dev/null || echo "/usr/bin/python3")
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -87,8 +124,11 @@ for arg in "$@"; do
   case "$arg" in
     --no-apache) INSTALL_APACHE=false ;;
     --uninstall) UNINSTALL=true ;;
+    --verbose|-v) VERBOSE=true ;;   # mostra cada passo na tela, como antes
   esac
 done
+: > "$INSTALL_LOG" 2>/dev/null || true
+_log "argus install — $(date '+%Y-%m-%d %H:%M:%S')"
 
 # ── Desinstalação ─────────────────────────────────────────────
 if [ "$UNINSTALL" = true ]; then
@@ -108,19 +148,19 @@ if [ "$UNINSTALL" = true ]; then
   rm -f /etc/apache2/argus-session.key
   systemctl reload apache2 2>/dev/null || true
   rm -f /etc/logrotate.d/argus-monitor
+  # A conta de serviço não é removida: ela ainda é dona dos dados em $BASE_DIR e
+  # da trilha de auditoria. Apagá-la deixaria arquivos órfãos, e um UID reciclado
+  # por outro serviço herdaria acesso a eles. Removê-la é decisão de quem apagar
+  # os dados: userdel argus
   echo -e "${GREEN}Desinstalação concluída.${NC}"
   echo -e "${YELLOW}Dados em $BASE_DIR preservados. Para remover: rm -rf $BASE_DIR${NC}"
+  echo -e "${YELLOW}Conta de serviço '$APP_USER' mantida (dona dos dados). Para remover: userdel $APP_USER${NC}"
   exit 0
 fi
 
 # ── Banner ────────────────────────────────────────────────────
-echo -e "\n${BOLD}${CYAN}"
-echo "  ╔══════════════════════════════════════════════╗"
-echo "  ║         ARGUS — INSTALADOR  (◉)              ║"
-echo "  ║     Attack Surface Monitor · portas ·        ║"
-echo "  ║     subdomínios · credenciais · Apache2      ║"
-echo "  ╚══════════════════════════════════════════════╝"
-echo -e "${NC}"
+echo -e "\n  ${BOLD}${CYAN}ARGUS${NC}  ${BOLD}Attack Surface Management${NC}   ${CYAN}v$(cat "$SCRIPT_DIR/VERSION" 2>/dev/null || echo '?')${NC}"
+echo -e "  ${CYAN}instalando…${NC}  ${YELLOW}(--verbose mostra cada passo)${NC}\n"
 
 # ── 1. ROOT ───────────────────────────────────────────────────
 step "1. Verificando privilégios"
@@ -165,8 +205,14 @@ ok "Python $PY_VERSION"
 step "4. Instalando dependências Python"
 for dep in python-nmap requests aiodns aiohttp dnspython python-whois flask dnstwist; do
   info "Instalando $dep..."
-  $PYTHON_BIN -m pip install --quiet --break-system-packages "$dep" \
-    && ok "$dep" || warn "Falha ao instalar $dep"
+  # --root-user-action=ignore silencia o aviso de "pip como root", que aparecia
+  # uma vez por pacote e não indica problema: aqui é instalação de sistema.
+  if $PYTHON_BIN -m pip install --quiet --break-system-packages \
+       --root-user-action=ignore "$dep" >>"$INSTALL_LOG" 2>&1; then
+    ok "$dep"
+  else
+    warn "Falha ao instalar $dep — veja $INSTALL_LOG"
+  fi
 done
 
 # ── 5. ESTRUTURA DE DIRETÓRIOS ────────────────────────────────
@@ -268,6 +314,30 @@ copy_if_exists "threatintel/core/reputation.py"       "$THREATINTEL_DIR/core/rep
 copy_if_exists "threatintel/core/utils.py"            "$THREATINTEL_DIR/core/utils.py"
 
 # ── 7. PERMISSÕES SEGURAS ─────────────────────────────────────
+step "6b. Preparando a conta de serviço"
+# Conta de SERVIÇO, não de pessoa: sem shell, sem home, sem senha. Quem expõe um
+# serviço na rede não deve carregar os privilégios de quem administra a máquina.
+if id -u "$APP_USER" >/dev/null 2>&1; then
+  ok "Usuário de serviço $APP_USER já existe"
+else
+  useradd --system --no-create-home --shell /usr/sbin/nologin \
+          --comment "Argus ASM (conta de serviço)" "$APP_USER" 2>/dev/null \
+    && ok "Usuário de serviço $APP_USER criado (sem login)" \
+    || err "não consegui criar o usuário $APP_USER"
+fi
+# Trava a senha: nem com senha definida por engano o login passa.
+passwd -l "$APP_USER" >/dev/null 2>&1 || true
+# Leitura dos logs (750 root:adm) para o logpush.
+usermod -aG adm "$APP_USER" 2>/dev/null || warn "não consegui pôr $APP_USER no grupo adm"
+
+# A pessoa entra no grupo do serviço: os comandos globais (argus-submonitor e
+# afins) rodam com o usuário dela e gravam nos mesmos bancos.
+if [ -n "$HUMAN_USER" ] && id -u "$HUMAN_USER" >/dev/null 2>&1; then
+  usermod -aG "$APP_GROUP" "$HUMAN_USER" 2>/dev/null \
+    && ok "$HUMAN_USER no grupo $APP_GROUP (pode rodar os scans na mão)" \
+    || warn "não consegui pôr $HUMAN_USER no grupo $APP_GROUP"
+fi
+
 step "7. Aplicando permissões seguras"
 chown -R root:root "$BASE_DIR"
 find "$BASE_DIR" -type d                -exec chmod 755 {} \;
@@ -285,8 +355,8 @@ ok "Scripts: 644, diretórios: 755"
 _acl_ok=true
 # threatintel: cache de reputação (AbuseIPDB) lido pela Correlação p/ enriquecer TODOS os IPs.
 for _sd in "$MONITOR_DIR" "$SUBMONITOR_DIR" "$CREDENTIALS_DIR" "$EMAIL_DIR" "$TYPOSQUAT_DIR" "$THREATINTEL_DIR"; do
-  setfacl -Rm  "u:$APP_USER:rX" "$_sd" 2>/dev/null || _acl_ok=false
-  setfacl -dm  "u:$APP_USER:rX" "$_sd" 2>/dev/null || _acl_ok=false
+  setfacl -Rm  "g:$APP_GROUP:rX" "$_sd" 2>/dev/null || _acl_ok=false
+  setfacl -dm  "g:$APP_GROUP:rX" "$_sd" 2>/dev/null || _acl_ok=false
 done
 if $_acl_ok; then
   ok "ACL: $APP_USER pode ler os bancos dos scanners (mapa de Correlação)"
@@ -298,8 +368,8 @@ fi
 # segue somente leitura. O nome do arquivo é validado por allowlist em campaigns.py.
 _aclw_ok=true
 for _td in "$MONITOR_DIR/targets" "$SUBMONITOR_DIR/targets"; do
-  setfacl -Rm  "u:$APP_USER:rwX" "$_td" 2>/dev/null || _aclw_ok=false
-  setfacl -dm  "u:$APP_USER:rwX" "$_td" 2>/dev/null || _aclw_ok=false
+  setfacl -Rm  "g:$APP_GROUP:rwX" "$_td" 2>/dev/null || _aclw_ok=false
+  setfacl -dm  "g:$APP_GROUP:rwX" "$_td" 2>/dev/null || _aclw_ok=false
 done
 if $_aclw_ok; then
   ok "ACL: $APP_USER pode gravar alvos em monitor/targets e submonitor/targets (Campanhas na Web)"
@@ -321,7 +391,7 @@ else
   ok "Wordlist já existe — preservada ($SUBMONITOR_DIR/subs.txt)"
 fi
 chmod 644 "$SUBMONITOR_DIR/subs.txt" 2>/dev/null || true
-setfacl -m "u:$APP_USER:rw" "$SUBMONITOR_DIR/subs.txt" 2>/dev/null \
+setfacl -m "g:$APP_GROUP:rw" "$SUBMONITOR_DIR/subs.txt" 2>/dev/null \
   && ok "ACL: $APP_USER pode editar a wordlist pela Web" \
   || warn "setfacl indisponível — a wordlist ficará somente leitura na Web"
 chown root:adm "$LOG_DIR_MONITOR" "$LOG_DIR_SUBMONITOR" "$LOG_DIR_CREDENTIALS" "$LOG_DIR_EMAIL" "$LOG_DIR_TYPOSQUAT" "$LOG_DIR_SCAN"
@@ -329,6 +399,9 @@ chmod 750 "$LOG_DIR_MONITOR" "$LOG_DIR_SUBMONITOR" "$LOG_DIR_CREDENTIALS" "$LOG_
 # Auditoria: o serviço argus-web (usuário $APP_USER) ESCREVE o audit.log; o grupo
 # adm LÊ. setgid (2750) faz os logs herdarem o grupo adm — proteção do log (PCI 10.3).
 chown "$APP_USER:adm" "$LOG_DIR_AUDIT" && chmod 2750 "$LOG_DIR_AUDIT"
+# Migração: numa instalação anterior o audit.log pertencia à conta de pessoa.
+# Sem transferir a posse, o serviço sobe e falha ao escrever na trilha.
+find "$LOG_DIR_AUDIT" -type f -name "*.log*" -exec chown "$APP_USER:adm" {} \; 2>/dev/null || true
 ok "Diretório de auditoria: $LOG_DIR_AUDIT ($APP_USER:adm 2750)"
 ok "Logs: 750, dono root:adm"
 # config.json contém a API key (AbuseIPDB). O submonitor roda como $APP_USER
@@ -391,7 +464,12 @@ done
 # ── 8. PYTHONPATH ─────────────────────────────────────────────
 step "8. Configurando PYTHONPATH"
 PYTHONPATH_LINE="export PYTHONPATH=\"$BASE_DIR:\$PYTHONPATH\""
-for rcfile in /root/.zshrc /root/.bashrc "/home/$APP_USER/.zshrc" "/home/$APP_USER/.bashrc"; do
+# A conta de serviço não tem home nem shell — o PYTHONPATH interessa a quem roda
+# os comandos no terminal, então vai para o root e para a pessoa que instalou.
+for rcfile in /root/.zshrc /root/.bashrc \
+              "${HUMAN_USER:+/home/$HUMAN_USER/.zshrc}" \
+              "${HUMAN_USER:+/home/$HUMAN_USER/.bashrc}"; do
+  [ -n "$rcfile" ] || continue
   [ -f "$rcfile" ] || continue
   if ! grep -q "PYTHONPATH.*$BASE_DIR" "$rcfile"; then
     { echo ""; echo "# Argus"; echo "$PYTHONPATH_LINE"; } >> "$rcfile"
@@ -446,7 +524,7 @@ PYEOF
   # web precisa poder GRAVAR este arquivo — ACL restrita apenas a ele.
   chown "root:$APP_USER" "$CONFIG_JSON" 2>/dev/null || true
   chmod 640 "$CONFIG_JSON"
-  setfacl -m "u:$APP_USER:rw" "$CONFIG_JSON" 2>/dev/null     && ok "Fontes de inteligência: configuráveis na Web (chaves e liga/desliga)"     || warn "setfacl indisponível — a página Fontes ficará somente leitura"
+  setfacl -m "g:$APP_GROUP:rw" "$CONFIG_JSON" 2>/dev/null     && ok "Fontes de inteligência: configuráveis na Web (chaves e liga/desliga)"     || warn "setfacl indisponível — a página Fontes ficará somente leitura"
 fi
 
 # ── 10. COMANDOS GLOBAIS ──────────────────────────────────────
@@ -618,8 +696,8 @@ if [ "$INSTALL_APACHE" = true ]; then
   chmod g+s "$APACHE_DOCROOT"
   # ACL: permite o serviço web (rodando como $APP_USER) regenerar a página de
   # achados no docroot após uma ação. Best-effort (requer pacote 'acl').
-  setfacl -m "u:$APP_USER:rwX" "$APACHE_DOCROOT" 2>/dev/null \
-    && setfacl -d -m "u:$APP_USER:rwX" "$APACHE_DOCROOT" 2>/dev/null \
+  setfacl -m "g:$APP_GROUP:rwX" "$APACHE_DOCROOT" 2>/dev/null \
+    && setfacl -d -m "g:$APP_GROUP:rwX" "$APACHE_DOCROOT" 2>/dev/null \
     && ok "ACL: $APP_USER pode regenerar a página no docroot" \
     || warn "setfacl indisponível — a página será regenerada pelos scans (cron)"
   ok "Docroot criado: $APACHE_DOCROOT"
@@ -644,11 +722,13 @@ if [ "$INSTALL_APACHE" = true ]; then
   # Senha HTTP Basic Auth
   HTPASSWD_FILE="/etc/apache2/.htpasswd-monitor"
   if [ -z "$APACHE_PASS" ]; then
-    echo -e "\n  ${YELLOW}Defina uma senha para acesso ao relatório web (usuário: $APACHE_USER):${NC}"
+    pausa_barra          # a barra não pode disputar a linha com o prompt
+    echo -e "\n  ${BOLD}Senha de acesso ao portal${NC}  (usuário: ${BOLD}$APACHE_USER${NC})"
     read -r -s -p "  Senha: " APACHE_PASS_INPUT; echo
     read -r -s -p "  Confirme: " APACHE_PASS_CONFIRM; echo
     [ "$APACHE_PASS_INPUT" = "$APACHE_PASS_CONFIRM" ] || err "Senhas não conferem."
     APACHE_PASS="$APACHE_PASS_INPUT"
+    echo
   fi
   htpasswd -cb "$HTPASSWD_FILE" "$APACHE_USER" "$APACHE_PASS" 2>/dev/null
   chmod 640 "$HTPASSWD_FILE"
@@ -657,7 +737,7 @@ if [ "$INSTALL_APACHE" = true ]; then
 
   # Gestão de contas pela Web: o serviço precisa GRAVAR o htpasswd (criar/remover
   # usuários e redefinir senhas). ACL restrita a este arquivo — o Apache segue dono.
-  setfacl -m "u:$APP_USER:rw" "$HTPASSWD_FILE" 2>/dev/null \
+  setfacl -m "g:$APP_GROUP:rw" "$HTPASSWD_FILE" 2>/dev/null \
     && ok "ACL: $APP_USER pode gerenciar contas (htpasswd)" \
     || warn "setfacl indisponível — a gestão de usuários ficará somente leitura"
   # bcrypt: hash das senhas criadas pela interface (o Apache valida bcrypt desde 2.4.4).
@@ -938,7 +1018,7 @@ if [ ! -f "$BASE_DIR/logpush.json" ]; then
 fi
 chown "root:$APP_USER" "$BASE_DIR/logpush.json" 2>/dev/null || true
 chmod 640 "$BASE_DIR/logpush.json"
-setfacl -m "u:$APP_USER:rw" "$BASE_DIR/logpush.json" 2>/dev/null   && ok "Logpush: configurável pela Web"   || warn "setfacl indisponível — a página Logpush ficará somente leitura"
+setfacl -m "g:$APP_GROUP:rw" "$BASE_DIR/logpush.json" 2>/dev/null   && ok "Logpush: configurável pela Web"   || warn "setfacl indisponível — a página Logpush ficará somente leitura"
 
 # Os logs são 750 root:adm; sem estar no grupo adm o serviço não consegue LER.
 usermod -aG adm "$APP_USER" 2>/dev/null   && ok "$APP_USER no grupo adm (leitura dos logs)"   || warn "não consegui adicionar $APP_USER ao grupo adm — o logpush não lerá os logs"
@@ -1064,10 +1144,11 @@ ok "Cron typosquat: domingos às 05h00"
 # ── 14. VALIDAÇÃO FINAL ───────────────────────────────────────
 step "14. Validação final"
 
+FALHAS=0
 check() {
   local label="$1" cmd="$2"
   if eval "$cmd" &>/dev/null; then ok "$label"
-  else warn "$label — FALHOU"; fi
+  else warn "$label — FALHOU"; FALHAS=$(( FALHAS + 1 )); fi
 }
 
 check "Python acessível"             "$PYTHON_BIN --version"
@@ -1117,61 +1198,28 @@ check "webapp.py importável"         "PYTHONPATH=$BASE_DIR $PYTHON_BIN -c 'impo
 check "serviço argus-web ativo"      "systemctl is-active argus-web"
 
 # ── Resumo ────────────────────────────────────────────────────
+# Curto de propósito: quem acabou de instalar quer saber se funcionou e por onde
+# começar. O resto (comandos, chaves de API, Let's Encrypt) está no README e na
+# própria interface, que agora traz a documentação embutida.
 SERVER_IP=$(hostname -I | awk '{print $1}')
-echo -e "\n${BOLD}${GREEN}╔══════════════════════════════════════════════╗"
-echo                 "║         INSTALAÇÃO CONCLUÍDA ✓               ║"
-echo -e              "╚══════════════════════════════════════════════╝${NC}\n"
+_limpa
+echo -e "
+${BOLD}${GREEN}  ✓  Argus instalado${NC}   ${CYAN}v$(cat "$SCRIPT_DIR/VERSION" 2>/dev/null || echo '?')${NC}"
 
-echo -e "${BOLD}Comandos disponíveis:${NC}"
-echo -e "  ${CYAN}argus-monitor${NC}       — scan de portas TCP (--tcp, padrão) | UDP (--udp, semanal)"
-echo -e "  ${CYAN}argus-submonitor${NC}    — executa o scan de subdomínios"
-echo -e "  ${CYAN}argus-credentials${NC}   — exposição de credenciais (infostealer)"
-echo -e "  ${CYAN}argus-email${NC}         — postura de e-mail (SPF/DMARC/DKIM)"
-echo -e "  ${CYAN}argus-typosquat${NC}     — domínios sósia / typosquatting (dnstwist, semanal)"
-echo -e "  ${CYAN}argus-ack${NC}           — reconhece achado (RECONHECIDO → INFO) com motivo"
-echo -e "  ${CYAN}argus-reset${NC}         — zera os bancos de achados (preserva enriquecimento, targets e config)"
-echo -e "  ${CYAN}argus-finding${NC}       — gestão de achados: list/show/set/note/evidence (status, FP, evidências)"
-echo -e "                          ex.: ${CYAN}argus-ack add 1.2.3.4:179/tcp \"firewall, esperado\"${NC}"
-echo ""
-echo -e "${BOLD}Próximos passos:${NC}"
-echo ""
-echo -e "  1. Adicione targets do monitor (IPs):"
-echo -e "     ${CYAN}nano $MONITOR_DIR/targets/EMPRESA.txt${NC}"
-echo ""
-echo -e "  2. Adicione targets do submonitor (domínios):"
-echo -e "     ${CYAN}nano $SUBMONITOR_DIR/targets/EMPRESA.txt${NC}"
-echo ""
-echo -e "  3. Crie a wordlist de subdomínios:"
-echo -e "     ${CYAN}nano $SUBMONITOR_DIR/subs.txt${NC}"
-echo ""
-echo -e "  4. Credenciais e E-mail: por padrão reusam os domínios do submonitor (passo 2)."
-echo -e "     ${YELLOW}(opcional)${NC} para conjuntos diferentes:"
-echo -e "     ${CYAN}nano $CREDENTIALS_DIR/targets/EMPRESA.txt${NC}  (credenciais)"
-echo -e "     ${CYAN}nano $EMAIL_DIR/targets/EMPRESA.txt${NC}  (e-mail)"
-echo ""
-echo -e "  5. API keys do AbuseIPDB e urlscan.io (se não configurou):"
-echo -e "     ${CYAN}nano $THREATINTEL_DIR/config.json${NC}"
-echo -e "     ${YELLOW}(Hudson Rock é gratuito e não precisa de chave)${NC}"
-echo ""
-echo -e "  6. Teste a execução:"
-echo -e "     ${CYAN}argus-monitor${NC}"
-echo -e "     ${CYAN}argus-submonitor${NC}"
-echo -e "     ${CYAN}argus-credentials${NC}"
-echo ""
-
-if [ "$INSTALL_APACHE" = true ]; then
-  echo -e "  6. Acesse o portal:"
-  echo -e "     ${CYAN}https://${SERVER_IP}:${APACHE_PORT}/${NC}"
-  echo -e "     Usuário: ${BOLD}${APACHE_USER}${NC}"
-  echo -e "     ${YELLOW}(certificado self-signed — aceite o aviso do browser)${NC}"
-  echo ""
-  echo -e "  Para Let's Encrypt em produção:"
-  echo -e "     ${CYAN}sudo apt install certbot python3-certbot-apache${NC}"
-  echo -e "     ${CYAN}sudo certbot --apache -d seu.dominio.com${NC}"
-  echo ""
+if [ "$FALHAS" -gt 0 ]; then
+  echo -e "  ${YELLOW}${FALHAS} verificação(ões) falharam — veja $INSTALL_LOG${NC}"
 fi
 
-echo -e "  Logs em tempo real:"
-echo -e "     ${CYAN}tail -f $LOG_DIR_MONITOR/monitor.log${NC}"
-echo -e "     ${CYAN}tail -f $LOG_DIR_SUBMONITOR/submonitor.log${NC}"
+echo ""
+if [ "$INSTALL_APACHE" = true ]; then
+  echo -e "  ${BOLD}Acesse:${NC}  ${CYAN}https://${SERVER_IP}:${APACHE_PORT}/${NC}   usuário: ${BOLD}${APACHE_USER}${NC}"
+  echo -e "            ${YELLOW}certificado self-signed — aceite o aviso do navegador${NC}"
+else
+  echo -e "  ${BOLD}Portal não instalado${NC} (--no-apache)"
+fi
+echo ""
+echo -e "  ${BOLD}Comece por:${NC}  Campanhas → cadastre um alvo → ${BOLD}▶ Rodar agora${NC}"
+echo -e "  ${BOLD}Dúvidas:${NC}     botão ${BOLD}?${NC} no topo do portal abre a documentação"
+echo ""
+echo -e "  ${CYAN}Detalhes desta instalação: $INSTALL_LOG${NC}"
 echo ""
