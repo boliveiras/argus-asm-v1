@@ -155,10 +155,11 @@ Depois de instalado, você não precisa mais editar arquivo no servidor para ope
 |---|---|
 | **Campanhas** | Cadastrar, editar, renomear e excluir os alvos — IPs/faixas (portas) e domínios (subdomínios). Renomear **leva o histórico junto**; excluir só tira do escopo e **preserva os achados**. |
 | **Wordlist** | Editar os prefixos usados na descoberta de subdomínios (`api`, `vpn`, `abt.cleverdata`…). Já vem com **100 prefixos** prontos e nunca aceita ficar vazia. |
-| **▶ Executar agora** | Roda a sequência completa na hora, sem esperar o agendamento, com **barra de progresso** etapa a etapa. Um de cada vez: enquanto roda, o botão fica travado. |
+| **▶ Rodar agora** | Roda a sequência completa na hora, com barra de progresso etapa a etapa. Dá para limitar a uma campanha — útil quando o escopo cresce, porque cada domínio custa uma wordlist inteira de consultas. Um scan de cada vez. |
 | **Provedores** | Ligar/desligar cada fonte de inteligência e guardar as chaves de API — AbuseIPDB, VirusTotal, urlscan.io, NVD, CISA KEV, Shodan InternetDB, Hudson Rock, crt.sh e WHOIS. Nada de chave em arquivo no servidor: cadastra pela tela, e a tela nunca mostra a chave de volta (só o final mascarado). Fonte desligada é simplesmente pulada no scan. |
 | **Logpush** | Enviar os logs para um bucket S3 ou para um chat (Google Chat, Slack, Discord, Teams, Telegram). Você escolhe o que sai e, no chat, quais severidades. |
 | **Usuários** | Contas de acesso e perfis (veja abaixo). |
+| **? (documentação)** | Abre um painel lateral com a explicação de cada área, o ciclo de um achado e como o risco é classificado — já na seção da tela em que você está. |
 
 ### Quem pode o quê
 
@@ -178,6 +179,12 @@ As tabelas abrem com as **colunas essenciais** para a triagem. O resto do enriqu
 (ISP, CVEs, DNSSEC, SSL, WHOIS, reputação…) continua ali, a um clique em **Colunas** — e a
 sua escolha fica salva para as próximas visitas.
 
+### Saber o que está no ar
+
+O rodapé mostra a versão em execução, e `/version` responde em JSON com a versão, o commit
+e a data da instalação. Serve para conferir numa requisição se o que está rodando é o
+último commit do repositório — sem depender de memória ou de olhar arquivo no servidor.
+
 ## Como instalar?
 
 No Debian/Ubuntu/**Kali**, como root:
@@ -189,7 +196,13 @@ sudo bash install.sh
 ```
 
 O instalador cuida do resto — dependências, comandos, agendamento, o portal web e o
-usuário administrador (você define a senha na instalação).
+usuário administrador (você define a senha na instalação). Ele mostra só o progresso e o
+que exige atenção; o detalhe de cada passo fica em `/var/log/argus-install.log`, e
+`--verbose` traz tudo para a tela.
+
+Os serviços rodam com uma conta própria (`argus`), sem shell e sem login — o que expõe
+serviço na rede não carrega os privilégios de quem administra a máquina. Quem instalou
+entra no grupo `argus` e continua podendo rodar os scanners na mão.
 
 Aí é só abrir `https://<host>:8443`, entrar em **Campanhas**, cadastrar seus IPs e
 domínios e clicar em **▶ Rodar todos os scans agora**. Daí em diante ele roda sozinho
