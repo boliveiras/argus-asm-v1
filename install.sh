@@ -472,6 +472,14 @@ fi
 for _f in "$FINDINGS_STORE/argus.db" "$FINDINGS_STORE/argus.db-wal" "$FINDINGS_STORE/argus.db-shm"; do
   [ -f "$_f" ] && chown "root:$APP_USER" "$_f" 2>/dev/null && chmod 664 "$_f" 2>/dev/null || true
 done
+# Ponteiro do logpush: numa instalação anterior nasceu root:root e o serviço
+# (usuário $APP_USER) não consegue reescrevê-lo. Sem poder anotar o progresso,
+# o ciclo entrega e não marca — e repete o mesmo lote a cada 5 minutos.
+if [ -f "$FINDINGS_STORE/logpush_state.json" ]; then
+  chown "root:$APP_USER" "$FINDINGS_STORE/logpush_state.json" 2>/dev/null || true
+  chmod 664 "$FINDINGS_STORE/logpush_state.json" 2>/dev/null || true
+  ok "Ponteiro do logpush ajustado (root:$APP_USER 664)"
+fi
 
 # ── 8. PYTHONPATH ─────────────────────────────────────────────
 step "8. Configurando PYTHONPATH"

@@ -116,6 +116,45 @@ class TestOrigemIlegivel(Base):
         self.assertIn("PermissionError", buf.getvalue())
 
 
+class TestPonteiroNaoGravavel(Base):
+    """Sem onde anotar o progresso, entregar é pior do que não entregar.
+
+    Aconteceu em produção: o ponteiro pertencia a root de uma instalação
+    anterior, o serviço (usuário argus) entregou 20 mensagens e não conseguiu
+    marcar nada — cada ciclo de 5 minutos repetiria o mesmo lote no chat.
+    """
+
+    def test_nao_envia_quando_o_ponteiro_nao_e_gravavel(self):
+        self.escrever(3)
+        DubleOk.recebidas = []
+        original, LP.gravar_estado = LP.gravar_estado, lambda estado: False
+        try:
+            r = LP.executar(dict(self.cfg, destino="dublê_ponteiro"), raiz=self.raiz)
+        finally:
+            LP.gravar_estado = original
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["enviadas"], 0)
+        self.assertEqual(DubleOk.recebidas, [])
+        self.assertIn("duplicar", r["detalhe"])
+
+    def test_falha_ao_anotar_depois_do_envio_e_reportada(self):
+        self.escrever(3)
+        chamadas = []
+
+        def falhar_na_segunda(estado):
+            chamadas.append(estado)
+            return len(chamadas) < 2      # a verificação inicial passa; a marca não
+
+        original, LP.gravar_estado = LP.gravar_estado, falhar_na_segunda
+        try:
+            r = LP.executar(dict(self.cfg, destino="dublê_ponteiro"), raiz=self.raiz)
+        finally:
+            LP.gravar_estado = original
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["enviadas"], 3)
+        self.assertIn("repetição", r["detalhe"])
+
+
 class TestCrescimentoDuranteEnvio(Base):
     """O que o scanner escreve durante a entrega tem de sobrar para o ciclo seguinte."""
 

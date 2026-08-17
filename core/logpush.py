@@ -58,7 +58,7 @@ def ler_estado() -> dict:
         return {}
 
 
-def gravar_estado(estado: dict) -> None:
+def gravar_estado(estado: dict) -> bool:
     caminho = estado_path()
     try:
         caminho.parent.mkdir(parents=True, exist_ok=True)
@@ -68,17 +68,19 @@ def gravar_estado(estado: dict) -> None:
             os.fsync(fh.fileno())
     except OSError as exc:
         print(f"[LOGPUSH] não consegui gravar o estado: {exc}", file=sys.stderr)
+        return False
+    return True
 
 
-def gravar_marcas(marcas: dict) -> None:
+def gravar_marcas(marcas: dict) -> bool:
     """Avança o ponteiro SÓ dos arquivos lidos neste ciclo.
 
     Quem não aparece em `marcas` fica intocado: a origem que não pôde ser lida
     continua pendente do mesmo ponto no ciclo seguinte.
     """
     if not marcas:
-        return
-    gravar_estado({**ler_estado(), **marcas})
+        return True
+    return gravar_estado({**ler_estado(), **marcas})
 
 
 def _pular(chave: str, exc: Exception) -> None:
@@ -237,6 +239,13 @@ def executar(cfg: dict | None = None, raiz: Path | None = None) -> dict:
     """Um ciclo: coleta, envia e — só se o envio der certo — avança o ponteiro."""
     cfg = cfg if cfg is not None else LC.ler()
     raiz = raiz or raiz_log()
+    # Fail secure: sem conseguir guardar o ponteiro, o ciclo seguinte releria o
+    # mesmo trecho e reenviaria tudo — a cada 5 minutos, para sempre. Não
+    # entregar nada é o dano menor, e o serviço sai com erro para aparecer no
+    # journal em vez de inundar o destino em silêncio.
+    if not gravar_estado(ler_estado()):
+        return {"ok": False, "enviadas": 0,
+                "detalhe": "ponteiro não é gravável — nada enviado para não duplicar"}
     # O destino é montado antes da varredura só para saber quanto ele aceita por
     # ciclo. Se estiver mal configurado, o erro fica guardado: sem nada novo para
     # enviar, uma configuração incompleta não é falha do ciclo.
@@ -261,8 +270,12 @@ def executar(cfg: dict | None = None, raiz: Path | None = None) -> dict:
         # Ponteiro NÃO avança: o próximo ciclo reenvia o mesmo trecho.
         print(f"[LOGPUSH] envio falhou: {exc}", file=sys.stderr)
         return {"ok": False, "enviadas": 0, "detalhe": str(exc)}
-    gravar_marcas(marcas)
     print(f"[LOGPUSH] {len(mensagens)} mensagem(ns) enviada(s)")
+    if not gravar_marcas(marcas):
+        # Entregue mas não anotado: o próximo ciclo vai repetir este lote. Sai
+        # com erro para o operador ver, já que a duplicata é inevitável agora.
+        return {"ok": False, "enviadas": len(mensagens),
+                "detalhe": "enviado, mas o ponteiro não foi gravado — haverá repetição"}
     return {"ok": True, "enviadas": len(mensagens), "detalhe": ""}
 
 
