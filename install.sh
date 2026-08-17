@@ -922,6 +922,17 @@ else
 fi
 
 # ── 12b. SERVIÇO WEB (API de gestão de achados) ───────────────
+# O logpush.json precisa EXISTIR antes da unit do argus-web: ele entra em
+# ReadWritePaths, e o systemd recusa a unit se o caminho não existir — o serviço
+# nem chega a subir. Mesma postura de segredo do config das fontes: só o app user
+# lê e escreve, "outros" não têm acesso.
+if [ ! -f "$BASE_DIR/logpush.json" ]; then
+  echo '{}' > "$BASE_DIR/logpush.json"
+fi
+chown "root:$APP_USER" "$BASE_DIR/logpush.json" 2>/dev/null || true
+chmod 640 "$BASE_DIR/logpush.json"
+setfacl -m "g:$APP_GROUP:rw" "$BASE_DIR/logpush.json" 2>/dev/null   && ok "Logpush: configurável pela Web"   || warn "setfacl indisponível — a página Logpush ficará somente leitura"
+
 step "12b. Configurando serviço web (API de achados)"
 cat > /etc/systemd/system/argus-web.service << UNITEOF
 [Unit]
@@ -952,7 +963,7 @@ ProtectHome=true
 # ProtectSystem=full deixa TODO o /etc somente-leitura para este serviço. Sem liberar
 # explicitamente os caminhos abaixo, a gestão de campanhas e a edição da wordlist pela
 # Web falham com "Read-only file system" — a ACL sozinha não basta (o systemd bloqueia antes).
-ReadWritePaths=$BASE_DIR/store $APACHE_DOCROOT $LOG_DIR_AUDIT $MONITOR_DIR/targets $SUBMONITOR_DIR/targets $SUBMONITOR_DIR/subs.txt $HTPASSWD_FILE $THREATINTEL_DIR/config.json
+ReadWritePaths=$BASE_DIR/store $APACHE_DOCROOT $LOG_DIR_AUDIT $MONITOR_DIR/targets $SUBMONITOR_DIR/targets $SUBMONITOR_DIR/subs.txt $HTPASSWD_FILE $THREATINTEL_DIR/config.json $BASE_DIR/logpush.json
 
 [Install]
 WantedBy=multi-user.target
@@ -1011,15 +1022,6 @@ fi
 
 # ── 12b. LOGPUSH ──────────────────────────────────────────────
 step "12b. Configurando o envio de logs (Logpush)"
-
-# Config com credencial de bucket / URL de webhook: mesma postura do config das
-# fontes — só o app user lê e escreve, "outros" não têm acesso.
-if [ ! -f "$BASE_DIR/logpush.json" ]; then
-  echo '{}' > "$BASE_DIR/logpush.json"
-fi
-chown "root:$APP_USER" "$BASE_DIR/logpush.json" 2>/dev/null || true
-chmod 640 "$BASE_DIR/logpush.json"
-setfacl -m "g:$APP_GROUP:rw" "$BASE_DIR/logpush.json" 2>/dev/null   && ok "Logpush: configurável pela Web"   || warn "setfacl indisponível — a página Logpush ficará somente leitura"
 
 # Os logs são 750 root:adm; sem estar no grupo adm o serviço não consegue LER.
 usermod -aG adm "$APP_USER" 2>/dev/null   && ok "$APP_USER no grupo adm (leitura dos logs)"   || warn "não consegui adicionar $APP_USER ao grupo adm — o logpush não lerá os logs"
