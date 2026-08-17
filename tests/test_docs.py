@@ -18,7 +18,6 @@ PAGINAS = {
     "provedores": reporter.build_providers_page,
     "usuarios": reporter.build_users_page,
     "correlacao": reporter.build_correlation_page,
-    "risk": reporter.build_risk_guide,
 }
 
 
@@ -58,6 +57,22 @@ class TestPainelNasPaginas(unittest.TestCase):
 
     def test_fecha_com_esc(self):
         self.assertIn("e.key==='Escape'", reporter.build_dashboard())
+
+
+class TestGuiaDeRisco(unittest.TestCase):
+    """O guia virou seção da documentação; a página e o item de menu saíram."""
+
+    def test_pagina_nao_existe_mais(self):
+        self.assertFalse(hasattr(reporter, "build_risk_guide"))
+
+    def test_nenhuma_pagina_aponta_para_a_url_antiga(self):
+        for nome, fn in PAGINAS.items():
+            self.assertNotIn("risk-guide.html", fn(), nome)
+
+    def test_conteudo_do_guia_esta_na_documentacao(self):
+        ids = {s[0] for s in DOCS.SECOES}
+        for esperado in ("risco", "portas", "elevacao", "emailrisco", "conformidade"):
+            self.assertIn(esperado, ids)
 
 
 class TestInterfaceEnxuta(unittest.TestCase):

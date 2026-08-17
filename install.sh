@@ -676,7 +676,7 @@ if [ "$INSTALL_APACHE" = true ]; then
   # Gerado em Python pelo reporter.py — fonte ÚNICA de design (app.css = _common_css()).
   SERVER_IP=$(hostname -I | awk '{print $1}')
   if PYTHONPATH="$BASE_DIR" "$PYTHON_BIN" -c "import reporter; reporter.write_portal('$APACHE_DOCROOT')"; then
-    ok "Portal gerado (index, dashboard, risk-guide, assets/app.css)"
+    ok "Portal gerado (index, dashboard, documentação, assets/app.css)"
   else
     warn "Falha ao gerar portal via reporter.py (PYTHONPATH=$BASE_DIR)"
   fi

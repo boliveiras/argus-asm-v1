@@ -848,7 +848,6 @@ def _topbar(active: str) -> str:
         ("provedores",  "/provedores.html",         "Fontes"),
         ("logpush",     "/logpush.html",            "Logpush"),
         ("usuarios",    "/usuarios.html",           "Usuários"),
-        ("risk",        "/risk-guide.html",         "Guia de Risco"),
     ]
     links = "".join(
         f'<a class="{"active" if key==active else ""}" href="{href}"'
@@ -3564,9 +3563,7 @@ def generate_findings_report(snapshot: dict, output_path: str = "findings_report
 <div class="pagination no-print" id="pagination"></div>
 
 <p class="page-sub no-print" style="margin-top:12px">
-  Triagem (auditada): <code>argus-finding set &lt;id&gt; em-tratamento|mitigado|fp --note "..."</code>
-  · <code>argus-finding note &lt;id&gt; "..."</code> · <code>argus-finding evidence &lt;id&gt; "rótulo" "ref"</code>
-  &middot; ou use os controles da coluna <b>Ações</b> (requer o serviço web ativo).
+  Trate pelos controles da coluna <b>Ações</b>. <a href="#" data-doc="achados">Sobre a triagem</a>
 </p>
 
 <div id="toast"></div>
@@ -3843,8 +3840,6 @@ def build_index() -> str:
          "Anti-spoofing por domínio — SPF, DMARC e DKIM (autenticação de e-mail)."),
         ("typosquat",  "/typosquat_report.html",  "Typosquat",
          "Domínios sósia registrados (typosquatting/homoglyph, dnstwist) — risco de phishing."),
-        ("risk",       "/risk-guide.html",        "Guia de Risco",
-         "Como o risco é calculado em cada camada do Risk Engine."),
     ]
     hub = '<div class="hub-grid">' + "".join(
         f'<a class="hub-card" href="{href}"><div class="ic">{_NAV_ICONS[key]}</div>'
@@ -4142,190 +4137,6 @@ def build_dashboard() -> str:
                          "Visão consolidada da superfície de ataque: portas, subdomínios, "
                          "credenciais, e-mail, typosquat e gestão de achados", body,
                          extra_script=_DASH_SCRIPT)
-
-
-def build_risk_guide() -> str:
-    # Cada seção recebe uma âncora (aid) para o índice e um link "voltar ao topo".
-    def panel(title, inner, aid=None, toc_label=None):
-        idattr = f' id="{aid}"' if aid else ""
-        top = ('<a href="#top" title="Voltar ao topo" style="margin-left:auto;font-size:11px;'
-               'font-weight:600;color:var(--muted);text-decoration:none">&#x25B2; topo</a>') if aid else ""
-        return f'<div class="panel panel-pad sect"{idattr} style="margin-bottom:16px"><h2>{title}{top}</h2>{inner}</div>'
-
-    overview = panel("Visão Geral",
-        '<p>O Argus classifica risco por <b>evidência</b>, não por suposição. Ele começa de uma '
-        '<b>base de exposição</b> (porta/serviço exposto, IP público vs. privado) e <b>eleva</b> conforme as '
-        'evidências objetivas: reputação do <b>AbuseIPDB</b>, vulnerabilidade conhecida (<b>Shodan/CVE</b>), '
-        'exploração confirmada in-the-wild (<b>CISA KEV</b>) e nota <b>CVSS</b> (NVD). '
-        '<b>O risco nunca é rebaixado</b> — só elevado. Contexto interno (ambiente, etc.) é validado pelo analista.</p>'
-        '<div class="flow">'
-        '<div class="flow-step"><div class="l">Exposição</div><div class="v">Porta / IP público</div></div>'
-        '<div class="flow-arrow">+</div>'
-        '<div class="flow-step"><div class="l">Reputação</div><div class="v">AbuseIPDB</div></div>'
-        '<div class="flow-arrow">+</div>'
-        '<div class="flow-step"><div class="l">Vulnerabilidade</div><div class="v">CVE · KEV · CVSS</div></div>'
-        '<div class="flow-arrow">&#x2192;</div>'
-        '<div class="flow-step res"><div class="l">Resultado</div><div class="v">Risco final</div></div></div>',
-        aid="rg-overview", toc_label="Visão geral")
-
-    ports = panel("&#x1F5A5; Monitor de Portas",
-        '<table class="risk-table"><thead><tr><th>Porta / Serviço</th><th>IP Público</th>'
-        '<th>IP Privado</th><th>Justificativa</th></tr></thead><tbody>'
-        '<tr><td>23 — Telnet</td><td class="r-critico">CRÍTICO</td><td class="r-critico">CRÍTICO</td><td>Sem criptografia, obsoleto</td></tr>'
-        '<tr><td>3389 — RDP</td><td class="r-critico">CRÍTICO</td><td class="r-alto">ALTO</td><td>Acesso remoto, alvo frequente</td></tr>'
-        '<tr><td>445 — SMB</td><td class="r-critico">CRÍTICO</td><td class="r-alto">ALTO</td><td>Ransomware / movimentação lateral</td></tr>'
-        '<tr><td>3306 — MySQL</td><td class="r-critico">CRÍTICO</td><td class="r-alto">ALTO</td><td>Banco exposto</td></tr>'
-        '<tr><td>2375 — Docker API</td><td class="r-critico">CRÍTICO</td><td class="r-critico">CRÍTICO</td><td>Root no host via container</td></tr>'
-        '<tr><td>22 — SSH</td><td class="r-medio">MÉDIO</td><td class="r-baixo">BAIXO</td><td>Seguro, mas alvo de brute force</td></tr>'
-        '<tr><td>80/443 — HTTP/S</td><td class="r-baixo">BAIXO</td><td class="r-baixo">BAIXO</td><td>Serviço web padrão</td></tr>'
-        '</tbody></table>',
-        aid="rg-ports", toc_label="Monitor de Portas")
-
-    ports_udp = panel("&#x1F4E1; Portas UDP <span class=\"chip\">--udp · semanal</span>",
-        '<p style="margin-bottom:10px">Varredura UDP <b>opt-in</b> (<code>argus-monitor --udp</code>, cron semanal) '
-        'de <b>100 portas curadas por criticidade</b> — OOB/ICS/RCE, VPN/DNS/SIP, <i>poisoning</i> e refletores de '
-        'amplificação. UDP é lento e ambíguo, então a lista é fixa e só reporta portas confirmadas abertas.</p>'
-        '<table class="risk-table"><thead><tr><th>Categoria</th><th>Portas (ex.)</th><th>IP Público</th><th>Por quê</th></tr></thead><tbody>'
-        '<tr><td><abbr title="Out-of-Band — gestão fora de banda">OOB</abbr> / '
-        '<abbr title="Industrial Control Systems — sistemas de automação industrial">ICS</abbr> / '
-        '<abbr title="Remote Code Execution — execução remota de código">RCE</abbr></td>'
-        '<td>623 IPMI · 17185 VxWorks · 69 TFTP · 47808 BACnet · 20000 DNP3 · 44818 EtherNet/IP</td><td class="r-critico">CRÍTICO</td><td>Gestão out-of-band, automação industrial, exec remota</td></tr>'
-        '<tr><td>Info / poisoning / amplificação</td><td>161 SNMP · 389 CLDAP · 11211 memcached · 137/138 NetBIOS · 5355 LLMNR · 19 chargen</td><td class="r-critico">CRÍTICO</td><td>Vazamento massivo, roubo de credencial, refletor DDoS</td></tr>'
-        '<tr><td>Acesso / VPN / DNS / VoIP</td><td>3389 RDP · 500/4500 IPsec · 1194 OpenVPN · 53 DNS · 5060 SIP · 1812 RADIUS</td><td class="r-alto">ALTO</td><td>Endpoints de acesso/autenticação expostos</td></tr>'
-        '<tr><td>Infra / telemetria / mídia</td><td>67/68 DHCP · 2055 NetFlow · 5246 CAPWAP · 3478 STUN · jogos</td><td class="r-medio">MÉDIO</td><td>Roteamento, telemetria, mídia e refletores menores</td></tr>'
-        '<tr><td>Web moderno</td><td>443 QUIC / HTTP-3</td><td class="r-baixo">BAIXO</td><td>Serviço web legítimo sobre UDP</td></tr>'
-        '</tbody></table>'
-        '<p style="margin-top:10px"><b>Nota:</b> a criticidade UDP usa tabela própria (o serviço difere do TCP) e também '
-        'eleva por IP público × privado e por reputação AbuseIPDB, como no TCP.</p>'
-        '<p class="empty" style="margin-top:8px"><b>Siglas:</b> '
-        'OOB (out-of-band) · ICS (controle industrial) · RCE (execução remota de código) · '
-        'CLDAP (Connectionless LDAP) · CAPWAP (controle de access points) · STUN (NAT traversal) · '
-        'LLMNR/NetBIOS (resolução de nomes Windows).</p>',
-        aid="rg-udp", toc_label="Portas UDP")
-
-    subs = panel("&#x1F310; Monitor de Subdomínios",
-        '<table class="risk-table"><thead><tr><th>Base (exposição)</th><th>Risco base</th><th>Exemplo</th></tr></thead><tbody>'
-        '<tr><td>Subdomínio em IP <b>público</b></td><td class="r-medio">MÉDIO</td><td>api.empresa.com.br</td></tr>'
-        '<tr><td>Subdomínio em IP <b>privado</b></td><td class="r-baixo">BAIXO</td><td>intranet.empresa.com.br</td></tr>'
-        '</tbody></table>'
-        '<p style="margin-top:10px">O risco base reflete só a <b>exposição</b>: estar em IP público é a superfície '
-        'externa (MÉDIO — vale revisar); IP privado fica de fora (BAIXO). <b>Não há mais suposição</b> sobre ambiente '
-        '(dev/prod) nem WAF — isso é contexto da empresa, que o analista valida. O risco então sobe por '
-        '<b>evidência</b>:</p>'
-        '<table class="risk-table" style="margin-top:8px"><thead><tr><th>Evidência</th><th>Efeito no risco</th></tr></thead><tbody>'
-        '<tr><td>Reputação ruim no AbuseIPDB</td><td class="r-alto">eleva (até CRÍTICO)</td></tr>'
-        '<tr><td><span class="b-crit">CVE</span> conhecida (Shodan)</td><td class="r-alto">no mínimo ALTO</td></tr>'
-        '<tr><td>CVE <b>explorada in-the-wild</b> (CISA KEV)</td><td class="r-critico">CRÍTICO</td></tr>'
-        '<tr><td>CVSS alto (NVD)</td><td class="r-alto">ALTO / CRÍTICO conforme a nota</td></tr>'
-        '</tbody></table>',
-        aid="rg-subs", toc_label="Subdomínios")
-
-    abuse = panel("&#x1F6E1; Elevação por AbuseIPDB",
-        '<div class="sbar"><i style="background:var(--green)"></i><i style="background:var(--yellow)"></i>'
-        '<i style="background:var(--orange)"></i><i style="background:var(--red)"></i></div>'
-        '<table class="risk-table" style="margin-top:12px"><thead><tr><th>Condição</th><th>Efeito</th></tr></thead><tbody>'
-        '<tr><td><span class="b-crit">Score &ge; 80</span></td><td class="r-critico">Eleva para CRÍTICO</td></tr>'
-        '<tr><td><span class="b-alto">Score &ge; 50</span></td><td class="r-alto">Mínimo ALTO</td></tr>'
-        '<tr><td><span class="b-med">Porta crítica + Score &gt; 25</span></td><td class="r-critico">Eleva para CRÍTICO</td></tr>'
-        '<tr><td>Node TOR</td><td class="r-alto">+1 nível</td></tr>'
-        '<tr><td>Datacenter/Hosting + Score &gt; 0</td><td class="r-alto">+1 nível</td></tr>'
-        '</tbody></table>',
-        aid="rg-abuse", toc_label="Elevação por AbuseIPDB")
-
-    vulns = panel("&#x1F41B; Vulnerabilidades (Shodan InternetDB) <span class=\"chip\">free · sem chave</span>",
-        '<p style="margin-bottom:10px">Enriquecimento <b>passivo por IP</b> (último crawl do Shodan, sem chave): '
-        '<b>CVEs conhecidas</b>, portas vistas, '
-        '<abbr title="Common Platform Enumeration — identificador padronizado de produto/versão (ex.: cpe:/a:apache:http_server:2.4)">CPEs</abbr> e tags. '
-        'Aplica a portas (monitor) e subdomínios (submonitor) — '
-        'coluna <b>CVEs</b> + KPI <b>IPs vulneráveis</b> + filtro.</p>'
-        '<table class="risk-table"><thead><tr><th>Condição</th><th>Efeito no risco</th></tr></thead><tbody>'
-        '<tr><td>IP com <span class="b-crit">&ge; 1 CVE</span> conhecida</td><td class="r-alto">Eleva para no mínimo ALTO</td></tr>'
-        '<tr><td>CVE + porta crítica / IP abusivo</td><td class="r-critico">Pode chegar a CRÍTICO (pelas outras camadas)</td></tr>'
-        '<tr><td>Sem CVE</td><td>Sem efeito</td></tr>'
-        '</tbody></table>'
-        '<p style="margin-top:10px"><b>Cautela:</b> o matching de CVE do Shodan é heurístico (banner/CPE) e pode ter '
-        '<b>falso-positivo</b> — por isso a elevação é conservadora (CVE sozinha não força CRÍTICO). Trate os CVEs como '
-        '<i>leads a validar</i>. Dado <b>passivo/histórico</b>: pode não ver o que está atrás de firewall que bloqueia o Shodan.</p>',
-        aid="rg-vulns", toc_label="Vulnerabilidades (Shodan)")
-
-    origem = panel("&#x1F50E; Origem da Descoberta",
-        '<table class="risk-table"><thead><tr><th>Origem</th><th>Técnica</th><th>Significado</th></tr></thead><tbody>'
-        '<tr><td><span class="b-bai">wordlist</span></td><td>Enumeração ativa</td><td>Nomes testados da subs.txt</td></tr>'
-        '<tr><td><span class="origem-crtsh">crt.sh</span></td><td>Certificate Transparency (passiva)</td><td>Revelado por certificados emitidos</td></tr>'
-        '<tr><td><span class="origem-urlscan">urlscan</span></td><td>urlscan.io Search (passiva)</td><td>Visto em scans históricos públicos</td></tr>'
-        '</tbody></table>',
-        aid="rg-origem", toc_label="Origem da descoberta")
-
-    whois = panel("&#x1F4C5; Inteligência de Domínio (RDAP/WHOIS)",
-        '<table class="risk-table"><thead><tr><th>Classificação</th><th>Critério</th><th>Relevância CTI</th></tr></thead><tbody>'
-        '<tr><td><span class="b-crit">NOVO</span></td><td>&lt; 30 dias</td><td>Forte indício de phishing</td></tr>'
-        '<tr><td><span class="b-med">RECENTE</span></td><td>&lt; 1 ano</td><td>Merece atenção</td></tr>'
-        '<tr><td><span class="b-bai">ESTABELECIDO</span></td><td>&gt; 1 ano</td><td>Infra madura</td></tr>'
-        '<tr><td><span class="b-med">EXPIRANDO</span></td><td>&lt; 30 dias p/ expirar</td><td>Risco de sequestro por lapso</td></tr>'
-        '<tr><td><span class="b-crit">EXPIRADO</span></td><td>Já expirou</td><td>Pode ser registrado por terceiros</td></tr>'
-        '</tbody></table>',
-        aid="rg-whois", toc_label="Inteligência de domínio")
-
-    email = panel("&#x2709;&#xFE0F; Postura de E-mail (SPF / DMARC / DKIM)",
-        '<table class="risk-table"><thead><tr><th>Condição</th><th>Risco</th><th>Por quê</th></tr></thead><tbody>'
-        '<tr><td>SPF <code>+all</code> ou sem SPF <b>e</b> sem DMARC</td><td class="r-critico">CRÍTICO</td><td>Domínio totalmente spoofável</td></tr>'
-        '<tr><td>Sem SPF · DMARC ausente ou <code>p=none</code> · SPF inválido</td><td class="r-alto">ALTO</td><td>Não bloqueia falsificação do remetente</td></tr>'
-        '<tr><td>DMARC <code>p=quarantine</code> · SPF <code>~all</code>/<code>?all</code> · sem DKIM</td><td class="r-medio">MÉDIO</td><td>Proteção parcial / endurecer</td></tr>'
-        '<tr><td>SPF <code>-all</code> + DMARC <code>p=reject</code> + DKIM</td><td class="r-baixo">BAIXO</td><td>Postura forte (anti-spoofing)</td></tr>'
-        '</tbody></table>'
-        '<p style="margin-top:10px"><b>Nota:</b> domínios <i>sem</i> MX também são verificados — um '
-        'domínio que não envia e-mail ainda deve ter <code>-all</code> + <code>p=reject</code> para impedir '
-        'spoofing. O DKIM é <i>best-effort</i> (sonda seletores comuns), pois o seletor não é descobrível de forma genérica.</p>',
-        aid="rg-email", toc_label="Postura de e-mail")
-
-    try:
-        import findings as _fm
-        _ctrl, _cat = _fm.CONTROLS_BY_SOURCE, _fm.CATEGORY_BY_SOURCE
-    except Exception:
-        _ctrl, _cat = {}, {}
-    compliance = ""
-    if _ctrl:
-        crows = ""
-        for src in ("monitor", "submonitor", "credentials", "email", "typosquat"):
-            c = _ctrl.get(src)
-            if not c:
-                continue
-            crows += ('<tr><td>' + _h(_cat.get(src, src)) + '</td>'
-                      '<td>' + _h(" · ".join(c.get("iso", []))) + '</td>'
-                      '<td>' + _h(" · ".join(c.get("cis", []))) + '</td>'
-                      '<td>' + (_h(" · ".join(c.get("pci", []))) or "&mdash;") + '</td></tr>')
-        compliance = panel("&#x1F4D8; Mapeamento de Conformidade <span class=\"chip\">ISO 27002 · CIS v8 · PCI-DSS</span>",
-            '<p style="margin-bottom:10px">Cada tipo de achado é associado aos controles <b>realmente pertinentes</b> '
-            '(sem compliance de marketing) — base para evidências de auditoria e priorização por conformidade. '
-            'O mapeamento também aparece no detalhe de cada achado (Gestão de Achados).</p>'
-            '<table class="risk-table rt-fixed">'
-            '<colgroup><col style="width:20%"><col style="width:30%"><col style="width:28%"><col style="width:22%"></colgroup>'
-            '<thead><tr><th>Categoria de achado</th><th>ISO/IEC 27002:2022</th>'
-            '<th>CIS Controls v8</th><th>PCI-DSS v4.0</th></tr></thead><tbody>' + crows + '</tbody></table>',
-            aid="rg-compliance", toc_label="Mapeamento de conformidade")
-
-    # Índice (TOC) montado na MESMA ordem do corpo — âncoras navegáveis.
-    body_sections = [overview, ports, ports_udp, subs, abuse, vulns]
-    toc_items = [("rg-overview", "Visão geral"), ("rg-ports", "Monitor de Portas"),
-                 ("rg-udp", "Portas UDP"), ("rg-subs", "Subdomínios"),
-                 ("rg-abuse", "Elevação por AbuseIPDB"), ("rg-vulns", "Vulnerabilidades (Shodan)")]
-    if compliance:
-        body_sections.append(compliance)
-        toc_items.append(("rg-compliance", "Mapeamento de conformidade"))
-    body_sections += [origem, whois, email]
-    toc_items += [("rg-origem", "Origem da descoberta"), ("rg-whois", "Inteligência de domínio"),
-                  ("rg-email", "Postura de e-mail")]
-    toc_links = "".join(
-        f'<a href="#{aid}" style="text-decoration:none;font-size:12px;font-weight:600;color:var(--muted);'
-        f'background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:4px 12px">{label}</a>'
-        for aid, label in toc_items)
-    toc = ('<div class="panel panel-pad" id="top" style="margin-bottom:16px">'
-           '<h2 style="font-size:14px;color:var(--accent);text-transform:uppercase;letter-spacing:.7px;'
-           'margin-bottom:12px">&#x1F4D1; Índice</h2>'
-           f'<div style="display:flex;flex-wrap:wrap;gap:8px">{toc_links}</div></div>')
-    body = toc + "".join(body_sections)
-    return _portal_shell("risk", "Guia de Risco",
-                         "Como o Risk Engine calcula o risco de cada ativo", body)
 
 
 _CORR_SCRIPT = r"""<script>
@@ -4680,13 +4491,8 @@ def build_correlation_page() -> str:
         '<span class="page-sub" style="margin:0 0 0 4px">roda = zoom · arraste o fundo = mover</span></div>'
         '<div id="corr-wrap"><svg id="corr-svg" viewBox="0 0 960 600" role="img" '
         'aria-label="Grafo de correlação entre campanhas, subdomínios e IPs. Use a lista acessível abaixo para os detalhes."></svg></div>'
-        '<p class="page-sub" style="margin-top:8px">Clique em um nó para <b>expandir</b> e <b>destacar</b> só ele e os '
-        'relacionados (o resto esmaece); clique no fundo para limpar. Ao clicar num <b>subdomínio</b> ele acende o '
-        '<b>IP</b> que resolve; ao clicar num <b>IP</b>, acende <b>todos os subdomínios</b> que caem nele. Use a caixa '
-        '<b>“Por IP”</b> para inverter o grafo e ver de cara quais IPs concentram mais subdomínios (infra crítica), e os '
-        'botões <b>de criticidade</b> para mostrar só os níveis que importam. <b>Arraste</b> os nós, use a '
-        '<b>roda</b>/<b>+ −</b> para <b>zoom</b>. Anel pontilhado = pode expandir; IP com anel '
-        '<span style="color:#fb923c">laranja</span> é servido por vários subdomínios (raio de explosão).</p>'
+        '<p class="page-sub" style="margin-top:8px">Clique para expandir e destacar. '
+        '<a href="#" data-doc="correlacao">Como ler o mapa</a></p>'
         '<div id="corr-detail" class="panel panel-pad"></div>'
         '<details style="margin-top:14px"><summary style="cursor:pointer;color:var(--muted);font-weight:600">'
         'Lista acessível (subdomínio &rarr; IP)</summary>'
@@ -5698,13 +5504,13 @@ def _empty_state(active: str, label: str) -> str:
         + run_block +
         '<div style="margin-top:18px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap">'
         '<a class="btn btn-pdf" href="/dashboard.html" style="text-decoration:none">Ver o Dashboard</a>'
-        '<a class="btn btn-clr" href="/risk-guide.html" style="text-decoration:none">Como o risco é classificado</a>'
+        '<a class="btn btn-clr" href="#" data-doc="risco" style="text-decoration:none">Como o risco é classificado</a>'
         '</div></div>'
     )
 
 
 def write_portal(docroot: str) -> None:
-    """Grava app.css + login + index/dashboard/risk-guide e placeholders dos relatórios."""
+    """Grava app.css + login + index/dashboard e placeholders dos relatórios."""
     d = Path(docroot)
     assets = d / "assets"
     assets.mkdir(parents=True, exist_ok=True)
@@ -5712,7 +5518,6 @@ def write_portal(docroot: str) -> None:
     (d / "login.html").write_text(build_login_page(), encoding="utf-8")
     (d / "index.html").write_text(build_index(), encoding="utf-8")
     (d / "dashboard.html").write_text(build_dashboard(), encoding="utf-8")
-    (d / "risk-guide.html").write_text(build_risk_guide(), encoding="utf-8")
     # Página de Correlação — lê os relatórios client-side; sempre regerada.
     (d / "correlacao.html").write_text(build_correlation_page(), encoding="utf-8")
     (d / "campanhas.html").write_text(build_campaigns_page(), encoding="utf-8")

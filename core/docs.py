@@ -73,30 +73,110 @@ erro mais comum:</p>
 <p class="doc-nota">Um achado que some não é apagado na hora: ele espera três dias
 antes de contar como corrigido. Serviço que cai e volta não é problema
 resolvido.</p>
+
+<p><b>Como tratar:</b> pelos controles da coluna <b>Ações</b>, onde dá para mudar o
+estado, anexar nota e registrar evidência. Toda mudança fica na trilha de
+auditoria, com autor e data.</p>
+
+<p>Pelo terminal, o mesmo se faz com <code>argus-finding</code>:</p>
+<table class="doc-tabela">
+  <tr><th>Comando</th><th>O que faz</th></tr>
+  <tr><td><code>set &lt;id&gt; em-tratamento|mitigado|fp</code></td><td>muda o estado</td></tr>
+  <tr><td><code>note &lt;id&gt; "..."</code></td><td>anexa uma nota</td></tr>
+  <tr><td><code>evidence &lt;id&gt; "rótulo" "ref"</code></td><td>registra evidência</td></tr>
+</table>
 """),
 
     ("risco", "Como o risco é classificado", """
-<p>O risco vem da <b>evidência</b>, não de uma tabela fixa. A base é a exposição:</p>
+<p>O risco vem da <b>evidência</b>, não de suposição. Parte de uma base de
+exposição e <b>sobe</b> conforme o enriquecimento traz agravante. O risco
+<b>nunca é rebaixado</b> — só elevado.</p>
 
 <table class="doc-tabela">
   <tr><th>Nível</th><th>Quando</th></tr>
   <tr><td><b class="doc-crit">Crítico</b></td>
-      <td>exploração conhecida em uso (CISA KEV), CVSS 9+, credenciais de
-          funcionário vazadas, domínio sósia com e-mail configurado</td></tr>
+      <td>exploração em uso (CISA KEV), CVSS 9+, credencial de funcionário
+          vazada, domínio sósia com e-mail ativo</td></tr>
   <tr><td><b class="doc-alto">Alto</b></td>
-      <td>CVE relevante, IP com reputação ruim, serviço sensível exposto</td></tr>
+      <td>CVE conhecida, reputação ruim, serviço sensível exposto</td></tr>
   <tr><td><b class="doc-med">Médio</b></td>
       <td>ativo público sem agravante conhecido</td></tr>
   <tr><td><b class="doc-baixo">Baixo</b></td>
       <td>ativo em rede privada — não alcançável de fora</td></tr>
 </table>
 
-<p>Um mesmo ativo <b>sobe de nível</b> quando o enriquecimento traz agravante:
-uma CVE explorada in-the-wild, denúncias de abuso, motores de antivírus apontando
-o IP como malicioso.</p>
+<p class="doc-nota">O que é particular da sua empresa — se um host é de produção
+ou de teste — fica para <b>você</b> validar. O Argus não adivinha contexto.</p>
+"""),
 
-<p><a href="/risk-guide.html">Ver o guia completo, com o critério de cada
-módulo →</a></p>
+    ("portas", "Risco por porta", """
+<p>A base vem do serviço e de onde ele está exposto:</p>
+
+<table class="doc-tabela">
+  <tr><th>Porta</th><th>Público / Privado</th></tr>
+  <tr><td>23 Telnet</td><td><b class="doc-crit">crítico</b> / <b class="doc-crit">crítico</b> — sem criptografia</td></tr>
+  <tr><td>2375 Docker API</td><td><b class="doc-crit">crítico</b> / <b class="doc-crit">crítico</b> — root no host</td></tr>
+  <tr><td>3389 RDP</td><td><b class="doc-crit">crítico</b> / <b class="doc-alto">alto</b> — alvo frequente</td></tr>
+  <tr><td>445 SMB</td><td><b class="doc-crit">crítico</b> / <b class="doc-alto">alto</b> — ransomware</td></tr>
+  <tr><td>3306 MySQL</td><td><b class="doc-crit">crítico</b> / <b class="doc-alto">alto</b> — banco exposto</td></tr>
+  <tr><td>22 SSH</td><td><b class="doc-med">médio</b> / <b class="doc-baixo">baixo</b> — seguro, mas sofre brute force</td></tr>
+  <tr><td>80/443 HTTP(S)</td><td><b class="doc-baixo">baixo</b> — serviço web padrão</td></tr>
+</table>
+
+<p><b>UDP</b> roda à parte, semanalmente, sobre 100 portas escolhidas por
+criticidade: gestão fora de banda e automação industrial (IPMI, BACnet, DNP3),
+vazamento e amplificação (SNMP, CLDAP, memcached, NetBIOS), acesso e VPN (IPsec,
+OpenVPN, RADIUS). UDP é lento e ambíguo, então a lista é fixa e só reporta o que
+confirma aberto.</p>
+"""),
+
+    ("elevacao", "O que eleva o risco", """
+<p><b>Reputação do IP</b> (AbuseIPDB):</p>
+<table class="doc-tabela">
+  <tr><th>Condição</th><th>Efeito</th></tr>
+  <tr><td>score ≥ 80</td><td>eleva a crítico</td></tr>
+  <tr><td>score ≥ 50</td><td>no mínimo alto</td></tr>
+  <tr><td>porta crítica + score &gt; 25</td><td>eleva a crítico</td></tr>
+  <tr><td>saída TOR</td><td>+1 nível</td></tr>
+</table>
+
+<p><b>Vulnerabilidade</b> (Shodan InternetDB, CISA KEV, NVD):</p>
+<table class="doc-tabela">
+  <tr><th>Condição</th><th>Efeito</th></tr>
+  <tr><td>IP com ao menos 1 CVE</td><td>no mínimo alto</td></tr>
+  <tr><td>CVE no catálogo KEV</td><td>crítico — está sendo explorada agora</td></tr>
+  <tr><td>CVSS 9+ (NVD)</td><td>crítico</td></tr>
+</table>
+
+<p class="doc-nota">O casamento de CVE do Shodan é heurístico (por banner e CPE) e
+pode gerar falso positivo — por isso a elevação por CVE sozinha é conservadora, e
+só o KEV leva direto a crítico.</p>
+"""),
+
+    ("emailrisco", "Risco da postura de e-mail", """
+<table class="doc-tabela">
+  <tr><th>Situação</th><th>Risco</th></tr>
+  <tr><td>SPF <code>+all</code>, ou sem SPF e sem DMARC</td>
+      <td><b class="doc-crit">crítico</b> — domínio totalmente falsificável</td></tr>
+  <tr><td>DMARC ausente ou <code>p=none</code>, SPF inválido</td>
+      <td><b class="doc-alto">alto</b> — não bloqueia falsificação</td></tr>
+  <tr><td>DMARC <code>p=quarantine</code>, SPF <code>~all</code>, sem DKIM</td>
+      <td><b class="doc-med">médio</b> — proteção parcial</td></tr>
+  <tr><td>SPF <code>-all</code> + DMARC <code>p=reject</code> + DKIM</td>
+      <td><b class="doc-baixo">baixo</b> — postura forte</td></tr>
+</table>
+
+<p class="doc-nota">Domínio sem MX também é verificado: um domínio que não envia
+e-mail ainda pode ser usado para falsificar mensagens em nome dele.</p>
+"""),
+
+    ("conformidade", "Conformidade", """
+<p>Cada tipo de achado é associado aos controles que realmente se aplicam —
+<b>ISO/IEC 27002:2022</b>, <b>CIS Controls v8</b> e <b>PCI-DSS v4.0</b> — sem
+conformidade de fachada.</p>
+
+<p>O mapeamento aparece no detalhe de cada achado, em Gestão de Achados, e serve
+tanto de evidência para auditoria quanto de critério de priorização.</p>
 """),
 
     ("campanhas", "Campanhas", """
@@ -174,6 +254,23 @@ IP vira o raio de explosão de tudo que depende dele.</p>
 <p>Clique para expandir: campanha → domínios → subdomínios → IPs. A cor é a
 criticidade. Clicar em qualquer item abre o que se sabe dele.</p>
 
+<p><b>Como ler:</b></p>
+<table class="doc-tabela">
+  <tr><th>Ação</th><th>Resultado</th></tr>
+  <tr><td>clicar num nó</td><td>expande e destaca só ele e os relacionados; o resto esmaece</td></tr>
+  <tr><td>clicar no fundo</td><td>limpa o destaque</td></tr>
+  <tr><td>clicar num subdomínio</td><td>acende o IP para onde ele resolve</td></tr>
+  <tr><td>clicar num IP</td><td>lista todos os subdomínios que caem nele</td></tr>
+  <tr><td>roda do mouse</td><td>zoom; arrastar o fundo move o mapa</td></tr>
+</table>
+
+<p><b>O que os símbolos dizem:</b> anel pontilhado significa que o nó ainda pode
+expandir; IP com anel <b style="color:#fb923c">laranja</b> é servido por vários
+subdomínios — é o raio de explosão daquele ponto.</p>
+
+<p>A caixa <b>Por IP</b> inverte o mapa e mostra de cara quais IPs concentram mais
+subdomínios. Os botões de criticidade filtram por nível.</p>
+
 <p class="doc-nota">Com muitos hosts, o mapa vem agrupado pelo IP: cada IP aparece
 uma vez, com quantos hosts concentra, e a lista completa abre ao clicar. Desligue o
 agrupamento para ver tudo espalhado.</p>
@@ -216,7 +313,6 @@ PAGINA_PARA_SECAO = {
     "provedores": "provedores",
     "logpush": "logpush",
     "usuarios": "usuarios",
-    "risk": "risco",
 }
 
 
