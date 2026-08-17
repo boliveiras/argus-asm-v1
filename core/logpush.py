@@ -175,20 +175,25 @@ def _converter(bloco: bytes, origem: str, estruturado: bool, caminho: Path,
     return mensagens, consumido
 
 
-def _varrer(cfg: dict, raiz: Path | None = None) -> tuple[list[Mensagem], dict]:
+def _varrer(cfg: dict, raiz: Path | None = None,
+            limite: int | None = None) -> tuple[list[Mensagem], dict]:
     """Lê o que há de novo e devolve (mensagens, marcas).
 
     `marcas` traz SÓ os arquivos efetivamente lidos, com a posição exata do que
     saiu deles. Origem que não pôde ser aberta fica de fora, e o ponteiro dela
     não se mexe.
+
+    `limite` é o teto do destino (um chat aceita bem menos que um bucket). O que
+    passar dele fica para o ciclo seguinte, marcado no byte certo.
     """
     raiz = raiz or raiz_log()
+    teto = MAX_POR_CICLO if limite is None else min(limite, MAX_POR_CICLO)
     estado = ler_estado()
     agora = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     mensagens: list[Mensagem] = []
     marcas: dict = {}
     for origem, caminho, estruturado in _arquivos(cfg, raiz):
-        restante = MAX_POR_CICLO - len(mensagens)
+        restante = teto - len(mensagens)
         if restante <= 0:
             break
         chave = caminho.relative_to(raiz).as_posix()
@@ -232,14 +237,26 @@ def executar(cfg: dict | None = None, raiz: Path | None = None) -> dict:
     """Um ciclo: coleta, envia e — só se o envio der certo — avança o ponteiro."""
     cfg = cfg if cfg is not None else LC.ler()
     raiz = raiz or raiz_log()
-    mensagens, marcas = _varrer(cfg, raiz)
+    # O destino é montado antes da varredura só para saber quanto ele aceita por
+    # ciclo. Se estiver mal configurado, o erro fica guardado: sem nada novo para
+    # enviar, uma configuração incompleta não é falha do ciclo.
+    destino, erro = None, None
+    try:
+        destino = criar(cfg)
+    except LogPushError as exc:
+        erro = exc
+    mensagens, marcas = _varrer(cfg, raiz,
+                                destino.lote_maximo() if destino else None)
     if not mensagens:
         # Nada a enviar, mas o que foi lido e descartado (linha em branco, lixo
         # fora do RFC) não precisa ser relido para sempre.
         gravar_marcas(marcas)
         return {"ok": True, "enviadas": 0, "detalhe": "nada novo"}
+    if destino is None:
+        print(f"[LOGPUSH] envio falhou: {erro}", file=sys.stderr)
+        return {"ok": False, "enviadas": 0, "detalhe": str(erro)}
     try:
-        criar(cfg).send(mensagens)
+        destino.send(mensagens)
     except LogPushError as exc:
         # Ponteiro NÃO avança: o próximo ciclo reenvia o mesmo trecho.
         print(f"[LOGPUSH] envio falhou: {exc}", file=sys.stderr)

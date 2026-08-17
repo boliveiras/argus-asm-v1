@@ -227,6 +227,10 @@ cair, nada se perde: o envio recomeça exatamente de onde parou.</p>
 <p class="doc-nota">No chat, escolha quais severidades quer receber. Deixar todas
 ligadas costuma virar ruído — uma execução pode disparar centenas de mensagens, e
 os serviços de chat passam a descartar por limite de taxa.</p>
+
+<p>Por isso o envio para chat sai em lotes de até 20 mensagens por ciclo, com um
+respiro entre elas. Quando há atraso acumulado, ele escoa aos poucos em vez de
+estourar a cota da plataforma — o bucket S3 não tem esse teto.</p>
 """),
 
     ("usuarios", "Contas e perfis", """

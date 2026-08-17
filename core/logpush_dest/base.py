@@ -52,6 +52,17 @@ class LogDestination:
     def __init__(self, cfg: dict) -> None:
         self.cfg = cfg or {}
 
+    def lote_maximo(self) -> int:
+        """Quantas mensagens este destino aceita por ciclo.
+
+        Bucket não se importa com volume; chat se importa muito — passar do
+        limite de taxa derruba o lote inteiro, e como o ponteiro só avança com
+        entrega confirmada, o ciclo seguinte tentaria o mesmo lote outra vez.
+        Um teto que caiba no limite da plataforma faz o acúmulo escoar aos
+        poucos em vez de travar.
+        """
+        return 5000
+
     def send(self, mensagens: list[Mensagem]) -> None:
         """Entrega as mensagens. Levanta LogPushError se não conseguir.
 

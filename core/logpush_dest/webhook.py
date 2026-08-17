@@ -26,6 +26,8 @@ e a plataforma passa a descartar por limite de taxa.
 
 from __future__ import annotations
 
+import time
+
 import requests
 from logpush_config import severidades_ligadas, url_segura
 from logpush_fmt import para_chat
@@ -33,15 +35,27 @@ from logpush_fmt import para_chat
 from .base import LogDestination, LogPushError, Mensagem, registrar
 
 _TIMEOUT = 15
+# Teto por ciclo e respiro entre postagens. Um lote de 150 mensagens em rajada
+# tomou HTTP 429 do Google Chat e derrubou o ciclo inteiro; com 20 a cada 5
+# minutos o atraso acumulado escoa sozinho, sem estourar cota.
+_LOTE = 20
+_PAUSA = 1.0
 
 
 @registrar("webhook")
 class WebhookDestination(LogDestination):
     """Uma requisição por mensagem, já formatada para a plataforma."""
 
+    def lote_maximo(self) -> int:
+        return _LOTE
+
     def _post(self, url: str, payload: dict):
         """Isolado para o teste injetar sem tocar na rede."""
         return requests.post(url, json=payload, timeout=_TIMEOUT)
+
+    def _dormir(self, segundos: float) -> None:
+        """Isolado para o teste não pagar a espera."""
+        time.sleep(segundos)
 
     def _preparar(self) -> tuple[str, str, str]:
         """Valida a configuração e devolve (url, plataforma, chat_id)."""
@@ -75,10 +89,14 @@ class WebhookDestination(LogDestination):
             return
         url, plataforma, chat_id = self._preparar()
         permitidas = set(severidades_ligadas(self.cfg))
+        primeira = True
         for m in mensagens:
             if m.severidade not in permitidas:
                 continue
+            if not primeira:
+                self._dormir(_PAUSA)
             self._entregar(m, url, plataforma, chat_id)
+            primeira = False
 
     def testar(self) -> str:
         """Prova de conexão — ignora o filtro de severidade de propósito.

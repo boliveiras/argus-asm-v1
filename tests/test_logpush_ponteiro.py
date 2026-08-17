@@ -27,6 +27,21 @@ class DubleOk(B.LogDestination):
         DubleOk.recebidas = list(mensagens)
 
 
+@B.registrar("dublê_estreito")
+class DubleEstreito(B.LogDestination):
+    """Destino com cota apertada, como um chat."""
+
+    recebidas: list = []
+
+    def lote_maximo(self):
+        return 3
+
+    def send(self, mensagens):
+        if len(mensagens) > 3:
+            raise B.LogPushError("cota estourada (HTTP 429)")
+        DubleEstreito.recebidas = list(mensagens)
+
+
 @B.registrar("dublê_durante")
 class DubleDurante(B.LogDestination):
     """Simula o scanner escrevendo enquanto a entrega acontece."""
@@ -126,6 +141,26 @@ class TestLinhaIncompleta(Base):
         with open(self.arq, "a", encoding="utf-8", newline="") as fh:
             fh.write(LINHA[40:] + "\n")     # o resto chega
         self.assertEqual(len(LP.coletar(self.cfg, self.raiz)), 1)
+
+
+class TestTetoDoDestino(Base):
+    """Acúmulo grande contra destino com cota tem de escoar, não travar.
+
+    Sem o teto, um lote de 150 mensagens tomava HTTP 429 do Google Chat, o ciclo
+    inteiro falhava, o ponteiro (corretamente) não avançava — e o ciclo seguinte
+    repetia o mesmo lote para sempre.
+    """
+
+    def test_acumulo_escoa_em_ciclos_do_tamanho_do_destino(self):
+        self.escrever(8)
+        enviadas = [LP.executar(dict(self.cfg, destino="dublê_estreito"),
+                                raiz=self.raiz)["enviadas"] for _ in range(4)]
+        self.assertEqual(enviadas, [3, 3, 2, 0])
+
+    def test_destino_sem_cota_leva_tudo_de_uma_vez(self):
+        self.escrever(8)
+        r = LP.executar(dict(self.cfg, destino="dublê_ponteiro"), raiz=self.raiz)
+        self.assertEqual(r["enviadas"], 8)
 
 
 class TestLimitePorCiclo(Base):

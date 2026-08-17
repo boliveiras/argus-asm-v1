@@ -31,6 +31,7 @@ def destino(**cfg):
     d = W.WebhookDestination(base)
     d.enviadas = []
     d._post = lambda url, payload: (d.enviadas.append(payload), FakeResp())[1]
+    d._dormir = lambda segundos: None   # a espera entre postagens é real em produção
     return d
 
 
@@ -54,6 +55,30 @@ class TestFiltroSeveridade(unittest.TestCase):
         d = destino(sev_CRITICO=False, sev_ALTO=False)
         d.send([msg("CRITICO"), msg("ALTO"), msg("MEDIO")])
         self.assertEqual(len(d.enviadas), 2)
+
+
+class TestLimiteDeTaxa(unittest.TestCase):
+    """Chat tem cota; estourá-la derruba o lote inteiro e trava o ponteiro."""
+
+    def test_lote_do_chat_e_menor_que_o_padrao(self):
+        self.assertLessEqual(destino().lote_maximo(), 50)
+        self.assertGreater(destino().lote_maximo(), 0)
+
+    def test_espera_entre_postagens(self):
+        d = destino(sev_MEDIO=True)
+        esperas = []
+        d._dormir = esperas.append
+        d.send([msg("CRITICO"), msg("ALTO"), msg("MEDIO")])
+        # três mensagens, duas esperas: a primeira sai na hora
+        self.assertEqual(len(esperas), 2)
+        self.assertTrue(all(s > 0 for s in esperas))
+
+    def test_mensagem_unica_nao_espera(self):
+        d = destino()
+        esperas = []
+        d._dormir = esperas.append
+        d.send([msg("CRITICO")])
+        self.assertEqual(esperas, [])
 
 
 class TestPayload(unittest.TestCase):
