@@ -284,6 +284,7 @@ copy_if_exists "core/logpush_dest/s3.py"              "$BASE_DIR/logpush_dest/s3
 copy_if_exists "core/logpush_dest/webhook.py"         "$BASE_DIR/logpush_dest/webhook.py"
 copy_if_exists "core/providers.py"                    "$BASE_DIR/providers.py"
 copy_if_exists "core/logs.py"                         "$BASE_DIR/logs.py"
+copy_if_exists "core/docs.py"                         "$BASE_DIR/docs.py"
 copy_if_exists "argus-reset.sh"                       "$BASE_DIR/argus-reset.sh"
 copy_if_exists "scanners/monitor.py"                  "$MONITOR_DIR/monitor.py"
 copy_if_exists "scanners/submonitor.py"               "$SUBMONITOR_DIR/submonitor.py"

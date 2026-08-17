@@ -513,6 +513,59 @@ def _common_css() -> str:
   .exec-recs li { font-size:12.5px; color:#cbd5e1; line-height:1.5; padding-left:18px; position:relative; }
   .exec-recs li::before { content:'\\2192'; position:absolute; left:0; color:var(--accent); font-weight:700; }
   .exec-none { color:var(--green); font-size:13px; }
+
+  /* ── Painel de documentação ──────────────────────────────
+     Desliza da direita sobre a página. Fechar devolve a tela exatamente como
+     estava — é o que permite consultar no meio de uma tarefa. */
+  .doc-fundo { position:fixed; inset:0; background:rgba(3,7,15,.55); opacity:0;
+               pointer-events:none; transition:opacity .18s; z-index:60; }
+  .doc-fundo.aberto { opacity:1; pointer-events:auto; }
+  .doc-painel { position:fixed; top:0; right:0; height:100%; width:min(460px,100%);
+                background:var(--surface); border-left:1px solid var(--border);
+                box-shadow:-18px 0 40px rgba(0,0,0,.35); z-index:61;
+                transform:translateX(100%); transition:transform .2s ease;
+                display:flex; flex-direction:column; }
+  .doc-painel.aberto { transform:translateX(0); }
+  .doc-cab { display:flex; align-items:center; justify-content:space-between;
+             padding:15px 18px; border-bottom:1px solid var(--border); flex:none; }
+  .doc-cab h2 { font-size:14px; text-transform:uppercase; letter-spacing:.8px;
+                color:var(--accent); margin:0; }
+  .doc-fechar { background:none; border:none; color:var(--muted); font-size:26px;
+                line-height:1; cursor:pointer; padding:0 4px; }
+  .doc-fechar:hover { color:var(--text); }
+  .doc-indice { display:flex; flex-wrap:wrap; gap:5px; padding:11px 18px; flex:none;
+                border-bottom:1px solid var(--border); }
+  .doc-item { background:var(--bg); border:1px solid var(--border); color:var(--muted);
+              border-radius:999px; padding:4px 11px; font-size:11.5px; cursor:pointer; }
+  .doc-item:hover { color:var(--text); border-color:var(--border-2); }
+  .doc-item.ativo { color:var(--accent); border-color:var(--accent); }
+  .doc-corpo { overflow-y:auto; overflow-x:hidden; padding:4px 18px 28px; scroll-behavior:smooth; }
+  .doc-secao { padding-top:18px; }
+  .doc-secao h3 { font-size:14.5px; color:var(--text); margin:0 0 9px; }
+  .doc-secao p { font-size:13px; line-height:1.62; color:var(--muted); margin:0 0 10px; }
+  .doc-secao b { color:var(--text); }
+  .doc-secao a { color:var(--accent); }
+  .doc-nota { border-left:2px solid var(--border-2); padding-left:10px; font-size:12.5px !important; }
+  .doc-passos { margin:0 0 10px; padding-left:19px; }
+  .doc-passos li { font-size:13px; line-height:1.6; color:var(--muted); margin-bottom:7px; }
+  .doc-passos b { color:var(--text); }
+  /* table-layout:fixed impede que uma célula longa estique a tabela além do
+     painel — sem isso a última coluna saía cortada. */
+  .doc-tabela { width:100%; table-layout:fixed; border-collapse:collapse;
+                margin:0 0 12px; font-size:12.5px; }
+  /* white-space:normal desfaz o nowrap global das tabelas de relatório: aqui o
+     texto PRECISA quebrar, senão a célula empurra a tabela para fora do painel. */
+  .doc-tabela td, .doc-tabela th { overflow-wrap:anywhere; white-space:normal; }
+  .doc-tabela td:first-child, .doc-tabela th:first-child { width:34%; }
+  .doc-tabela th { text-align:left; color:var(--muted); font-weight:600; padding:5px 8px 5px 0;
+                   border-bottom:1px solid var(--border); font-size:11.5px;
+                   text-transform:uppercase; letter-spacing:.4px; }
+  .doc-tabela td { padding:7px 8px 7px 0; border-bottom:1px solid var(--border);
+                   color:var(--muted); line-height:1.5; vertical-align:top; }
+  .doc-crit { color:var(--red); } .doc-alto { color:var(--orange); }
+  .doc-med  { color:var(--yellow); } .doc-baixo { color:var(--green); }
+  @media (max-width:520px){ .doc-painel { width:100%; } }
+  @media print { .doc-painel, .doc-fundo { display:none !important; } }
   .ver-tag { font-variant-numeric:tabular-nums; opacity:.75; margin-left:6px; }
 
   /* Accordion (recolhe seções secundárias p/ reduzir densidade) */
@@ -837,6 +890,13 @@ def _topbar(active: str) -> str:
         ' aria-label="Abrir menu de navegação" aria-expanded="false">'
         '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">'
         '<line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>'
+        '</button>'
+        '<button class="theme-toggle" type="button" onclick="argusAbrirDocs()"'
+        ' title="Documentação" aria-label="Abrir documentação">'
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"'
+        ' stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/>'
+        '<path d="M9.2 9.3a2.9 2.9 0 0 1 5.6 1c0 1.9-2.8 2.5-2.8 4"/>'
+        '<circle cx="12" cy="17.4" r=".9" fill="currentColor" stroke="none"/></svg>'
         '</button>'
         '<button class="theme-toggle" type="button" onclick="argusToggleTheme()"'
         ' title="Tema claro/escuro" aria-label="Alternar tema claro ou escuro">'
@@ -2768,6 +2828,86 @@ def app_css() -> str:
     return _common_css()
 
 
+def _painel_docs(pagina: str) -> str:
+    """Painel lateral com a documentação, presente em todas as páginas.
+
+    Painel em vez de página: quem tem dúvida no meio de uma tarefa lê e fecha,
+    voltando exatamente ao ponto onde estava — sem perder o formulário
+    preenchido nem o filtro aplicado.
+    """
+    try:
+        import docs as DOCS
+    except Exception:                       # deploy antigo sem docs.py
+        return ""
+    itens = "".join(
+        f'<button type="button" class="doc-item" data-alvo="doc-{sid}">{titulo}</button>'
+        for sid, titulo, _ in DOCS.SECOES)
+    corpo = "".join(
+        f'<section id="doc-{sid}" class="doc-secao"><h3>{titulo}</h3>{html}</section>'
+        for sid, titulo, html in DOCS.SECOES)
+    inicial = DOCS.secao_da_pagina(pagina)
+    return (
+        '<div id="doc-fundo" class="doc-fundo" onclick="argusFecharDocs()"></div>'
+        '<aside id="doc-painel" class="doc-painel" role="dialog" aria-modal="true"'
+        ' aria-labelledby="doc-titulo" aria-hidden="true">'
+        '<header class="doc-cab">'
+        '<h2 id="doc-titulo">Documentação</h2>'
+        '<button type="button" class="doc-fechar" onclick="argusFecharDocs()"'
+        ' aria-label="Fechar documentação">&times;</button>'
+        '</header>'
+        f'<nav class="doc-indice">{itens}</nav>'
+        f'<div class="doc-corpo">{corpo}</div>'
+        '</aside>'
+        f'<script>window.__DOC_INICIAL="doc-{inicial}";</script>'
+        f'<script>{_DOCS_JS}</script>\n'
+    )
+
+
+_DOCS_JS = r"""
+(function(){
+  var painel, fundo, ultimoFoco;
+  function init(){ painel=document.getElementById('doc-painel'); fundo=document.getElementById('doc-fundo'); }
+  function irPara(id){
+    var alvo=document.getElementById(id); if(!alvo) return;
+    alvo.scrollIntoView({block:'start'});
+    document.querySelectorAll('.doc-item').forEach(function(b){
+      b.classList.toggle('ativo', b.getAttribute('data-alvo')===id); });
+  }
+  window.argusAbrirDocs=function(secao){
+    if(!painel) init();
+    ultimoFoco=document.activeElement;
+    painel.classList.add('aberto'); fundo.classList.add('aberto');
+    painel.setAttribute('aria-hidden','false');
+    document.body.style.overflow='hidden';
+    irPara(secao||window.__DOC_INICIAL||'doc-inicio');
+    var fechar=painel.querySelector('.doc-fechar'); if(fechar) fechar.focus();
+  };
+  window.argusFecharDocs=function(){
+    if(!painel) return;
+    painel.classList.remove('aberto'); fundo.classList.remove('aberto');
+    painel.setAttribute('aria-hidden','true');
+    document.body.style.overflow='';
+    if(ultimoFoco && ultimoFoco.focus) ultimoFoco.focus();
+  };
+  document.addEventListener('keydown',function(e){
+    if(e.key==='Escape' && painel && painel.classList.contains('aberto')) window.argusFecharDocs();
+  });
+  document.addEventListener('DOMContentLoaded',function(){
+    init();
+    document.querySelectorAll('.doc-item').forEach(function(b){
+      b.addEventListener('click',function(){ irPara(b.getAttribute('data-alvo')); });
+    });
+    // Links para a documentação em qualquer lugar da página: data-doc="secao"
+    document.querySelectorAll('[data-doc]').forEach(function(a){
+      a.addEventListener('click',function(e){
+        e.preventDefault(); window.argusAbrirDocs('doc-'+a.getAttribute('data-doc'));
+      });
+    });
+  });
+})();
+"""
+
+
 def _portal_shell(active: str, title: str, subtitle: str, body: str,
                   extra_script: str = "", show_head: bool = True) -> str:
     """Casca padrão de página do portal (link p/ /assets/app.css + topbar + footer)."""
@@ -2792,6 +2932,7 @@ def _portal_shell(active: str, title: str, subtitle: str, body: str,
     return (
         head + _topbar(active) + '\n<main class="wrap" id="conteudo">\n'
         + page_head + body + '\n' + _footer() + '\n</main>\n'
+        + _painel_docs(active)
         + '<script>' + _RBAC_BOOT_JS + '</script>\n'
         + extra_script + '\n</body>\n</html>\n'
     )
@@ -4554,8 +4695,7 @@ def build_correlation_page() -> str:
     )
     return _portal_shell(
         "correlacao", "Correlação",
-        "Mapa de toda a superfície: domínios, subdomínios, IPs e achados (e-mail, credenciais, typosquat) — "
-        "com enriquecimento e cor por criticidade",
+        "O que está ligado a quê: domínios, subdomínios, IPs e achados",
         body, extra_script=_CORR_SCRIPT)
 
 
@@ -4716,8 +4856,8 @@ _CAMP_SCRIPT = r"""<script>
       if(running) h+='<div class="page-sub" style="margin-top:8px;font-size:11.5px">Pode fechar a página — '
         +'a execução continua no servidor.</div>';
     } else {
-      h='<div class="page-sub">Roda a sequência completa (subdomínios &rarr; portas TCP &rarr; portas UDP &rarr; '
-       +'e-mail &rarr; credenciais &rarr; typosquat) agora, sem esperar o agendamento.</div>';
+      h='<div class="page-sub">Roda os seis scanners agora, sem esperar o agendamento. '
+       +'<a href="#" data-doc="scan">Como funciona</a></div>';
     }
     box.innerHTML=h;
     // Enquanto roda, consulta o progresso periodicamente.
@@ -4910,9 +5050,8 @@ def build_campaigns_page() -> str:
         + '<div class="panel panel-pad" style="margin-bottom:16px">'
           f'<h2>{_NAV_ICONS.get("submonitor", "")} Wordlist de subdomínios '
           '<span class="badge"><span id="wl-count">&mdash;</span> prefixos</span></h2>'
-          '<p class="page-sub" style="margin:2px 0 12px">Prefixos testados em <b>cada domínio</b> das campanhas de '
-          'subdomínio (ex.: <code>api</code> &rarr; <code>api.empresa.com.br</code>). Um por linha, sem ponto e sem '
-          'domínio. Vale para todas as campanhas — arquivo <code>submonitor/subs.txt</code>.</p>'
+          '<p class="page-sub" style="margin:2px 0 12px">Um prefixo por linha, sem ponto e sem domínio '
+          '(ex.: <code>api</code>). Vale para todas as campanhas.</p>'
           '<label for="wl-text" style="display:block;font-size:12px;font-weight:600;color:var(--muted);margin:0 0 5px">'
           'Prefixos</label>'
           '<textarea id="wl-text" spellcheck="false" oninput="window.__camp&&window.__camp.wlSync()" '
@@ -4928,9 +5067,8 @@ def build_campaigns_page() -> str:
           'Descartar alterações</button>'
           '</div></div>'
 
-        + '<p class="page-sub">As mudanças valem a partir do <b>próximo scan</b> (agendado no cron) ou quando você '
-          'rodar o scanner manualmente. Excluir uma campanha <b>não apaga</b> os achados já coletados — o histórico '
-          'continua disponível na Gestão de Achados.</p>'
+        + '<p class="page-sub">Vale a partir do próximo scan. Excluir não apaga os achados. '
+          '<a href="#" data-doc="campanhas">Como funciona</a></p>'
         '</div>'
     )
     return _portal_shell(
@@ -5060,14 +5198,11 @@ def build_providers_page() -> str:
         '<div class="panel panel-pad">'
         f'<h2>{_NAV_ICONS.get("provedores", "")} Fontes de inteligência '
         '<span class="badge" id="p-count">&mdash;</span></h2>'
-        '<p class="page-sub" style="margin:2px 0 14px">Ligue apenas o que quiser usar nos scans. As fontes '
-        'que exigem chave só entram em ação depois que você informa a credencial — sem chave, elas ficam '
-        'de fora sem quebrar a varredura. As mudanças valem a partir do <b>próximo scan</b>.</p>'
+        '<p class="page-sub" style="margin:2px 0 14px">Ligue as fontes que quiser usar. Vale a partir '
+        'do próximo scan. <a href="#" data-doc="provedores">Como funciona</a></p>'
         '<div class="prov-grid" id="p-list"></div></div>'
 
-        '<p class="page-sub">As chaves ficam no servidor (<code>threatintel/config.json</code>, legível apenas '
-        'pelo serviço) e <b>nunca são exibidas de volta</b> — a tela mostra só os últimos dígitos. Ligar, desligar '
-        'ou trocar uma chave fica registrado na trilha de auditoria, sem o valor da credencial.</p>'
+        '<p class="page-sub">As chaves ficam no servidor e nunca são exibidas de volta.</p>'
         '</div>'
     )
     return _portal_shell(
@@ -5227,17 +5362,14 @@ def build_logpush_page() -> str:
 
         '<div class="panel panel-pad" style="margin-bottom:16px">'
         f'<h2>{_NAV_ICONS.get("logpush", "")} Envio de logs</h2>'
-        '<p class="page-sub" style="margin:2px 0 12px">Manda o que o Argus registra para um bucket '
-        'ou para um chat. Serve para quando a aplicação roda longe de você: os logs continuam aqui '
-        '(a rotação semanal segue valendo) e uma cópia vai para onde você acompanha. Se o destino '
-        'cair, nada se perde — o envio recomeça de onde parou.</p>'
+        '<p class="page-sub" style="margin:2px 0 12px">Envia os logs para um bucket S3 ou para '
+        'um chat. <a href="#" data-doc="logpush">Como funciona</a></p>'
         '<label style="display:flex;gap:8px;align-items:center">'
         '<input type="checkbox" id="lp-ligado" data-write="1"> <b>Ligado</b></label></div>'
 
         '<div class="panel panel-pad" style="margin-bottom:16px">'
         '<h2>O que enviar</h2>'
-        '<p class="page-sub" style="margin:2px 0 12px">Ao ligar uma origem, o envio começa do ponto '
-        'atual — o histórico anterior não é reenviado.</p>'
+        '<p class="page-sub" style="margin:2px 0 12px">O envio começa do ponto atual.</p>'
         '<div id="lp-origens" class="lp-grid"></div></div>'
 
         '<div class="panel panel-pad" style="margin-bottom:16px">'
@@ -5250,17 +5382,15 @@ def build_logpush_page() -> str:
         '<div id="lp-sev" class="lp-grid"></div>'
         '<div id="lp-flood" class="page-sub" style="display:none;margin-top:9px;'
         'border-left:3px solid var(--orange);padding-left:9px">'
-        '&#9888;&#65039; Com todas as severidades ligadas, uma execução pode disparar centenas de '
-        'mensagens (flood). A maioria dos serviços de chat aplica limite de taxa e passa a descartar.'
+        '&#9888;&#65039; Com todas ligadas, uma execução pode gerar centenas de mensagens. '
+        '<a href="#" data-doc="logpush">Entenda</a>'
         '</div></div>'
         '<div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap">'
         '<button class="btn btn-pdf" type="button" id="lp-salvar" data-write="1">Salvar</button>'
         '<button class="btn" type="button" id="lp-testar" data-write="1">Testar conexão</button>'
         '</div></div>'
 
-        '<p class="page-sub">As credenciais ficam no servidor (<code>logpush.json</code>, legível apenas '
-        'pelo serviço) e <b>nunca são exibidas de volta</b> — a tela mostra só os últimos dígitos. '
-        'Cada alteração fica registrada na trilha de auditoria, sem o valor da credencial.</p>'
+        '<p class="page-sub">Credenciais ficam no servidor e nunca são exibidas de volta.</p>'
         '</div>'
     )
     return _portal_shell(
@@ -5409,9 +5539,8 @@ def build_users_page() -> str:
 
         '<div class="panel panel-pad" style="margin-bottom:16px">'
         f'<h2>{_NAV_ICONS.get("usuarios", "")} Novo usuário</h2>'
-        '<p class="page-sub" style="margin:2px 0 12px">O <b>Master</b> pode editar (campanhas, wordlist, '
-        'execução e triagem). O <b>User</b> apenas consulta. A gestão de contas fica só com você, '
-        'administrador.</p>'
+        '<p class="page-sub" style="margin:2px 0 12px"><b>Master</b> edita, <b>User</b> só consulta. '
+        '<a href="#" data-doc="usuarios">Sobre os perfis</a></p>'
         '<div class="u-form">'
         '<div><label for="u-new-name">Usuário</label>'
         '<input id="u-new-name" type="text" maxlength="32" autocomplete="off" placeholder="ex.: ana.silva"></div>'
@@ -5430,9 +5559,8 @@ def build_users_page() -> str:
 
         + _users_self_block() +
 
-        '<p class="page-sub">As contas usam a mesma base de autenticação do login. A senha é gravada apenas '
-        'como <b>hash bcrypt</b> — nunca em texto claro. Toda criação, alteração de perfil, redefinição de '
-        'senha e exclusão fica registrada na trilha de auditoria.</p>'
+        '<p class="page-sub">Senhas são gravadas apenas como hash. Toda ação em contas fica registrada. '
+        '<a href="#" data-doc="usuarios">Sobre os perfis</a></p>'
         '</div>'
     )
     return _portal_shell(
