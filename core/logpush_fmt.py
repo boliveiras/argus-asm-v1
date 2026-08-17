@@ -74,7 +74,12 @@ def parse_rfc5424(linha: str, origem: str) -> Mensagem | None:
         return None
     campos = {k: _desescapar(v) for k, v in _CAMPO.findall(m.group("sd") or "")}
     try:
-        quando = datetime.datetime.strptime(m.group("ts")[:19], "%Y-%m-%dT%H:%M:%S")
+        # O syslog grava em UTC (o timestamp termina em Z). Sem converter, um achado
+        # das 17h apareceria no chat como 20h e os objetos no S3 ficariam com fusos
+        # misturados conforme a origem. A linha ORIGINAL, com o UTC, segue intacta em
+        # `texto` — quem indexa no SIEM continua com a marcação precisa.
+        quando = (datetime.datetime.strptime(m.group("ts")[:19], "%Y-%m-%dT%H:%M:%S")
+                  .replace(tzinfo=datetime.UTC).astimezone().replace(tzinfo=None))
     except ValueError:
         quando = datetime.datetime.now()
     sev = _SEV.get(int(m.group("pri")) % 8, "INFO")

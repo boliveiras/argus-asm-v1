@@ -62,7 +62,9 @@ class LogDestination:
 
     def testar(self) -> str:
         """Envia uma prova de conexão. Devolve descrição curta do resultado."""
-        agora = datetime.datetime.now(datetime.UTC)
+        # Hora local, como em toda Mensagem: é o que aparece no chat e no nome do
+        # objeto, e precisa bater com o relógio de quem lê.
+        agora = datetime.datetime.now()
         self.send([Mensagem(origem="teste",
                             texto="Argus — teste de conexão do logpush",
                             quando=agora, severidade="INFO", msgid="LOGPUSH_TEST")])

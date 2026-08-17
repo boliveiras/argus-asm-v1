@@ -42,6 +42,23 @@ class TestParse(unittest.TestCase):
         self.assertIsNone(F.parse_rfc5424("", "monitor"))
 
 
+class TestFusoHorario(unittest.TestCase):
+    """O syslog grava UTC; o que é exibido tem de estar na hora de quem lê."""
+
+    def test_converte_utc_para_local(self):
+        import datetime
+        m = F.parse_rfc5424(LINHA, "monitor")
+        # a linha diz 13:35:47Z; o esperado é o mesmo instante no fuso local
+        esperado = (datetime.datetime(2026, 8, 15, 13, 35, 47, tzinfo=datetime.UTC)
+                    .astimezone().replace(tzinfo=None))
+        self.assertEqual(m.quando, esperado)
+
+    def test_texto_original_preserva_o_utc(self):
+        # o SIEM indexa a linha crua: ela NÃO pode ser reescrita
+        m = F.parse_rfc5424(LINHA, "monitor")
+        self.assertIn("2026-08-15T13:35:47.812Z", m.texto)
+
+
 class TestFormatoChat(unittest.TestCase):
     def setUp(self):
         self.m = F.parse_rfc5424(LINHA, "monitor")
