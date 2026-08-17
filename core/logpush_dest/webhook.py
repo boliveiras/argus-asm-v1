@@ -29,7 +29,7 @@ from __future__ import annotations
 import time
 
 import requests
-from logpush_config import severidades_ligadas, url_segura
+from logpush_config import checar_url, severidades_ligadas
 from logpush_fmt import para_chat
 
 from .base import LogDestination, LogPushError, Mensagem, registrar
@@ -60,9 +60,15 @@ class WebhookDestination(LogDestination):
     def _preparar(self) -> tuple[str, str, str]:
         """Valida a configuração e devolve (url, plataforma, chat_id)."""
         url = str(self.cfg.get("webhook_url") or "").strip()
-        if not url_segura(url):
+        segura, motivo = checar_url(url)
+        if not segura:
             # A URL NÃO entra no erro: quem a tem posta no canal, então ela é
             # segredo tanto quanto uma senha.
+            if motivo == "dns":
+                # Configuração está certa; foi o nome que não resolveu agora. O
+                # próximo ciclo tenta de novo.
+                raise LogPushError("não consegui resolver o host do webhook agora "
+                                   "(falha de DNS) — nada foi enviado")
             raise LogPushError("URL de webhook inválida: exige https e host público")
         plataforma = str(self.cfg.get("webhook_plataforma") or "google_chat").strip()
         chat_id = str(self.cfg.get("webhook_chat_id") or "").strip()
@@ -90,12 +96,17 @@ class WebhookDestination(LogDestination):
         url, plataforma, chat_id = self._preparar()
         permitidas = set(severidades_ligadas(self.cfg))
         primeira = True
-        for m in mensagens:
+        for i, m in enumerate(mensagens):
             if m.severidade not in permitidas:
                 continue
             if not primeira:
                 self._dormir(_PAUSA)
-            self._entregar(m, url, plataforma, chat_id)
+            try:
+                self._entregar(m, url, plataforma, chat_id)
+            except LogPushError as exc:
+                # As anteriores já chegaram ao destino. Contá-las evita que o
+                # próximo ciclo as poste de novo.
+                raise LogPushError(*exc.args, processadas=i) from exc
             primeira = False
 
     def testar(self) -> str:

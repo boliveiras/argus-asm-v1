@@ -139,7 +139,7 @@ def _pendente_rotacionado(caminho: Path, marca: dict) -> bytes:
 
 
 def _converter(bloco: bytes, origem: str, estruturado: bool, caminho: Path,
-               limite: int) -> tuple[list[Mensagem], int]:
+               limite: int, chave: str = "", inicio: int = 0) -> tuple[list[Mensagem], int]:
     """(mensagens, bytes consumidos) de um bloco lido.
 
     O consumo é contado byte a byte porque é ele que vira a posição do ponteiro:
@@ -154,8 +154,8 @@ def _converter(bloco: bytes, origem: str, estruturado: bool, caminho: Path,
             return [], len(bloco)
         return [Mensagem(origem=origem, texto=texto.rstrip("\n"),
                          quando=datetime.datetime.now(), severidade="INFO",
-                         msgid="SCAN_OUTPUT",
-                         campos={"arquivo": caminho.name})], len(bloco)
+                         msgid="SCAN_OUTPUT", campos={"arquivo": caminho.name},
+                         arquivo=chave, ate=inicio + len(bloco))], len(bloco)
 
     mensagens: list[Mensagem] = []
     consumido = 0
@@ -173,6 +173,7 @@ def _converter(bloco: bytes, origem: str, estruturado: bool, caminho: Path,
             continue
         m = parse_rfc5424(linha, origem)
         if m is not None:
+            m.arquivo, m.ate = chave, inicio + consumido
             mensagens.append(m)
     return mensagens, consumido
 
@@ -223,7 +224,8 @@ def _varrer(cfg: dict, raiz: Path | None = None,
             # arquivo que o serviço nunca teve permissão de abrir.
             _pular(chave, exc)
             continue
-        msgs, consumido = _converter(bloco, origem, estruturado, caminho, restante)
+        msgs, consumido = _converter(bloco, origem, estruturado, caminho, restante,
+                                     chave, pos)
         mensagens.extend(msgs)
         marcas[chave] = {"inode": st.st_ino, "pos": pos + consumido,
                          "enviado_em": agora}
@@ -233,6 +235,23 @@ def _varrer(cfg: dict, raiz: Path | None = None,
 def coletar(cfg: dict, raiz: Path | None = None) -> list[Mensagem]:
     """Mensagens novas desde o ponteiro. NÃO altera o estado."""
     return _varrer(cfg, raiz)[0]
+
+
+def _marcas_parciais(entregues: list[Mensagem], marcas: dict) -> dict:
+    """Ponteiro para o pedaço do lote que o destino chegou a resolver.
+
+    O webhook faz uma requisição por mensagem: quando a quinta falha, as quatro
+    primeiras já estão no chat. Sem confirmar o que passou, o ciclo seguinte as
+    posta de novo — foi assim que o mesmo achado apareceu três vezes.
+    """
+    saida: dict = {}
+    for m in entregues:
+        base = marcas.get(m.arquivo)
+        if not m.arquivo or not base:
+            continue          # veio do rotacionado: sem marca própria, será relido
+        atual = saida.setdefault(m.arquivo, {**base, "pos": 0})
+        atual["pos"] = max(atual["pos"], m.ate)
+    return saida
 
 
 def executar(cfg: dict | None = None, raiz: Path | None = None) -> dict:
@@ -267,9 +286,14 @@ def executar(cfg: dict | None = None, raiz: Path | None = None) -> dict:
     try:
         destino.send(mensagens)
     except LogPushError as exc:
-        # Ponteiro NÃO avança: o próximo ciclo reenvia o mesmo trecho.
-        print(f"[LOGPUSH] envio falhou: {exc}", file=sys.stderr)
-        return {"ok": False, "enviadas": 0, "detalhe": str(exc)}
+        # O que o destino já resolveu antes de falhar fica confirmado; o resto
+        # continua pendente e sai no próximo ciclo, sem repetir o que passou.
+        feitas = max(0, min(getattr(exc, "processadas", 0), len(mensagens)))
+        if feitas:
+            gravar_marcas(_marcas_parciais(mensagens[:feitas], marcas))
+        print(f"[LOGPUSH] envio falhou após {feitas} de {len(mensagens)}: {exc}",
+              file=sys.stderr)
+        return {"ok": False, "enviadas": feitas, "detalhe": str(exc)}
     print(f"[LOGPUSH] {len(mensagens)} mensagem(ns) enviada(s)")
     if not gravar_marcas(marcas):
         # Entregue mas não anotado: o próximo ciclo vai repetir este lote. Sai

@@ -31,7 +31,16 @@ from dataclasses import dataclass, field
 
 
 class LogPushError(Exception):
-    """Falha de envio. A mensagem NUNCA inclui credencial."""
+    """Falha de envio. A mensagem NUNCA inclui credencial.
+
+    `processadas` diz quantas mensagens do lote o destino já resolveu antes de
+    falhar — entregues ou descartadas pelo filtro. Sem isso, uma falha na quinta
+    de vinte faria as quatro primeiras, já entregues, voltarem no ciclo seguinte.
+    """
+
+    def __init__(self, *args, processadas: int = 0) -> None:
+        super().__init__(*args)
+        self.processadas = processadas
 
 
 @dataclass
@@ -44,6 +53,10 @@ class Mensagem:
     severidade: str = "INFO"
     msgid: str = ""
     campos: dict = field(default_factory=dict)
+    # De onde veio e até que byte. É o que permite confirmar o progresso parcial
+    # quando o lote falha no meio. Os destinos não usam nem enxergam.
+    arquivo: str = ""
+    ate: int = 0
 
 
 class LogDestination:

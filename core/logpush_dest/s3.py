@@ -81,12 +81,15 @@ class S3Destination(LogDestination):
             raise LogPushError("bucket não configurado")
         cliente = self._obter_cliente()
         usados: set = set()
-        for m in mensagens:
+        for i, m in enumerate(mensagens):
             chave = self._chave(m, usados)
             corpo = (m.texto.rstrip("\n") + "\n").encode("utf-8", "replace")
             try:
                 cliente.put_object(Bucket=bucket, Key=chave, Body=corpo)
             except Exception as exc:
-                # Sem credencial no texto do erro.
+                # Sem credencial no texto do erro. `processadas` preserva os
+                # objetos já gravados: sem isso, o ciclo seguinte os regravaria
+                # com carimbo novo e o bucket ficaria com cópias do mesmo evento.
                 raise LogPushError(
-                    f"falha ao gravar {chave}: {type(exc).__name__}") from exc
+                    f"falha ao gravar {chave}: {type(exc).__name__}",
+                    processadas=i) from exc

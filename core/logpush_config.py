@@ -130,6 +130,35 @@ def mascarar(valor: str) -> str:
     return "••••" + v[-4:] if len(v) > 4 else "••••"
 
 
+def checar_url(url: str) -> tuple[bool, str]:
+    """(segura, motivo) — separa configuração errada de falha momentânea.
+
+    Motivos: "" (segura), "config" (não é https, ou aponta para rede interna) e
+    "dns" (não deu para resolver AGORA). A distinção importa: um DNS que falhou
+    por um instante estava sendo relatado como "URL inválida", o que manda o
+    operador conferir uma configuração que está certa. Nos dois casos o envio
+    não acontece — na dúvida sobre para onde o nome resolve, não se envia.
+    """
+    try:
+        p = urlparse(str(url or "").strip())
+    except Exception:
+        return False, "config"
+    if p.scheme != "https" or not p.hostname:
+        return False, "config"
+    try:
+        infos = socket.getaddrinfo(p.hostname, None)
+    except Exception:
+        return False, "dns"
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            return False, "config"
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+            return False, "config"
+    return True, ""
+
+
 def url_segura(url: str) -> bool:
     """Só HTTPS para host público.
 
@@ -137,24 +166,7 @@ def url_segura(url: str) -> bool:
     isso o Argus viraria um pivô para varrer a rede interna de quem o hospeda
     (SSRF) — justamente o que a ferramenta existe para denunciar.
     """
-    try:
-        p = urlparse(str(url or "").strip())
-    except Exception:
-        return False
-    if p.scheme != "https" or not p.hostname:
-        return False
-    try:
-        infos = socket.getaddrinfo(p.hostname, None)
-    except Exception:
-        return False
-    for info in infos:
-        try:
-            ip = ipaddress.ip_address(info[4][0])
-        except ValueError:
-            return False
-        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
-            return False
-    return True
+    return checar_url(url)[0]
 
 
 def origens_ligadas(cfg: dict) -> list[str]:

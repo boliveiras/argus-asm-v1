@@ -118,6 +118,52 @@ class TestTesteDeConexao(unittest.TestCase):
             d.testar()
 
 
+class TestFalhaTransitoria(unittest.TestCase):
+    """DNS que falhou por um instante não é configuração errada."""
+
+    def test_dns_indisponivel_nao_acusa_url_invalida(self):
+        import logpush_config as LC
+
+        original = LC.socket.getaddrinfo
+
+        def sem_dns(*a, **kw):
+            raise OSError("Temporary failure in name resolution")
+
+        LC.socket.getaddrinfo = sem_dns
+        try:
+            d = destino()
+            with self.assertRaises(B.LogPushError) as ctx:
+                d.send([msg()])
+        finally:
+            LC.socket.getaddrinfo = original
+        texto = str(ctx.exception)
+        self.assertIn("DNS", texto)
+        self.assertNotIn("inválida", texto)
+
+    def test_host_interno_continua_sendo_configuracao_invalida(self):
+        d = W.WebhookDestination({"destino": "webhook",
+                                  "webhook_url": "https://127.0.0.1/hook",
+                                  "sev_CRITICO": True})
+        with self.assertRaises(B.LogPushError) as ctx:
+            d.send([msg()])
+        self.assertIn("inválida", str(ctx.exception))
+
+    def test_falha_no_meio_conta_as_que_passaram(self):
+        d = destino(sev_MEDIO=True)
+        chamadas = []
+
+        def post(url, payload):
+            chamadas.append(payload)
+            if len(chamadas) == 3:
+                raise ConnectionError("rede caiu")
+            return FakeResp()
+
+        d._post = post
+        with self.assertRaises(B.LogPushError) as ctx:
+            d.send([msg("CRITICO"), msg("ALTO"), msg("MEDIO"), msg("CRITICO")])
+        self.assertEqual(ctx.exception.processadas, 2)
+
+
 class TestSeguranca(unittest.TestCase):
     def test_url_insegura_levanta(self):
         d = W.WebhookDestination({"destino": "webhook",

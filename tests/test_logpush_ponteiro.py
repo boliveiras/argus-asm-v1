@@ -182,6 +182,56 @@ class TestLinhaIncompleta(Base):
         self.assertEqual(len(LP.coletar(self.cfg, self.raiz)), 1)
 
 
+class TestFalhaNoMeioDoLote(Base):
+    """O que já chegou ao destino não pode voltar no ciclo seguinte.
+
+    Vindo da produção: o webhook posta uma requisição por mensagem, a rede caiu
+    na quinta, e as quatro que já estavam no chat foram repostadas a cada ciclo.
+    """
+
+    def test_confirma_o_que_passou_e_reenvia_so_o_resto(self):
+        self.escrever(5)
+
+        @B.registrar("dublê_meio")
+        class DubleMeio(B.LogDestination):
+            entregues: list = []
+
+            def send(self, mensagens):
+                for i, m in enumerate(mensagens):
+                    if i == 2:
+                        raise B.LogPushError("rede caiu", processadas=i)
+                    DubleMeio.entregues.append(m)
+
+        r1 = LP.executar(dict(self.cfg, destino="dublê_meio"), raiz=self.raiz)
+        self.assertFalse(r1["ok"])
+        self.assertEqual(r1["enviadas"], 2)
+        # as duas confirmadas não voltam; sobram três
+        self.assertEqual(len(LP.coletar(self.cfg, self.raiz)), 3)
+
+    def test_falha_na_primeira_nao_confirma_nada(self):
+        self.escrever(4)
+
+        @B.registrar("dublê_zero")
+        class DubleZero(B.LogDestination):
+            def send(self, mensagens):
+                raise B.LogPushError("destino fora do ar", processadas=0)
+
+        LP.executar(dict(self.cfg, destino="dublê_zero"), raiz=self.raiz)
+        self.assertEqual(len(LP.coletar(self.cfg, self.raiz)), 4)
+
+    def test_destino_antigo_sem_contagem_nao_confirma_nada(self):
+        """LogPushError sem `processadas` continua significando lote perdido."""
+        self.escrever(4)
+
+        @B.registrar("dublê_legado")
+        class DubleLegado(B.LogDestination):
+            def send(self, mensagens):
+                raise B.LogPushError("erro sem contagem")
+
+        LP.executar(dict(self.cfg, destino="dublê_legado"), raiz=self.raiz)
+        self.assertEqual(len(LP.coletar(self.cfg, self.raiz)), 4)
+
+
 class TestTetoDoDestino(Base):
     """Acúmulo grande contra destino com cota tem de escoar, não travar.
 
