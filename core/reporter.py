@@ -5509,11 +5509,22 @@ def _empty_state(active: str, label: str) -> str:
     )
 
 
+# Páginas que o portal já teve e não gera mais. Precisam ser REMOVIDAS do docroot:
+# atualizar a instalação só sobrescreve o que é gerado, então uma página descontinuada
+# continuaria no ar — servindo a interface antiga, com um menu que não existe mais.
+_PAGINAS_OBSOLETAS = ("risk-guide.html",)
+
+
 def write_portal(docroot: str) -> None:
     """Grava app.css + login + index/dashboard e placeholders dos relatórios."""
     d = Path(docroot)
     assets = d / "assets"
     assets.mkdir(parents=True, exist_ok=True)
+    for obsoleta in _PAGINAS_OBSOLETAS:
+        try:
+            (d / obsoleta).unlink(missing_ok=True)
+        except OSError:
+            pass
     (assets / "app.css").write_text(app_css(), encoding="utf-8")
     (d / "login.html").write_text(build_login_page(), encoding="utf-8")
     (d / "index.html").write_text(build_index(), encoding="utf-8")

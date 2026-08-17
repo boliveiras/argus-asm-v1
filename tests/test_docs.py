@@ -69,6 +69,18 @@ class TestGuiaDeRisco(unittest.TestCase):
         for nome, fn in PAGINAS.items():
             self.assertNotIn("risk-guide.html", fn(), nome)
 
+    def test_pagina_antiga_e_removida_do_docroot(self):
+        """Atualizar só sobrescreve o que é gerado — a página velha precisa ser
+        apagada, senão continua no ar servindo o menu antigo."""
+        import tempfile
+        from pathlib import Path
+        self.assertIn("risk-guide.html", reporter._PAGINAS_OBSOLETAS)
+        with tempfile.TemporaryDirectory() as d:
+            orfa = Path(d) / "risk-guide.html"
+            orfa.write_text("pagina antiga", encoding="utf-8")
+            reporter.write_portal(d)
+            self.assertFalse(orfa.exists(), "a página obsoleta continuou no docroot")
+
     def test_conteudo_do_guia_esta_na_documentacao(self):
         ids = {s[0] for s in DOCS.SECOES}
         for esperado in ("risco", "portas", "elevacao", "emailrisco", "conformidade"):
