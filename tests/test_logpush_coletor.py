@@ -47,7 +47,8 @@ class Base(unittest.TestCase):
                 fh.write(LINHA + "\n")
 
     def avancar(self):
-        LP.gravar_estado(LP._estado_apos(self.cfg, self.raiz))
+        """Confirma a entrega do que a varredura leu — como faz `executar`."""
+        LP.gravar_marcas(LP._varrer(self.cfg, self.raiz)[1])
 
 
 class TestPonteiro(Base):

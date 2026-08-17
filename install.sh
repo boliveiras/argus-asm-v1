@@ -395,8 +395,19 @@ chmod 644 "$SUBMONITOR_DIR/subs.txt" 2>/dev/null || true
 setfacl -m "g:$APP_GROUP:rw" "$SUBMONITOR_DIR/subs.txt" 2>/dev/null \
   && ok "ACL: $APP_USER pode editar a wordlist pela Web" \
   || warn "setfacl indisponível — a wordlist ficará somente leitura na Web"
-chown root:adm "$LOG_DIR_MONITOR" "$LOG_DIR_SUBMONITOR" "$LOG_DIR_CREDENTIALS" "$LOG_DIR_EMAIL" "$LOG_DIR_TYPOSQUAT" "$LOG_DIR_SCAN"
-chmod 750 "$LOG_DIR_MONITOR" "$LOG_DIR_SUBMONITOR" "$LOG_DIR_CREDENTIALS" "$LOG_DIR_EMAIL" "$LOG_DIR_TYPOSQUAT" "$LOG_DIR_SCAN"
+LOG_DIRS_SCANNER="$LOG_DIR_MONITOR $LOG_DIR_SUBMONITOR $LOG_DIR_CREDENTIALS $LOG_DIR_EMAIL $LOG_DIR_TYPOSQUAT $LOG_DIR_SCAN"
+# shellcheck disable=SC2086  # a lista é montada aqui, sem caminho com espaço
+chown root:adm $LOG_DIRS_SCANNER
+# setgid (2750): os scanners rodam como root, e sem ele cada log nasce root:ROOT,
+# modo 640 — o grupo adm enxerga o diretório e não abre o arquivo. Era essa a
+# razão de só a auditoria (dono $APP_USER) chegar ao destino do logpush.
+# shellcheck disable=SC2086
+chmod 2750 $LOG_DIRS_SCANNER
+# Migração: numa instalação anterior os logs nasceram root:root e continuam
+# ilegíveis para o serviço mesmo depois do setgid, que só vale para arquivo novo.
+# shellcheck disable=SC2086
+find $LOG_DIRS_SCANNER -maxdepth 1 -type f -name "*.log*" \
+  -exec chown root:adm {} \; -exec chmod 640 {} \; 2>/dev/null || true
 # Auditoria: o serviço argus-web (usuário $APP_USER) ESCREVE o audit.log; o grupo
 # adm LÊ. setgid (2750) faz os logs herdarem o grupo adm — proteção do log (PCI 10.3).
 chown "$APP_USER:adm" "$LOG_DIR_AUDIT" && chmod 2750 "$LOG_DIR_AUDIT"
@@ -404,7 +415,7 @@ chown "$APP_USER:adm" "$LOG_DIR_AUDIT" && chmod 2750 "$LOG_DIR_AUDIT"
 # Sem transferir a posse, o serviço sobe e falha ao escrever na trilha.
 find "$LOG_DIR_AUDIT" -type f -name "*.log*" -exec chown "$APP_USER:adm" {} \; 2>/dev/null || true
 ok "Diretório de auditoria: $LOG_DIR_AUDIT ($APP_USER:adm 2750)"
-ok "Logs: 750, dono root:adm"
+ok "Logs de scanner: 2750 root:adm (o grupo adm lê — é assim que o logpush enxerga)"
 # config.json contém a API key (AbuseIPDB). O submonitor roda como $APP_USER
 # pelo comando global, então precisa LER o config. 640 root:$APP_USER mantém o
 # segredo fora do alcance de "outros", mas legível pelo app user. O monitor roda

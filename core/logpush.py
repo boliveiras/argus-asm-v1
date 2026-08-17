@@ -70,6 +70,23 @@ def gravar_estado(estado: dict) -> None:
         print(f"[LOGPUSH] não consegui gravar o estado: {exc}", file=sys.stderr)
 
 
+def gravar_marcas(marcas: dict) -> None:
+    """Avança o ponteiro SÓ dos arquivos lidos neste ciclo.
+
+    Quem não aparece em `marcas` fica intocado: a origem que não pôde ser lida
+    continua pendente do mesmo ponto no ciclo seguinte.
+    """
+    if not marcas:
+        return
+    gravar_estado({**ler_estado(), **marcas})
+
+
+def _pular(chave: str, exc: Exception) -> None:
+    """Toda origem pulada diz por quê — silêncio aqui vira perda invisível."""
+    print(f"[LOGPUSH] {chave}: {type(exc).__name__} — origem pulada, "
+          f"ponteiro mantido no lugar", file=sys.stderr)
+
+
 def _arquivos(cfg: dict, raiz: Path) -> list[tuple[str, Path, bool]]:
     """(origem, caminho, estruturado) de cada arquivo das origens ligadas."""
     saida = []
@@ -87,95 +104,139 @@ def _arquivos(cfg: dict, raiz: Path) -> list[tuple[str, Path, bool]]:
     return saida
 
 
-def _ler_desde(caminho: Path, pos: int) -> str:
-    with open(caminho, encoding="utf-8", errors="replace") as fh:
+def _ler_desde(caminho: Path, pos: int) -> bytes:
+    """Bytes a partir de `pos`.
+
+    Em bytes, não em texto: a posição gravada no ponteiro precisa ser o mesmo
+    offset que o `seek` entende. Decodificando antes, um byte inválido vira um
+    caractere de 3 bytes e a conta do offset passa a mentir.
+    """
+    with open(caminho, "rb") as fh:
         fh.seek(pos)
         return fh.read()
 
 
-def _pendente_rotacionado(caminho: Path, marca: dict) -> str:
+def _pendente_rotacionado(caminho: Path, marca: dict) -> bytes:
     """Resto do arquivo anterior quando o logrotate criou um novo (inode mudou).
 
     O logrotate usa `create` + `delaycompress`: o anterior fica como `.log.1`
     ainda descomprimido, o que dá a janela para terminar de ler antes de seguir.
     """
     if not marca:
-        return ""
+        return b""
     anterior = caminho.parent / (caminho.name + ".1")
     if not anterior.exists():
-        return ""
+        return b""
     try:
         if anterior.stat().st_ino != int(marca.get("inode", 0)):
-            return ""
+            return b""
         return _ler_desde(anterior, int(marca.get("pos", 0)))
-    except OSError:
-        return ""
+    except OSError as exc:
+        _pular(anterior.name, exc)
+        return b""
 
 
-def coletar(cfg: dict, raiz: Path | None = None) -> list[Mensagem]:
-    """Mensagens novas desde o ponteiro. NÃO altera o estado."""
+def _converter(bloco: bytes, origem: str, estruturado: bool, caminho: Path,
+               limite: int) -> tuple[list[Mensagem], int]:
+    """(mensagens, bytes consumidos) de um bloco lido.
+
+    O consumo é contado byte a byte porque é ele que vira a posição do ponteiro:
+    marcar mais do que se leu abre buraco, marcar menos duplica.
+    """
+    if limite <= 0:
+        return [], 0
+    if not estruturado:
+        # Saída de execução: o arquivo inteiro é uma mensagem só.
+        texto = bloco.decode("utf-8", "replace")
+        if not texto.strip():
+            return [], len(bloco)
+        return [Mensagem(origem=origem, texto=texto.rstrip("\n"),
+                         quando=datetime.datetime.now(), severidade="INFO",
+                         msgid="SCAN_OUTPUT",
+                         campos={"arquivo": caminho.name})], len(bloco)
+
+    mensagens: list[Mensagem] = []
+    consumido = 0
+    partes = bloco.split(b"\n")
+    # O último pedaço não termina em \n: ou é vazio (o bloco acabou redondo) ou
+    # é uma linha que o scanner ainda está escrevendo. Nos dois casos ele fica
+    # para o próximo ciclo — enviar meia linha e marcá-la como lida perderia o
+    # evento inteiro quando o resto chegasse.
+    for crua in partes[:-1]:
+        if len(mensagens) >= limite:
+            break
+        consumido += len(crua) + 1
+        linha = crua.decode("utf-8", "replace").strip()
+        if not linha:
+            continue
+        m = parse_rfc5424(linha, origem)
+        if m is not None:
+            mensagens.append(m)
+    return mensagens, consumido
+
+
+def _varrer(cfg: dict, raiz: Path | None = None) -> tuple[list[Mensagem], dict]:
+    """Lê o que há de novo e devolve (mensagens, marcas).
+
+    `marcas` traz SÓ os arquivos efetivamente lidos, com a posição exata do que
+    saiu deles. Origem que não pôde ser aberta fica de fora, e o ponteiro dela
+    não se mexe.
+    """
     raiz = raiz or raiz_log()
     estado = ler_estado()
+    agora = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     mensagens: list[Mensagem] = []
+    marcas: dict = {}
     for origem, caminho, estruturado in _arquivos(cfg, raiz):
+        restante = MAX_POR_CICLO - len(mensagens)
+        if restante <= 0:
+            break
         chave = caminho.relative_to(raiz).as_posix()
         marca = estado.get(chave, {})
         try:
             st = caminho.stat()
-        except OSError:
+        except OSError as exc:
+            _pular(chave, exc)
             continue
-        bruto = ""
         mesmo_arquivo = int(marca.get("inode", 0)) == st.st_ino
         if marca and not mesmo_arquivo:
-            bruto += _pendente_rotacionado(caminho, marca)
+            pendente = _pendente_rotacionado(caminho, marca)
+            if pendente:
+                msgs, _ = _converter(pendente, origem, estruturado, caminho, restante)
+                mensagens.extend(msgs)
+                restante -= len(msgs)
         pos = int(marca.get("pos", 0)) if mesmo_arquivo else 0
         if pos > st.st_size:
             pos = 0        # truncado (scan/*.log é reescrito a cada execução)
         try:
-            bruto += _ler_desde(caminho, pos)
-        except OSError:
+            bloco = _ler_desde(caminho, pos)
+        except OSError as exc:
+            # Sem marca: nada desta origem é dado como entregue. Foi exatamente
+            # aqui que 3 KB de achados sumiram — o ponteiro ia ao fim de um
+            # arquivo que o serviço nunca teve permissão de abrir.
+            _pular(chave, exc)
             continue
-        if not bruto.strip():
-            continue
-        if estruturado:
-            for linha in bruto.splitlines():
-                if not linha.strip():
-                    continue
-                m = parse_rfc5424(linha, origem)
-                if m is not None:
-                    mensagens.append(m)
-                if len(mensagens) >= MAX_POR_CICLO:
-                    return mensagens
-        else:
-            # Saída de execução: o arquivo inteiro é uma mensagem só.
-            mensagens.append(Mensagem(
-                origem=origem, texto=bruto.rstrip("\n"),
-                quando=datetime.datetime.now(), severidade="INFO",
-                msgid="SCAN_OUTPUT", campos={"arquivo": caminho.name}))
-    return mensagens
+        msgs, consumido = _converter(bloco, origem, estruturado, caminho, restante)
+        mensagens.extend(msgs)
+        marcas[chave] = {"inode": st.st_ino, "pos": pos + consumido,
+                         "enviado_em": agora}
+    return mensagens, marcas
 
 
-def _estado_apos(cfg: dict, raiz: Path | None = None) -> dict:
-    """Estado que reflete tudo lido até agora."""
-    raiz = raiz or raiz_log()
-    estado = dict(ler_estado())
-    agora = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-    for _origem, caminho, _e in _arquivos(cfg, raiz):
-        try:
-            st = caminho.stat()
-        except OSError:
-            continue
-        estado[caminho.relative_to(raiz).as_posix()] = {
-            "inode": st.st_ino, "pos": st.st_size, "enviado_em": agora}
-    return estado
+def coletar(cfg: dict, raiz: Path | None = None) -> list[Mensagem]:
+    """Mensagens novas desde o ponteiro. NÃO altera o estado."""
+    return _varrer(cfg, raiz)[0]
 
 
 def executar(cfg: dict | None = None, raiz: Path | None = None) -> dict:
     """Um ciclo: coleta, envia e — só se o envio der certo — avança o ponteiro."""
     cfg = cfg if cfg is not None else LC.ler()
     raiz = raiz or raiz_log()
-    mensagens = coletar(cfg, raiz)
+    mensagens, marcas = _varrer(cfg, raiz)
     if not mensagens:
+        # Nada a enviar, mas o que foi lido e descartado (linha em branco, lixo
+        # fora do RFC) não precisa ser relido para sempre.
+        gravar_marcas(marcas)
         return {"ok": True, "enviadas": 0, "detalhe": "nada novo"}
     try:
         criar(cfg).send(mensagens)
@@ -183,7 +244,7 @@ def executar(cfg: dict | None = None, raiz: Path | None = None) -> dict:
         # Ponteiro NÃO avança: o próximo ciclo reenvia o mesmo trecho.
         print(f"[LOGPUSH] envio falhou: {exc}", file=sys.stderr)
         return {"ok": False, "enviadas": 0, "detalhe": str(exc)}
-    gravar_estado(_estado_apos(cfg, raiz))
+    gravar_marcas(marcas)
     print(f"[LOGPUSH] {len(mensagens)} mensagem(ns) enviada(s)")
     return {"ok": True, "enviadas": len(mensagens), "detalhe": ""}
 
