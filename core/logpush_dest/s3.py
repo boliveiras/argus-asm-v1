@@ -73,9 +73,9 @@ class S3Destination(LogDestination):
         usados.add(chave)
         return chave
 
-    def send(self, mensagens: list[Mensagem]) -> None:
+    def send(self, mensagens: list[Mensagem]) -> int:
         if not mensagens:
-            return
+            return 0
         bucket = str(self.cfg.get("s3_bucket") or "").strip()
         if not bucket:
             raise LogPushError("bucket não configurado")
@@ -93,3 +93,5 @@ class S3Destination(LogDestination):
                 raise LogPushError(
                     f"falha ao gravar {chave}: {type(exc).__name__}",
                     processadas=i) from exc
+        # O bucket não filtra: um objeto por mensagem, sempre.
+        return len(mensagens)

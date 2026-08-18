@@ -284,7 +284,7 @@ def executar(cfg: dict | None = None, raiz: Path | None = None) -> dict:
         print(f"[LOGPUSH] envio falhou: {erro}", file=sys.stderr)
         return {"ok": False, "enviadas": 0, "detalhe": str(erro)}
     try:
-        destino.send(mensagens)
+        entregues = destino.send(mensagens)
     except LogPushError as exc:
         # O que o destino já resolveu antes de falhar fica confirmado; o resto
         # continua pendente e sai no próximo ciclo, sem repetir o que passou.
@@ -294,13 +294,22 @@ def executar(cfg: dict | None = None, raiz: Path | None = None) -> dict:
         print(f"[LOGPUSH] envio falhou após {feitas} de {len(mensagens)}: {exc}",
               file=sys.stderr)
         return {"ok": False, "enviadas": feitas, "detalhe": str(exc)}
-    print(f"[LOGPUSH] {len(mensagens)} mensagem(ns) enviada(s)")
+    # Destino antigo que não devolve contagem: assume o lote inteiro.
+    if entregues is None:
+        entregues = len(mensagens)
+    # "entregues de lidas": o filtro de severidade descarta parte do lote, e
+    # anunciar o tamanho do lote faria o journal prometer o que não saiu.
+    if entregues == len(mensagens):
+        print(f"[LOGPUSH] {entregues} mensagem(ns) enviada(s)")
+    else:
+        print(f"[LOGPUSH] {entregues} enviada(s) de {len(mensagens)} lida(s) "
+              f"({len(mensagens) - entregues} fora do filtro de severidade)")
     if not gravar_marcas(marcas):
         # Entregue mas não anotado: o próximo ciclo vai repetir este lote. Sai
         # com erro para o operador ver, já que a duplicata é inevitável agora.
-        return {"ok": False, "enviadas": len(mensagens),
+        return {"ok": False, "enviadas": entregues,
                 "detalhe": "enviado, mas o ponteiro não foi gravado — haverá repetição"}
-    return {"ok": True, "enviadas": len(mensagens), "detalhe": ""}
+    return {"ok": True, "enviadas": entregues, "lidas": len(mensagens), "detalhe": ""}
 
 
 def main() -> int:

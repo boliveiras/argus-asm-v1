@@ -76,11 +76,14 @@ class LogDestination:
         """
         return 5000
 
-    def send(self, mensagens: list[Mensagem]) -> None:
-        """Entrega as mensagens. Levanta LogPushError se não conseguir.
+    def send(self, mensagens: list[Mensagem]) -> int:
+        """Entrega as mensagens e devolve QUANTAS saíram de fato.
 
         Retornar sem exceção significa ENTREGUE — é o que autoriza o coletor a
-        avançar o ponteiro.
+        avançar o ponteiro. O número devolvido pode ser menor que o lote quando
+        o destino descarta parte (o filtro de severidade do chat, por exemplo):
+        relatar o tamanho do lote faria o journal prometer entregas que não
+        aconteceram.
         """
         raise NotImplementedError("destino deve implementar send()")
 

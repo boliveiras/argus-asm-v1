@@ -57,6 +57,20 @@ class TestFiltroSeveridade(unittest.TestCase):
         self.assertEqual(len(d.enviadas), 2)
 
 
+class TestContagemDeEntrega(unittest.TestCase):
+    """O journal precisa dizer quantas SAÍRAM, não quantas foram lidas."""
+
+    def test_devolve_so_as_que_passaram_no_filtro(self):
+        d = destino()      # padrão: CRÍTICO e ALTO
+        n = d.send([msg("CRITICO"), msg("BAIXO"), msg("ALTO"), msg("INFO")])
+        self.assertEqual(n, 2)
+        self.assertEqual(len(d.enviadas), 2)
+
+    def test_lote_todo_descartado_devolve_zero(self):
+        d = destino()
+        self.assertEqual(d.send([msg("BAIXO"), msg("INFO")]), 0)
+
+
 class TestLimiteDeTaxa(unittest.TestCase):
     """Chat tem cota; estourá-la derruba o lote inteiro e trava o ponteiro."""
 

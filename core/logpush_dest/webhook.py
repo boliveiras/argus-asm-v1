@@ -90,16 +90,16 @@ class WebhookDestination(LogDestination):
             corpo = (getattr(resp, "text", "") or "")[:120]
             raise LogPushError(f"webhook respondeu HTTP {resp.status_code}: {corpo}")
 
-    def send(self, mensagens: list[Mensagem]) -> None:
+    def send(self, mensagens: list[Mensagem]) -> int:
         if not mensagens:
-            return
+            return 0
         url, plataforma, chat_id = self._preparar()
         permitidas = set(severidades_ligadas(self.cfg))
-        primeira = True
+        postadas = 0
         for i, m in enumerate(mensagens):
             if m.severidade not in permitidas:
                 continue
-            if not primeira:
+            if postadas:
                 self._dormir(_PAUSA)
             try:
                 self._entregar(m, url, plataforma, chat_id)
@@ -107,7 +107,8 @@ class WebhookDestination(LogDestination):
                 # As anteriores já chegaram ao destino. Contá-las evita que o
                 # próximo ciclo as poste de novo.
                 raise LogPushError(*exc.args, processadas=i) from exc
-            primeira = False
+            postadas += 1
+        return postadas
 
     def testar(self) -> str:
         """Prova de conexão — ignora o filtro de severidade de propósito.
