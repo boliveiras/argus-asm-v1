@@ -1,10 +1,11 @@
-"""Testes do destino S3 (write-once e anticolisão)."""
+"""Testes do destino S3 (write-once, anticolisão e prova de posse)."""
 
 import datetime
 import sys
 import unittest
 
 sys.path.insert(0, "core")
+import logpush_config as LPC  # noqa: E402
 from logpush_dest import base as B  # noqa: E402
 from logpush_dest import s3 as S3  # noqa: E402
 
@@ -21,6 +22,14 @@ class FakeS3:
         self.objetos[Key] = Body
 
 
+def cfg_ok(**extra):
+    """Config de S3 com a posse já comprovada — para testar o envio em si."""
+    base = {"destino": "s3", "s3_bucket": "b", "s3_prefixo": "logs/argus"}
+    base.update(extra)
+    base["s3_owner_verified"] = LPC.owner_ref(base)
+    return base
+
+
 def msg(seg=47, texto="linha", origem="monitor"):
     return B.Mensagem(origem=origem, texto=texto,
                       quando=datetime.datetime(2026, 8, 15, 13, 35, seg),
@@ -29,8 +38,7 @@ def msg(seg=47, texto="linha", origem="monitor"):
 
 class TestChave(unittest.TestCase):
     def setUp(self):
-        self.d = S3.S3Destination({"destino": "s3", "s3_bucket": "b",
-                                   "s3_prefixo": "logs/argus"})
+        self.d = S3.S3Destination(cfg_ok())
         self.d._cliente = FakeS3()
 
     def test_layout_do_caminho(self):
@@ -61,7 +69,10 @@ class TestChave(unittest.TestCase):
         self.assertEqual(corpo, b"<130>1 linha crua\n")
 
     def test_prefixo_padrao_quando_ausente(self):
-        d = S3.S3Destination({"destino": "s3", "s3_bucket": "b"})
+        c = cfg_ok()
+        c.pop("s3_prefixo")
+        c["s3_owner_verified"] = LPC.owner_ref(c)
+        d = S3.S3Destination(c)
         d._cliente = FakeS3()
         d.send([msg()])
         self.assertTrue(next(iter(d._cliente.objetos)).startswith("logs/argus/"))
@@ -73,7 +84,7 @@ class TestFalha(unittest.TestCase):
             def put_object(self, **kw):
                 raise RuntimeError("sem rede")
 
-        d = S3.S3Destination({"destino": "s3", "s3_bucket": "b"})
+        d = S3.S3Destination(cfg_ok())
         d._cliente = Quebrado()
         with self.assertRaises(B.LogPushError):
             d.send([msg()])
@@ -84,10 +95,67 @@ class TestFalha(unittest.TestCase):
             d.send([msg()])
 
     def test_lista_vazia_nao_faz_nada(self):
-        d = S3.S3Destination({"destino": "s3", "s3_bucket": "b"})
+        d = S3.S3Destination(cfg_ok())
         d._cliente = FakeS3()
         d.send([])
         self.assertEqual(d._cliente.objetos, {})
+
+
+class TestProvaDePosse(unittest.TestCase):
+    """Fail secure: sem posse comprovada, dado sensível não sai."""
+
+    def test_send_bloqueado_sem_posse(self):
+        d = S3.S3Destination({"destino": "s3", "s3_bucket": "b"})   # sem verified
+        d._cliente = FakeS3()
+        with self.assertRaises(B.LogPushError) as ctx:
+            d.send([msg()])
+        self.assertIn("posse", str(ctx.exception).lower())
+        self.assertEqual(d._cliente.objetos, {})   # nada gravado
+
+    def test_posse_de_outro_bucket_nao_libera(self):
+        # verificado para "b", mas agora o bucket é "c": não vale.
+        d = S3.S3Destination({"destino": "s3", "s3_bucket": "c",
+                              "s3_owner_verified": "|b"})
+        d._cliente = FakeS3()
+        with self.assertRaises(B.LogPushError):
+            d.send([msg()])
+
+    def test_desafio_grava_token_fora_da_arvore_de_logs(self):
+        d = S3.S3Destination({"destino": "s3", "s3_bucket": "b",
+                              "s3_prefixo": "logs/argus"})
+        d._cliente = FakeS3()
+        token, chave = d.desafiar()
+        # 32 hex, e a prova NÃO cai sob logs/argus (senão o pull-logs a coletaria)
+        self.assertEqual(len(token), 32)
+        self.assertEqual(chave, "logs/_argus/prova-de-posse.txt")
+        self.assertFalse(chave.startswith("logs/argus/"))
+        self.assertIn(token.encode(), d._cliente.objetos[chave])
+
+    def test_desafio_sobrescreve_a_prova_anterior(self):
+        # A prova tem nome fixo: rodar de novo troca o token, não acumula lixo.
+        d = S3.S3Destination({"destino": "s3", "s3_bucket": "b"})
+
+        class SobrescreveOk:
+            def __init__(self): self.objetos = {}
+            def put_object(self, Bucket, Key, Body, **kw):  # noqa: N803
+                self.objetos[Key] = Body
+
+        d._cliente = SobrescreveOk()
+        t1, k1 = d.desafiar()
+        t2, k2 = d.desafiar()
+        self.assertEqual(k1, k2)
+        self.assertNotEqual(t1, t2)
+
+    def test_posse_confere_libera_o_envio(self):
+        # Fluxo completo: desafia -> marca verified com o ref -> envia.
+        c = {"destino": "s3", "s3_bucket": "b", "s3_prefixo": "logs/argus"}
+        d = S3.S3Destination(c)
+        d._cliente = FakeS3()
+        _token, _chave = d.desafiar()
+        c["s3_owner_verified"] = LPC.owner_ref(c)
+        d2 = S3.S3Destination(c)
+        d2._cliente = FakeS3()
+        self.assertEqual(d2.send([msg()]), 1)
 
 
 if __name__ == "__main__":

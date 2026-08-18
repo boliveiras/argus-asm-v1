@@ -169,6 +169,24 @@ def url_segura(url: str) -> bool:
     return checar_url(url)[0]
 
 
+def owner_ref(cfg: dict) -> str:
+    """Identidade do destino S3 para a prova de posse: endpoint + bucket.
+
+    Inclui o endpoint porque em MinIO/R2 o nome do bucket só é único DENTRO de
+    um endpoint — provar posse de `logs` num servidor não vale para `logs` de
+    outro. Trocar bucket ou endpoint invalida a prova automaticamente.
+    """
+    endpoint = str(cfg.get("s3_endpoint") or "").strip()
+    bucket = str(cfg.get("s3_bucket") or "").strip()
+    return f"{endpoint}|{bucket}"
+
+
+def dono_verificado(cfg: dict) -> bool:
+    """True só se a posse foi provada PARA O bucket/endpoint atuais."""
+    marca = str(cfg.get("s3_owner_verified") or "")
+    return bool(marca) and marca == owner_ref(cfg)
+
+
 def origens_ligadas(cfg: dict) -> list[str]:
     return [o["id"] for o in ORIGENS if bool(cfg.get(f"origem_{o['id']}", False))]
 

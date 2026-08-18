@@ -231,6 +231,24 @@ os serviços de chat passam a descartar por limite de taxa.</p>
 <p>Por isso o envio para chat sai em lotes de até 20 mensagens por ciclo, com um
 respiro entre elas. Quando há atraso acumulado, ele escoa aos poucos em vez de
 estourar a cota da plataforma — o bucket S3 não tem esse teto.</p>
+
+<p class="doc-nota"><b>Bucket S3 — prova de posse.</b> Antes de enviar, o Argus
+exige que você comprove ser dono do bucket. Em <b>Testar conexão</b> ele grava um
+token num objeto do bucket; você abre esse objeto, copia o token e cola de volta.
+Só então o envio é liberado. Isso impede que um bucket errado por engano — ou de
+terceiro — receba dados sensíveis em silêncio. Trocar o bucket exige nova prova.</p>
+
+<p><b>Permissão da chave S3.</b> A chave precisa apenas de <code>s3:PutObject</code>
+no prefixo — o Argus só escreve, nunca lê nem apaga. Least privilege: se a chave
+vazar, o dano se limita a gravar objeto no prefixo.</p>
+<pre class="doc-cod">{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Action": "s3:PutObject",
+    "Resource": "arn:aws:s3:::SEU-BUCKET/logs/argus/*"
+  }]
+}</pre>
 """),
 
     ("usuarios", "Contas e perfis", """

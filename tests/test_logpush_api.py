@@ -65,5 +65,96 @@ class TestAPI(unittest.TestCase):
         self.assertIn("destino", (r.get_json() or {}).get("error", "").lower())
 
 
+class TestPosseS3(unittest.TestCase):
+    """Prova de posse do bucket: desafio, veredito e o token que não vaza."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        os.environ["ARGUS_BASE"] = self.tmp.name
+        os.environ["ARGUS_DB"] = os.path.join(self.tmp.name, "store", "argus.db")
+        os.makedirs(os.path.join(self.tmp.name, "store"), exist_ok=True)
+        import webapp
+        self.webapp = webapp
+        self.app = webapp.create_app().test_client()
+        self.H = {"X-Requested-With": "argus", "X-Remote-User": "monitor"}
+        self.app.post("/api/logpush", headers=self.H,
+                      json={"destino": "s3", "s3_bucket": "meu-bucket"})
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _fake_s3(self):
+        """Substitui o cliente boto3 por um dublê em memória."""
+        from logpush_dest import s3 as S3
+
+        objetos = {}
+
+        class Fake:
+            def put_object(self, Bucket, Key, Body, **kw):  # noqa: N803
+                objetos[Key] = Body
+
+        _orig = S3.S3Destination._obter_cliente
+        S3.S3Destination._obter_cliente = lambda self: Fake()
+        self.addCleanup(lambda: setattr(S3.S3Destination, "_obter_cliente", _orig))
+        return objetos
+
+    def test_desafio_grava_e_nao_devolve_o_token(self):
+        objetos = self._fake_s3()
+        r = self.app.post("/api/logpush/test", headers=self.H, json={})
+        j = r.get_json()
+        self.assertTrue(j["ok"])
+        self.assertTrue(j["desafio"])
+        # o token está no objeto do bucket, NUNCA na resposta HTTP
+        chave = j["chave"]
+        token = objetos[chave].decode()
+        self.assertNotIn(token.strip().split()[-1], str(j))
+
+    def test_get_nunca_expoe_o_token(self):
+        self._fake_s3()
+        self.app.post("/api/logpush/test", headers=self.H, json={})
+        j = self.app.get("/api/logpush", headers=self.H).get_json()
+        import logpush_config as LPC
+        token = LPC.ler()["s3_owner_token"]
+        self.assertNotIn(token, str(j))
+        self.assertTrue(j["posse"]["pendente"])
+        self.assertFalse(j["posse"]["verificado"])
+
+    def test_token_certo_libera_posse(self):
+        objetos = self._fake_s3()
+        j = self.app.post("/api/logpush/test", headers=self.H, json={}).get_json()
+        token = objetos[j["chave"]].decode().strip().split()[-1]
+        r = self.app.post("/api/logpush/s3-posse", headers=self.H,
+                          json={"token": token})
+        self.assertEqual(r.status_code, 200)
+        v = self.app.get("/api/logpush", headers=self.H).get_json()
+        self.assertTrue(v["posse"]["verificado"])
+        self.assertFalse(v["posse"]["pendente"])
+
+    def test_token_errado_recusa(self):
+        self._fake_s3()
+        self.app.post("/api/logpush/test", headers=self.H, json={})
+        r = self.app.post("/api/logpush/s3-posse", headers=self.H,
+                          json={"token": "errado"})
+        self.assertEqual(r.status_code, 400)
+        v = self.app.get("/api/logpush", headers=self.H).get_json()
+        self.assertFalse(v["posse"]["verificado"])
+
+    def test_posse_sem_desafio_pendente_falha(self):
+        r = self.app.post("/api/logpush/s3-posse", headers=self.H,
+                          json={"token": "qualquer"})
+        self.assertEqual(r.status_code, 400)
+
+    def test_trocar_bucket_invalida_a_posse(self):
+        objetos = self._fake_s3()
+        j = self.app.post("/api/logpush/test", headers=self.H, json={}).get_json()
+        token = objetos[j["chave"]].decode().strip().split()[-1]
+        self.app.post("/api/logpush/s3-posse", headers=self.H, json={"token": token})
+        # troca o bucket: a posse do anterior não vale mais
+        self.app.post("/api/logpush", headers=self.H,
+                      json={"destino": "s3", "s3_bucket": "outro-bucket"})
+        v = self.app.get("/api/logpush", headers=self.H).get_json()
+        self.assertFalse(v["posse"]["verificado"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -546,6 +546,9 @@ def _common_css() -> str:
   .doc-secao b { color:var(--text); }
   .doc-secao a { color:var(--accent); }
   .doc-nota { border-left:2px solid var(--border-2); padding-left:10px; font-size:12.5px !important; }
+  .doc-cod { background:var(--bg); border:1px solid var(--border); border-radius:6px;
+    padding:10px 12px; font-size:11.5px; line-height:1.5; overflow-x:auto;
+    white-space:pre; color:var(--text); margin:8px 0; }
   .doc-passos { margin:0 0 10px; padding-left:19px; }
   .doc-passos li { font-size:13px; line-height:1.6; color:var(--muted); margin-bottom:7px; }
   .doc-passos b { color:var(--text); }
@@ -5079,6 +5082,29 @@ _LOGPUSH_SCRIPT = r"""<script>
     aplicarPlataforma();
     var sevBloco=document.getElementById('lp-sev-bloco');
     if(sevBloco) sevBloco.style.display=(destino==='webhook')?'block':'none';
+    var posse=document.getElementById('lp-s3-posse');
+    if(posse){ posse.style.display=(destino==='s3')?'block':'none';
+      if(destino==='s3') pintarPosse(); }
+  }
+  function pintarPosse(){
+    var p=(CAT&&CAT.posse)||{};
+    var st=document.getElementById('lp-posse-status');
+    var form=document.getElementById('lp-posse-form');
+    if(!st) return;
+    if(p.verificado){
+      st.innerHTML='<span style="color:var(--green);font-weight:700">✓ Posse comprovada</span>'
+        +' — o envio para este bucket está liberado.';
+      form.style.display='none';
+    } else if(p.pendente){
+      st.innerHTML='<span style="color:var(--orange);font-weight:700">⏳ Aguardando o token.</span>'
+        +' Abra <code>'+esc(p.chave||'')+'</code> no seu bucket, copie o token e cole abaixo.';
+      form.style.display='block';
+    } else {
+      st.innerHTML='<span style="color:var(--muted)">Posse ainda não comprovada.</span>'
+        +' Clique em <b>Testar conexão</b>: gravo um token no bucket para você ler e colar de volta. '
+        +'Sem isso, o envio fica bloqueado.';
+      form.style.display='none';
+    }
   }
   function carregar(){
     api('/api/logpush',{cache:'no-store'}).then(function(j){
@@ -5129,14 +5155,28 @@ _LOGPUSH_SCRIPT = r"""<script>
       .catch(function(e){ msg(e.message,'err'); });
   }
   function testar(){
-    msg('Enviando mensagem de teste…');
+    var s3=document.getElementById('lp-destino').value==='s3';
+    msg(s3?'Gravando a prova no bucket…':'Enviando mensagem de teste…');
     api('/api/logpush/test',{method:'POST',body:'{}'})
-      .then(function(j){ msg('Teste OK — '+(j.detalhe||'enviado')); })
+      .then(function(j){
+        msg((j.desafio?'':'Teste OK — ')+(j.detalhe||'enviado'));
+        if(j.desafio){ carregar(); }   // recarrega para mostrar o campo do token
+      })
       .catch(function(e){ msg('Teste falhou: '+e.message,'err'); });
+  }
+  function validarPosse(){
+    var t=document.getElementById('lp-posse-token').value.trim();
+    if(!t){ msg('Cole o token do objeto do bucket.','err'); return; }
+    msg('Conferindo o token…');
+    api('/api/logpush/s3-posse',{method:'POST',body:JSON.stringify({token:t})})
+      .then(function(j){ msg(j.detalhe||'Posse confirmada.'); carregar(); })
+      .catch(function(e){ msg(e.message,'err'); });
   }
   document.addEventListener('DOMContentLoaded',function(){
     document.getElementById('lp-salvar').addEventListener('click',salvar);
     document.getElementById('lp-testar').addEventListener('click',testar);
+    var pv=document.getElementById('lp-posse-validar');
+    if(pv) pv.addEventListener('click',validarPosse);
     carregar();
   });
 })();
@@ -5183,6 +5223,19 @@ def build_logpush_page() -> str:
         '<label for="lp-destino" class="page-sub">Destino</label><br>'
         '<select id="lp-destino" data-write="1"></select>'
         '<div id="lp-campos"></div>'
+        '<div id="lp-s3-posse" style="display:none;margin-top:16px;'
+        'border-left:3px solid var(--border);padding-left:11px">'
+        '<div class="page-sub" style="margin-bottom:5px">Posse do bucket '
+        '<a href="#" data-doc="logpush">por que</a></div>'
+        '<div id="lp-posse-status" style="font-size:13px;margin-bottom:8px"></div>'
+        '<div id="lp-posse-form" style="display:none">'
+        '<input id="lp-posse-token" type="text" autocomplete="off" '
+        'placeholder="cole aqui o token que está no objeto do bucket" '
+        'style="width:100%;max-width:100%;background:var(--bg);color:var(--text);'
+        'border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 10px;'
+        'font-size:13px;margin-bottom:8px">'
+        '<button class="btn" type="button" id="lp-posse-validar" data-write="1">'
+        'Validar posse</button></div></div>'
         '<div id="lp-sev-bloco" style="display:none;margin-top:16px">'
         '<div class="page-sub" style="margin-bottom:7px">Enviar quais severidades</div>'
         '<div id="lp-sev" class="lp-grid"></div>'

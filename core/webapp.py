@@ -48,6 +48,7 @@ Produção: serviço systemd como o app user, atrás do Apache (Fase 2.1b).
 """
 
 import datetime
+import hmac
 import json
 import os
 import sqlite3
@@ -583,8 +584,15 @@ def create_app():
                          default="")
         except Exception:
             ultimo = ""
+        # Estado da prova de posse do bucket. O token NUNCA sai daqui — só o
+        # veredito e a chave onde procurá-lo (essa não é segredo).
+        posse = {
+            "verificado": LPC.dono_verificado(cfg),
+            "pendente": bool(cfg.get("s3_owner_token")),
+            "chave": cfg.get("s3_owner_token_key", ""),
+        }
         return jsonify(ok=True, config=seguro, estado={"ultimo": ultimo},
-                       origens=LPC.ORIGENS, destinos=LPC.DESTINOS,
+                       posse=posse, origens=LPC.ORIGENS, destinos=LPC.DESTINOS,
                        plataformas=LPC.PLATAFORMAS, severidades=LPC.SEVERIDADES)
 
     @app.post("/api/logpush")
@@ -619,11 +627,29 @@ def create_app():
     def logpush_test():
         if not _csrf_ok():
             return jsonify(ok=False, error="CSRF: header ausente"), 403
+        cfg = LPC.ler()
         try:
             from logpush_dest import s3 as _s3  # noqa: F401 - registra o destino
             from logpush_dest import webhook as _wh  # noqa: F401 - registra o destino
             from logpush_dest.base import LogPushError, criar
-            detalhe = criar(LPC.ler()).testar()
+            destino = criar(cfg)
+            # S3: o "teste" é a fase 1 da prova de posse — grava um token no
+            # bucket e devolve onde procurá-lo. O envio de verdade só é liberado
+            # depois que a pessoa cola o token de volta (fase 2 abaixo).
+            if cfg.get("destino") == "s3":
+                token, chave = destino.desafiar()
+                pend = dict(cfg)
+                pend["s3_owner_token"] = token
+                pend["s3_owner_token_key"] = chave
+                LPC.gravar(pend)
+                _audit(request, "LOGPUSH_TEST",
+                       f"prova de posse do bucket iniciada (objeto={chave})",
+                       outcome="success", action="logpush_test")
+                return jsonify(ok=True, desafio=True, chave=chave,
+                               detalhe=("Gravei uma prova em " + chave + ". Abra esse "
+                                        "objeto no seu bucket, copie o token e cole abaixo "
+                                        "para comprovar a posse."))
+            detalhe = destino.testar()
         except LogPushError as exc:
             _audit(request, "LOGPUSH_TEST", f"teste de logpush falhou: {exc}",
                    outcome="failure", action="logpush_test")
@@ -633,6 +659,37 @@ def create_app():
         _audit(request, "LOGPUSH_TEST", "teste de logpush bem-sucedido",
                outcome="success", action="logpush_test")
         return jsonify(ok=True, detalhe=detalhe)
+
+    @app.post("/api/logpush/s3-posse")
+    def logpush_s3_posse():
+        """Fase 2 da prova de posse: confere o token que a pessoa leu do bucket."""
+        if not _csrf_ok():
+            return jsonify(ok=False, error="CSRF: header ausente"), 403
+        dados = request.get_json(silent=True) or {}
+        informado = str(dados.get("token") or "").strip()
+        cfg = dict(LPC.ler())
+        esperado = str(cfg.get("s3_owner_token") or "")
+        if not esperado:
+            return jsonify(ok=False,
+                           error="nenhuma prova pendente — rode 'Testar conexão' primeiro"), 400
+        # Comparação em tempo constante: um atacante não deve inferir o token
+        # pela latência da resposta.
+        if not informado or not hmac.compare_digest(informado, esperado):
+            _audit(request, "LOGPUSH_OWNER", "prova de posse do bucket falhou",
+                   outcome="failure", action="logpush_owner")
+            return jsonify(ok=False,
+                           error="token não confere — confirme que leu o objeto do bucket certo"), 400
+        cfg["s3_owner_verified"] = LPC.owner_ref(cfg)
+        cfg.pop("s3_owner_token", None)
+        cfg.pop("s3_owner_token_key", None)
+        try:
+            LPC.gravar(cfg)
+        except OSError as exc:
+            return jsonify(ok=False,
+                           error=f"sem permissão para gravar a configuração: {exc}"), 500
+        _audit(request, "LOGPUSH_OWNER", "posse do bucket comprovada",
+               outcome="success", action="logpush_owner", obj="logpush", object_type="config")
+        return jsonify(ok=True, detalhe="Posse do bucket confirmada. Envio liberado.")
 
     @app.get("/version")
     @app.get("/api/version")

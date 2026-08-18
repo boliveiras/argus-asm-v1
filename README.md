@@ -90,9 +90,11 @@ O Argus costuma rodar longe de quem o acompanha — numa VPS, de propósito, par
 enxergar a empresa como um estranho enxerga. O **Logpush** manda o que ele registra
 para onde você já olha.
 
-Para um **bucket S3**, cada evento vira um arquivo, pronto para o SIEM consumir.
-Para um **chat** (Google Chat, Slack, Discord, Teams, Telegram), vira uma mensagem
-que dá para ler:
+Para um **bucket S3**, cada evento vira um arquivo, pronto para o SIEM consumir — e
+antes do primeiro envio o Argus exige uma **prova de posse** do bucket: grava um token,
+você o lê no bucket e cola de volta. Dado sensível não vai para bucket que você não
+controla. A chave só precisa de `s3:PutObject`. Para um **chat** (Google Chat, Slack,
+Discord, Teams, Telegram), vira uma mensagem que dá para ler:
 
 > 🔴 CRÍTICO · Nova porta exposta
 > campanha: ACME · ip: 203.0.113.20 · port: 3389
