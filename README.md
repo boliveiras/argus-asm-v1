@@ -93,7 +93,8 @@ para onde você já olha.
 Para um **bucket S3**, cada evento vira um arquivo, pronto para o SIEM consumir — e
 antes do primeiro envio o Argus exige uma **prova de posse** do bucket: grava um token,
 você o lê no bucket e cola de volta. Dado sensível não vai para bucket que você não
-controla. A chave só precisa de `s3:PutObject`. Para um **chat** (Google Chat, Slack,
+controla. A chave só precisa de `s3:PutObject` no prefixo (`logs/*`). Para um
+**chat** (Google Chat, Slack,
 Discord, Teams, Telegram), vira uma mensagem que dá para ler:
 
 > 🔴 CRÍTICO · Nova porta exposta

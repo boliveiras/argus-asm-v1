@@ -240,13 +240,15 @@ terceiro — receba dados sensíveis em silêncio. Trocar o bucket exige nova pr
 
 <p><b>Permissão da chave S3.</b> A chave precisa apenas de <code>s3:PutObject</code>
 no prefixo — o Argus só escreve, nunca lê nem apaga. Least privilege: se a chave
-vazar, o dano se limita a gravar objeto no prefixo.</p>
+vazar, o dano se limita a gravar objeto no prefixo. O recurso é <code>logs/*</code>
+(e não <code>logs/argus/*</code>) porque a prova de posse fica em
+<code>logs/_argus/</code>, ao lado da pasta dos logs — precisa estar coberta.</p>
 <pre class="doc-cod">{
   "Version": "2012-10-17",
   "Statement": [{
     "Effect": "Allow",
     "Action": "s3:PutObject",
-    "Resource": "arn:aws:s3:::SEU-BUCKET/logs/argus/*"
+    "Resource": "arn:aws:s3:::SEU-BUCKET/logs/*"
   }]
 }</pre>
 """),
