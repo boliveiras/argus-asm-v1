@@ -1941,6 +1941,7 @@ def generate_submonitor_report(
     <option value="">Origem (todas)</option>
     <option value="wordlist">Wordlist</option>
     <option value="crtsh">crt.sh (CT)</option>
+    <option value="crtname">crt.name (CT)</option>
     <option value="urlscan">urlscan.io</option>
   </select>
   <select id="f-whois" onchange="applyFilters()">
@@ -2117,7 +2118,9 @@ function render(){{
     else if(sslSt==='EXPIRADO') sslBadge='<span class="ssl-bad">EXPIRADO</span>';
     else sslBadge='<span class="ssl-none">'+esc(sslSt)+'</span>';
     const origemBadge=(r.origem==='crtsh')
-      ?'<span class="origem-crtsh" title="Descoberto via Certificate Transparency">crt.sh</span>'
+      ?'<span class="origem-crtsh" title="Descoberto via Certificate Transparency (crt.sh)">crt.sh</span>'
+      :(r.origem==='crtname')
+      ?'<span class="origem-crtsh" title="Descoberto via Certificate Transparency (crt.name)">crt.name</span>'
       :(r.origem==='urlscan')
       ?'<span class="origem-urlscan" title="Descoberto via urlscan.io">urlscan</span>'
       :'<span class="origem-wordlist" title="Descoberto via wordlist">wordlist</span>';

@@ -97,6 +97,14 @@ except ImportError:
     _CRTSH_AVAILABLE = False
     crtsh = None
 
+# Provider crt.name (Certificate Transparency) — fonte independente do crt.sh
+try:
+    from threatintel.providers import crtname
+    _CRTNAME_AVAILABLE = True
+except ImportError:
+    _CRTNAME_AVAILABLE = False
+    crtname = None
+
 # Provider urlscan.io (Search API, passivo) — descoberta passiva + contexto web
 try:
     from threatintel.providers import urlscan
@@ -765,7 +773,22 @@ def _build_candidates(campaigns: list[tuple[str, list[str]]],
     else:
         print("  [CRT.SH] provider indisponível — pulando descoberta passiva")
 
-    # 3. Candidatos do urlscan.io (Search API, passivo)
+    # 3. Candidatos do crt.name (Certificate Transparency, fonte independente)
+    if _CRTNAME_AVAILABLE and _fonte_ligada("crtname"):
+        for campanha, domains in campaigns:
+            for domain in domains:
+                discovered = crtname.get_subdomains_safe(domain)
+                if discovered:
+                    print(f"  [CRT.NAME] {domain}: {len(discovered)} nome(s) em Certificate Transparency")
+                for host in discovered:
+                    key = (host, campanha)
+                    # Não sobrescreve origem já atribuída (wordlist/crtsh têm precedência)
+                    if key not in candidates:
+                        candidates[key] = "crtname"
+    else:
+        print("  [CRT.NAME] provider indisponível — pulando descoberta passiva")
+
+    # 4. Candidatos do urlscan.io (Search API, passivo)
     if _URLSCAN_AVAILABLE and _fonte_ligada("urlscan"):
         for campanha, domains in campaigns:
             for domain in domains:
@@ -790,12 +813,14 @@ async def run_scan(campaigns: list[tuple[str, list[str]]], subs: list[str]) -> l
     connector = aiohttp.TCPConnector(limit=CONCURRENCY, ssl=False)
 
     # Constrói candidatos (wordlist + Certificate Transparency + urlscan)
-    print("[+] Coletando candidatos (wordlist + crt.sh + urlscan)...")
+    print("[+] Coletando candidatos (wordlist + crt.sh + crt.name + urlscan)...")
     candidates = _build_candidates(campaigns, subs)
     n_wordlist = sum(1 for o in candidates.values() if o == "wordlist")
     n_crtsh    = sum(1 for o in candidates.values() if o == "crtsh")
+    n_crtname  = sum(1 for o in candidates.values() if o == "crtname")
     n_urlscan  = sum(1 for o in candidates.values() if o == "urlscan")
-    print(f"[+] Candidatos: {len(candidates)} total | {n_wordlist} wordlist | {n_crtsh} crt.sh | {n_urlscan} urlscan")
+    print(f"[+] Candidatos: {len(candidates)} total | {n_wordlist} wordlist | "
+          f"{n_crtsh} crt.sh | {n_crtname} crt.name | {n_urlscan} urlscan")
 
     async with aiohttp.ClientSession(connector=connector,
                                      timeout=aiohttp.ClientTimeout(total=30)) as session:
