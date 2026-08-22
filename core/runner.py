@@ -83,6 +83,24 @@ STEPS: list[dict] = [
     {"key": "typosquat",   "label": "Typosquat",          "cmd": [str(BIN / "argus-typosquat")]},
 ]
 
+# Lista de campanhas para o loop. Import tolerante: sem o módulo, o runner cai
+# no modo antigo (uma execução cobrindo todas as campanhas de uma vez).
+try:
+    from campaigns import list_campaigns as _list_campaigns
+except Exception:                                   # pragma: no cover
+    _list_campaigns = None
+
+
+def _campanhas_do_submonitor() -> list[str]:
+    """Nomes das campanhas, em ordem. Vazio quando não há como listar."""
+    if _list_campaigns is None:
+        return []
+    try:
+        return sorted(c["name"] for c in _list_campaigns("submonitor"))
+    except Exception as exc:
+        print(f"[AVISO] não consegui listar as campanhas: {exc}", file=sys.stderr)
+        return []
+
 
 def _now() -> str:
     return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -160,25 +178,15 @@ def _read_request() -> tuple[str, str]:
         return "web", ""
 
 
-def run_all(actor: str = "web", campanha: str = "") -> int:
-    state = _initial_state(actor)
-    state["campanha"] = campanha
-    _write_status(state)
-    escopo = f"campanha {campanha}" if campanha else "todas as campanhas"
-    print(f"[ARGUS] Execução sob demanda iniciada por '{actor}' ({escopo}) "
-          f"— {len(STEPS)} etapa(s)")
-    # Herdada pelos subprocessos: cada scanner restringe os alvos a esta campanha.
-    if campanha:
-        os.environ["ARGUS_CAMPANHA"] = campanha
-    else:
-        os.environ.pop("ARGUS_CAMPANHA", None)
-
+def _executar_etapas(state: dict) -> tuple[int, int]:
+    """Roda os 6 módulos da campanha corrente. Devolve (ok, falhas)."""
+    ok = falhas = 0
     for idx, step in enumerate(STEPS):
         state["current"] = idx + 1
         state["current_label"] = step["label"]
-        state["steps"][idx]["status"] = "running"
-        # Progresso é medido por etapa concluída (a etapa em curso ainda não conta).
-        state["percent"] = int(idx * 100 / len(STEPS))
+        state["steps"][idx].update({"status": "running", "rc": None,
+                                    "duration": 0, "detail": ""})
+        _atualizar_percent(state, idx)
         _write_status(state)
 
         print(f"[{idx + 1}/{len(STEPS)}] {step['label']} -> {' '.join(step['cmd'])}")
@@ -221,16 +229,84 @@ def run_all(actor: str = "web", campanha: str = "") -> int:
             print(f"  [ERRO] {step['label']}: {exc}", file=sys.stderr)
 
         dur = int(time.monotonic() - t0)
-        state["steps"][idx].update({"status": status, "rc": rc, "duration": dur, "detail": detail})
-        # Falha NÃO interrompe a sequência: os scanners são independentes.
+        state["steps"][idx].update({"status": status, "rc": rc,
+                                    "duration": dur, "detail": detail})
         if status == "ok":
+            ok += 1
             state["succeeded"] += 1
         else:
+            falhas += 1
             state["failed"] += 1
-        state["percent"] = int((idx + 1) * 100 / len(STEPS))
+        _atualizar_percent(state, idx + 1)
         _write_status(state)
         print(f"  → {status} (rc={rc}) em {dur}s")
+    return ok, falhas
 
+
+def _atualizar_percent(state: dict, etapas_feitas: int) -> None:
+    """Progresso global: conta as campanhas já concluídas mais as etapas da atual."""
+    total_campanhas = max(1, state.get("campanhas_total", 1))
+    feitas = state.get("campanha_idx", 1) - 1
+    total_etapas = total_campanhas * len(STEPS)
+    state["percent"] = int((feitas * len(STEPS) + etapas_feitas) * 100 / total_etapas)
+
+
+def run_all(actor: str = "web", campanha: str = "") -> int:
+    # Campanha específica: uma execução só, como sempre foi.
+    # Sem campanha: cada uma roda do início ao fim antes da próxima, para que o
+    # resultado de uma esteja salvo mesmo se a seguinte falhar.
+    alvos = [campanha] if campanha else _campanhas_do_submonitor()
+    if not alvos:
+        alvos = [""]          # sem lista de campanhas, mantém o modo antigo
+
+    state = _initial_state(actor)
+    state["campanha"] = alvos[0]
+    state["campanhas_total"] = len(alvos)
+    state["campanha_idx"] = 1
+    state["campanhas"] = [{"nome": n, "status": "pending"} for n in alvos]
+    _write_status(state)
+
+    escopo = f"campanha {campanha}" if campanha else f"{len(alvos)} campanha(s)"
+    print(f"[ARGUS] Execução sob demanda iniciada por '{actor}' ({escopo}) "
+          f"— {len(STEPS)} etapa(s) por campanha")
+
+    falhas_seguidas = 0
+    for i, alvo in enumerate(alvos):
+        state["campanha"] = alvo
+        state["campanha_idx"] = i + 1
+        state["campanhas"][i]["status"] = "running"
+        state["current"] = 0
+        # Cada campanha começa com as etapas zeradas: o painel mostra o progresso
+        # DELA, não o resíduo da anterior.
+        for s in state["steps"]:
+            s.update({"status": "pending", "rc": None, "duration": 0, "detail": ""})
+        _write_status(state)
+
+        if alvo:
+            os.environ["ARGUS_CAMPANHA"] = alvo
+        else:
+            os.environ.pop("ARGUS_CAMPANHA", None)
+        print(f"[ARGUS] === campanha {i + 1}/{len(alvos)}: {alvo or 'todas'} ===")
+
+        ok, falhas = _executar_etapas(state)
+        # Campanha só conta como falha quando NENHUMA etapa passou: um typosquat
+        # que falha sozinho não invalida os subdomínios já encontrados.
+        completou = ok > 0
+        state["campanhas"][i]["status"] = "succeeded" if completou else "failed"
+        falhas_seguidas = 0 if completou else falhas_seguidas + 1
+        _write_status(state)
+
+        if falhas_seguidas >= 2 and i + 1 < len(alvos):
+            # Duas campanhas seguidas sem nenhuma etapa completa: o problema é do
+            # ambiente (rede, disco, permissão), não desta campanha. Insistir só
+            # gasta hora — o que já rodou continua salvo.
+            for pendente in state["campanhas"][i + 1:]:
+                pendente["status"] = "skipped"
+            print("[ARGUS] duas campanhas seguidas falharam por completo — "
+                  "execução interrompida", file=sys.stderr)
+            break
+
+    os.environ.pop("ARGUS_CAMPANHA", None)
     state["running"] = False
     state["finished_at"] = _now()
     state["current_label"] = ""
