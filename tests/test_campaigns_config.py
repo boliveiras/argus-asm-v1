@@ -9,6 +9,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, "core")
 import campaigns as CAMP  # noqa: E402
@@ -57,6 +58,17 @@ class TestGravacao(Base):
 
     def test_remove_duplicatas_preservando_a_ordem(self):
         CAMP.set_prefixos("RIOCARD", ["", "dev-", "dev-", ""])
+        self.assertEqual(CAMP.prefixos_da_campanha("RIOCARD"), ["", "dev-"])
+
+    def test_falha_no_meio_da_gravacao_restaura_config_anterior(self):
+        # campaigns.json é compartilhado por TODAS as campanhas: uma falha de
+        # I/O ao salvar UMA delas não pode truncar a configuração das demais.
+        CAMP.set_prefixos("RIOCARD", ["", "dev-"])
+        with (
+            mock.patch("campaigns.os.fsync", side_effect=OSError("disco cheio")),
+            self.assertRaises(CAMP.CampaignError),
+        ):
+            CAMP.set_prefixos("RIOCARD", ["", "prod-"])
         self.assertEqual(CAMP.prefixos_da_campanha("RIOCARD"), ["", "dev-"])
 
 
