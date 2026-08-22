@@ -178,7 +178,7 @@ def prefixos_da_campanha(nome: str) -> list[str]:
     if not isinstance(prefixos, list):
         return list(PREFIXOS_PADRAO)
     # Revalida na LEITURA: o arquivo pode ter sido editado à mão no servidor.
-    limpos = [p for p in prefixos if isinstance(p, str) and _PREFIXO_RE.match(p)]
+    limpos = [p for p in prefixos if isinstance(p, str) and _PREFIXO_RE.fullmatch(p)]
     return limpos or [""]
 
 
@@ -196,7 +196,7 @@ def set_prefixos(nome: str, prefixos) -> list[str]:
     for p in prefixos:
         if not isinstance(p, str):
             raise CampaignError("prefixo inválido: precisa ser texto")
-        if not _PREFIXO_RE.match(p):
+        if not _PREFIXO_RE.fullmatch(p):
             raise CampaignError(
                 f"prefixo inválido: {p!r} — use apenas letras minúsculas, "
                 f"números e hífen (até 20 caracteres)")
