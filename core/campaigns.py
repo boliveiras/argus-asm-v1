@@ -111,7 +111,9 @@ def prefixos_da_campanha(nome: str) -> list[str]:
     if not isinstance(prefixos, list):
         return list(PREFIXOS_PADRAO)
     # Revalida na LEITURA: o arquivo pode ter sido editado à mão no servidor.
-    limpos = [p for p in prefixos if isinstance(p, str) and _PREFIXO_RE.match(p)]
+    # fullmatch (não match): "$" casa também antes de um "\n" final, então
+    # match() deixaria passar um prefixo com quebra de linha embutida.
+    limpos = [p for p in prefixos if isinstance(p, str) and _PREFIXO_RE.fullmatch(p)]
     return limpos or [""]
 
 
@@ -129,7 +131,9 @@ def set_prefixos(nome: str, prefixos) -> list[str]:
     for p in prefixos:
         if not isinstance(p, str):
             raise CampaignError("prefixo inválido: precisa ser texto")
-        if not _PREFIXO_RE.match(p):
+        # fullmatch (não match): "$" casa também antes de um "\n" final, então
+        # match() deixaria escapar um prefixo com quebra de linha embutida.
+        if not _PREFIXO_RE.fullmatch(p):
             raise CampaignError(
                 f"prefixo inválido: {p!r} — use apenas letras minúsculas, "
                 f"números e hífen (até 20 caracteres)")
@@ -141,6 +145,14 @@ def set_prefixos(nome: str, prefixos) -> list[str]:
     cfg[nome] = {**cfg.get(nome, {}), "prefixos": limpos}
     corpo = json.dumps(cfg, ensure_ascii=False, indent=2) + "\n"
     caminho = config_path()
+    # campaigns.json é compartilhado por TODAS as campanhas: uma falha de I/O
+    # no meio da escrita não pode truncar o arquivo e levar junto a
+    # configuração das demais. Guarda o conteúdo anterior e restaura se a
+    # gravação falhar (mesmo padrão de logpush_config.gravar).
+    try:
+        anterior = caminho.read_text(encoding="utf-8") if caminho.exists() else ""
+    except OSError:
+        anterior = ""
     try:
         caminho.parent.mkdir(parents=True, exist_ok=True)
         with open(caminho, "w", encoding="utf-8", newline="") as fh:
@@ -148,6 +160,14 @@ def set_prefixos(nome: str, prefixos) -> list[str]:
             fh.flush()
             os.fsync(fh.fileno())
     except OSError as exc:
+        if anterior:
+            try:
+                with open(caminho, "w", encoding="utf-8", newline="") as fh:
+                    fh.write(anterior)
+                    fh.flush()
+                    os.fsync(fh.fileno())
+            except OSError:
+                pass
         raise CampaignError(f"sem permissão para gravar a configuração: {exc}") from exc
     return limpos
 

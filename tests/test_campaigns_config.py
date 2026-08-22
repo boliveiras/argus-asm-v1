@@ -85,6 +85,18 @@ class TestAllowlist(Base):
         # a configuração anterior permanece intacta
         self.assertEqual(CAMP.prefixos_da_campanha("RIOCARD"), ["", "dev-"])
 
+    def test_recusa_prefixo_com_quebra_de_linha(self):
+        # `$` casa antes de um \n final: sem fullmatch, "dev-\n" passaria pela
+        # allowlist e viraria hostname.
+        with self.assertRaises(CAMP.CampaignError):
+            CAMP.set_prefixos("RIOCARD", ["dev-\n"])
+
+    def test_leitura_descarta_prefixo_com_quebra_de_linha(self):
+        # Arquivo editado à mão no servidor não pode contrabandear o mesmo valor.
+        CAMP.config_path().write_text(
+            '{"RIOCARD": {"prefixos": ["", "dev-\\n"]}}', encoding="utf-8")
+        self.assertEqual(CAMP.prefixos_da_campanha("RIOCARD"), [""])
+
 
 if __name__ == "__main__":
     unittest.main()
