@@ -43,6 +43,7 @@ Postura de segurança (a Web escreve em disco — superfície sensível):
 from __future__ import annotations
 
 import ipaddress
+import json
 import os
 import re
 import sqlite3
@@ -75,6 +76,80 @@ def valid_name(name: str) -> bool:
     if name in (".", ".."):
         return False
     return bool(_NAME_RE.match(name))
+
+
+# ── Configuração por campanha (campaigns.json) ───────────────────────
+# Prefixos de wordlist. O padrão replica o comportamento histórico: campanha sem
+# configuração roda exatamente como antes.
+PREFIXOS_PADRAO = ["", "prod-", "hml-", "dev-", "aceite-"]
+# Allowlist do prefixo. Ele é CONCATENADO em hostname e depois resolvido — sem
+# esta trava, a interface viraria caminho para injetar consulta a domínio de
+# terceiro. Vazio é válido: significa "a palavra da wordlist, pura".
+_PREFIXO_RE = re.compile(r"^[a-z0-9-]{0,20}$")
+
+
+def config_path() -> Path:
+    return Path(_base()) / "campaigns.json"
+
+
+def ler_config() -> dict:
+    """Todo o campaigns.json. Arquivo ausente ou corrompido devolve {} — a
+    configuração é conveniência, e perdê-la não pode impedir o scan de rodar."""
+    try:
+        dados = json.loads(config_path().read_text(encoding="utf-8"))
+        return dados if isinstance(dados, dict) else {}
+    except Exception:
+        return {}
+
+
+def prefixos_da_campanha(nome: str) -> list[str]:
+    """Prefixos da campanha; o padrão quando ela não tem configuração própria."""
+    entrada = ler_config().get(str(nome or ""), {})
+    if not isinstance(entrada, dict):
+        return list(PREFIXOS_PADRAO)
+    prefixos = entrada.get("prefixos")
+    if not isinstance(prefixos, list):
+        return list(PREFIXOS_PADRAO)
+    # Revalida na LEITURA: o arquivo pode ter sido editado à mão no servidor.
+    limpos = [p for p in prefixos if isinstance(p, str) and _PREFIXO_RE.match(p)]
+    return limpos or [""]
+
+
+def set_prefixos(nome: str, prefixos) -> list[str]:
+    """Valida e grava os prefixos da campanha. Devolve a lista efetivamente salva.
+
+    Grava IN-PLACE (mesmo inode): o serviço precisa de permissão apenas NESTE
+    arquivo, nunca de criar arquivos no diretório de configuração.
+    """
+    if not valid_name(nome):
+        raise CampaignError("nome de campanha inválido")
+    if not isinstance(prefixos, list):
+        raise CampaignError("prefixos deve ser uma lista")
+    limpos: list[str] = []
+    for p in prefixos:
+        if not isinstance(p, str):
+            raise CampaignError("prefixo inválido: precisa ser texto")
+        if not _PREFIXO_RE.match(p):
+            raise CampaignError(
+                f"prefixo inválido: {p!r} — use apenas letras minúsculas, "
+                f"números e hífen (até 20 caracteres)")
+        if p not in limpos:
+            limpos.append(p)
+    if not limpos:
+        limpos = [""]        # sem nenhum prefixo, ainda se testa a palavra pura
+    cfg = ler_config()
+    cfg[nome] = {**cfg.get(nome, {}), "prefixos": limpos}
+    corpo = json.dumps(cfg, ensure_ascii=False, indent=2) + "\n"
+    caminho = config_path()
+    try:
+        caminho.parent.mkdir(parents=True, exist_ok=True)
+        with open(caminho, "w", encoding="utf-8", newline="") as fh:
+            fh.write(corpo)
+            fh.flush()
+            os.fsync(fh.fileno())
+    except OSError as exc:
+        raise CampaignError(f"sem permissão para gravar a configuração: {exc}") from exc
+    return limpos
 
 
 def campanha_pedida() -> str:
