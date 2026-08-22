@@ -61,6 +61,16 @@ except Exception:                                   # pragma: no cover
     def _filtrar_campanhas(arquivos):
         return list(arquivos)
 
+# Prefixos por campanha (dev-/hml-/prod-/aceite-): sem isso, a wordlist inteira
+# multiplicada por 5 é o que arrasta o scan até o timeout. Import tolerante,
+# mesmo padrão de filtrar_campanhas — sem o módulo, mantém o comportamento
+# anterior (PREFIXES fixo, definido mais abaixo).
+try:
+    from campaigns import prefixos_da_campanha as _prefixos_da_campanha
+except Exception:                                   # pragma: no cover
+    def _prefixos_da_campanha(nome):
+        return PREFIXES
+
 
 
 try:
@@ -752,9 +762,12 @@ def _build_candidates(campaigns: list[tuple[str, list[str]]],
 
     # 1. Candidatos da wordlist
     for campanha, domains in campaigns:
+        # Prefixos por campanha: a wordlist inteira multiplicada por 5 é o que
+        # faz a execução arrastar. Sem configuração, mantém o padrão histórico.
+        prefixos = _prefixos_da_campanha(campanha) or PREFIXES
         for domain in domains:
             for sub in subs:
-                for prefix in PREFIXES:
+                for prefix in prefixos:
                     host = f"{prefix}{sub}.{domain}"
                     candidates[(host, campanha)] = "wordlist"
 
