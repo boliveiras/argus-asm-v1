@@ -19,6 +19,9 @@ submonitor_report.html
 # Cache local do crt.sh (Certificate Transparency)
 threatintel/crtsh_cache/
 
+# Cache local do crt.name (Certificate Transparency)
+threatintel/crtname_cache/
+
 # Cache do bootstrap RDAP da IANA (TLD → servidor)
 threatintel/rdap_bootstrap.json
 
