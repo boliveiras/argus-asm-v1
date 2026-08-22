@@ -146,6 +146,20 @@ hostname); configuração de uma campanha não afeta outra.
 
 ## Fora do escopo
 
+- **Cache negativo dos candidatos que nunca resolveram.** É onde está o custo real:
+  no último scan, `domains=3 subs=1000 prefixes=5` gerou 15.000 candidatos e
+  resultou em 26 subdomínios ativos — **99,8% das consultas foram em nomes
+  inexistentes**, e serão repetidas na execução seguinte. A saída desenhada é
+  rodízio por fatias (ex.: chutes mortos divididos em 7 grupos, um por execução),
+  que aliviaria ~7× sem deixar de cobrir a wordlist inteira ao longo da semana.
+  Adiado para depois de medir o efeito do loop + prefixos.
+
+  **Hosts já conhecidos continuam sendo verificados a cada execução, sempre.** Pular
+  o que está no banco economizaria pouco (dezenas de hosts contra milhares de
+  chutes) e destruiria a função do produto: deixar de detectar IP alterado, host
+  removido, certificado vencido ou reputação piorada transformaria o monitor num
+  inventário estático.
+
 - Persistência em lotes dentro de uma campanha (decidir após medir)
 - Loop por domínio (exigiria mudar como os scanners recebem escopo e afetaria o
   agrupamento de relatórios e achados por campanha)
