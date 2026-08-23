@@ -194,10 +194,17 @@ tinha sido encontrado.</p>
 
 <p class="doc-nota">O escopo cresce por multiplicação: cada domínio novo custa uma
 wordlist inteira de consultas, e a wordlist padrão tem cinco prefixos
-(<code>prod-</code>, <code>hml-</code>, <code>dev-</code>, <code>aceite-</code> e o
-domínio puro) — é essa multiplicação por cinco que faz a execução arrastar. Os
-prefixos são configuráveis por campanha: desmarque os que não interessam para
-cortar o volume de consultas na mesma proporção.</p>
+(<code>prod-</code>, <code>hml-</code>, <code>dev-</code>, <code>aceite-</code> e a
+palavra da wordlist sem prefixo nenhum) — é essa multiplicação por cinco que faz a
+execução arrastar. Os prefixos são configuráveis por campanha: desmarque os que
+não interessam para cortar o volume de consultas na mesma proporção.</p>
+
+<p class="doc-nota">Desmarcar um prefixo não é só economia — é <b>menos
+cobertura</b>. Um host que só era encontrado por aquela combinação para de ser
+verificado e, passada a carência de fechamento, é marcado como corrigido mesmo
+continuando ativo. Numa ferramenta de segurança, "corrigido" que na verdade
+significa "parei de olhar" é um falso negativo: confira o que cada prefixo
+encontrou antes de desligá-lo.</p>
 """),
 
     ("scan", "Execução dos scans", """
