@@ -21,6 +21,9 @@ class TestAPI(unittest.TestCase):
         self.H = {"X-Requested-With": "argus", "X-Remote-User": "monitor"}
 
     def tearDown(self):
+        # ARGUS_DB tem prioridade sobre ARGUS_BASE em campaigns._base();
+        # deixar a variavel vazando quebra o isolamento dos testes seguintes
+        os.environ.pop("ARGUS_DB", None)
         self.tmp.cleanup()
 
     def test_get_devolve_catalogo(self):
@@ -81,6 +84,9 @@ class TestPosseS3(unittest.TestCase):
                       json={"destino": "s3", "s3_bucket": "meu-bucket"})
 
     def tearDown(self):
+        # ARGUS_DB tem prioridade sobre ARGUS_BASE em campaigns._base();
+        # deixar a variavel vazando quebra o isolamento dos testes seguintes
+        os.environ.pop("ARGUS_DB", None)
         self.tmp.cleanup()
 
     def _fake_s3(self):
