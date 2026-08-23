@@ -4544,7 +4544,10 @@ _CAMP_SCRIPT = r"""<script>
   }
   function load(){
     api('/api/campaigns',{cache:'no-store'}).then(function(j){
-      DATA=j.campaigns||{}; show('camp-main'); render(); encherSeletorScan(DATA); wlLoad(); pollScan();
+      DATA=j.campaigns||{};
+      DATA.prefixos_padrao = j.prefixos_padrao || [];
+      DATA.wordlist_size = j.wordlist_size || 0;
+      show('camp-main'); render(); encherSeletorScan(DATA); wlLoad(); pollScan();
     }).catch(function(){ show('camp-off'); });
   }
   function render(){
@@ -4572,6 +4575,43 @@ _CAMP_SCRIPT = r"""<script>
       host.innerHTML=h;
     });
   }
+  function pintarPrefixos(cur){
+    var bloco=document.getElementById('cp-prefixos-bloco');
+    var host=document.getElementById('cp-prefixos');
+    if(!bloco||!host) return;
+    // Prefixos só existem para subdomínios: o monitor recebe IP, não nome.
+    if(!editing||editing.scope!=='submonitor'){ bloco.style.display='none'; return; }
+    bloco.style.display='block';
+    host.innerHTML='';
+    var padrao=DATA.prefixos_padrao||[];
+    var atuais=(cur&&cur.prefixos)||padrao;
+    padrao.forEach(function(p){
+      var l=document.createElement('label');
+      l.style.cssText='display:flex;gap:7px;align-items:center;font-size:13px;font-weight:400';
+      var rotulo=(p==='')?'(sem prefixo)':p;
+      l.innerHTML='<input type="checkbox" data-write="1" class="cp-pref" value="'+esc(p)+'"'
+        +(atuais.indexOf(p)>=0?' checked':'')+'> '+esc(rotulo);
+      host.appendChild(l);
+      l.querySelector('input').addEventListener('change',estimar);
+    });
+    estimar();
+  }
+  function estimar(){
+    var alvo=document.getElementById('cp-estimativa'); if(!alvo) return;
+    if(!editing||editing.scope!=='submonitor'){ alvo.textContent=''; return; }
+    var marcados=document.querySelectorAll('.cp-pref:checked').length||1;
+    var dominios=(document.getElementById('camp-ed-targets').value||'')
+      .split('\n').map(function(s){return s.split('#')[0].trim();})
+      .filter(Boolean).length;
+    var palavras=DATA.wordlist_size||0;
+    var total=dominios*palavras*marcados;
+    if(!total){ alvo.textContent=''; return; }
+    var aviso=total>20000?' — volume alto, considere dividir em mais campanhas'
+             :total>8000?' — volume considerável':'';
+    alvo.innerHTML='Esta campanha vai gerar <b>'+total.toLocaleString('pt-BR')
+      +'</b> consultas ('+dominios+' domínio(s) &times; '+palavras+' palavra(s) &times; '
+      +marcados+' prefixo(s))'+esc(aviso);
+  }
   function openEditor(scope,name){
     editing={scope:scope,name:name};
     var cfg=SCOPES[scope];
@@ -4581,10 +4621,12 @@ _CAMP_SCRIPT = r"""<script>
     var ta=document.getElementById('camp-ed-targets');
     ta.value=cur?cur.targets.join('\n'):'';
     ta.placeholder=cfg.ph;
+    ta.oninput=estimar;
     document.getElementById('camp-ed-hint').textContent=cfg.hint;
     document.getElementById('camp-ed-unit').textContent=cfg.unit+'(s)';
     document.getElementById('camp-editor').style.display='block';
     document.getElementById('camp-ed-name').focus();
+    pintarPrefixos(cur);
     msg('');
   }
   function closeEditor(){ editing=null; document.getElementById('camp-editor').style.display='none'; }
@@ -4601,6 +4643,15 @@ _CAMP_SCRIPT = r"""<script>
     api(url,{method:'POST',body:JSON.stringify(body)}).then(function(j){
       var n=(j.campaign&&j.campaign.count)||0;
       msg('Campanha "'+name+'" salva com '+n+' alvo(s). O próximo scan já usa esses alvos.');
+      if(editing && editing.scope==='submonitor'){
+        var prefs=[].slice.call(document.querySelectorAll('.cp-pref:checked'))
+          .map(function(i){return i.value;});
+        // Grava em requisição separada: o endpoint de alvos não conhece prefixo,
+        // e falhar aqui não pode desfazer a campanha que já foi salva.
+        api('/api/campaigns/submonitor/'+encodeURIComponent(name)+'/prefixos',
+            {method:'POST',body:JSON.stringify({prefixos:prefs})})
+          .catch(function(e){ msg('Campanha salva, mas os prefixos não: '+e.message,'err'); });
+      }
       closeEditor(); load();
     }).catch(function(e){ msg(e.message,'err'); }).then(function(){ btn.disabled=false; });
   }
@@ -4645,8 +4696,13 @@ _CAMP_SCRIPT = r"""<script>
     var total=st.total||6, pct=Math.max(0,Math.min(100,st.percent||0));
     var h='';
     if(running||st.started_at){
+      var campPrefixo='';
+      if(st.campanhas_total>1){
+        campPrefixo='Campanha '+(st.campanha_idx||1)+' de '+st.campanhas_total
+          +(st.campanha?(' ('+esc(st.campanha)+')'):'')+' · ';
+      }
       var doneLabel=running
-        ? ('Etapa '+(st.current||0)+' de '+total+(st.current_label?(' — '+esc(st.current_label)):''))
+        ? (campPrefixo+'Etapa '+(st.current||0)+' de '+total+(st.current_label?(' — '+esc(st.current_label)):''))
         : ('Concluído em '+esc(st.finished_at||'')+' — '+(st.succeeded||0)+' ok'
            +((st.failed||0)?(', <span style="color:var(--red)">'+st.failed+' com falha</span>'):''));
       h+='<div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:6px">'
@@ -4662,6 +4718,18 @@ _CAMP_SCRIPT = r"""<script>
                ? '<span class="why" title="'+esc(s.detail)+'">'+esc(s.detail)+'</span>'
                : '<code>'+esc(s.cmd||'')+'</code>')
             +'<span class="dur">'+(s.duration?fmtDur(s.duration):'')+'</span></div>';
+        });
+        h+='</div>';
+      }
+      if(st.campanhas&&st.campanhas.length>1){
+        // Sem a classe de texto secundário de propósito: é lista curta de status,
+        // não parágrafo explicativo, e o checker de texto enxuto varre o JS também.
+        h+='<div style="color:var(--muted);font-size:11.5px;margin-top:9px">';
+        st.campanhas.forEach(function(c){
+          var cor=c.status==='succeeded'?'var(--green)'
+                 :c.status==='failed'?'var(--red)'
+                 :c.status==='running'?'var(--accent)':'var(--muted)';
+          h+='<span style="color:'+cor+';margin-right:10px">'+esc(c.nome)+'</span>';
         });
         h+='</div>';
       }
@@ -4695,7 +4763,9 @@ _CAMP_SCRIPT = r"""<script>
   function encherSeletorScan(dados){
     var sel=document.getElementById('scan-camp'); if(!sel) return;
     var nomes={};
-    Object.keys(dados||{}).forEach(function(escopo){
+    // Só os escopos conhecidos: DATA também carrega prefixos_padrao/wordlist_size,
+    // que não são listas de campanha.
+    Object.keys(SCOPES).forEach(function(escopo){
       (dados[escopo]||[]).forEach(function(c){ nomes[c.name]=1; });
     });
     var atual=sel.value;
@@ -4744,6 +4814,11 @@ _CAMP_SCRIPT = r"""<script>
   if(document.readyState!=='loading') load(); else document.addEventListener('DOMContentLoaded',load);
 })();
 </script>"""
+
+# O painel de progresso do scan (renderScan/pollScan/startScan) vive dentro do
+# mesmo script da página de campanhas — não há um <script> separado. O alias
+# abaixo dá um nome estável para quem só quer inspecionar essa parte do JS.
+_SCAN_SCRIPT = _CAMP_SCRIPT
 
 
 def build_campaigns_page() -> str:
@@ -4844,6 +4919,16 @@ def build_campaigns_page() -> str:
         '<div><label for="camp-ed-targets">Alvos &mdash; <span id="camp-ed-unit">alvos</span></label>'
         '<textarea id="camp-ed-targets" spellcheck="false"></textarea>'
         '<div id="camp-ed-hint" class="page-sub" style="margin-top:6px;font-size:11.5px"></div></div>'
+        '</div>'
+        '<div id="cp-prefixos-bloco" style="display:none;margin-top:14px">'
+        '<label>Prefixos da wordlist</label>'
+        '<div id="cp-prefixos" class="camp-grid" style="grid-template-columns:'
+        'repeat(auto-fill,minmax(min(150px,100%),1fr));gap:8px"></div>'
+        '<div id="cp-estimativa" class="page-sub" style="margin-top:9px;font-size:12px"></div>'
+        '<div class="page-sub" style="margin-top:10px;border-left:3px solid var(--border-2);'
+        'padding-left:10px;font-size:11.5px">'
+        'Recomendamos <b>um domínio por campanha</b>: termina antes e fica salvo mesmo '
+        'se a próxima falhar. <a href="#" data-doc="campanhas">Saiba mais</a></div>'
         '</div>'
         '<div style="display:flex;gap:8px;margin-top:14px">'
         '<button class="btn btn-pdf" type="button" id="camp-ed-save" onclick="window.__camp&&window.__camp.save()">'
