@@ -744,11 +744,47 @@ def create_app():
         try:
             scope = str(request.args.get("scope", "")).strip()
             scopes = [scope] if scope in CAMP.SCOPES else list(CAMP.SCOPES)
-            out = {s: CAMP.list_campaigns(s) for s in scopes}
+            out = {}
+            for s in scopes:
+                campanhas = CAMP.list_campaigns(s)
+                # Prefixos só fazem sentido para subdomínios (o monitor recebe IPs).
+                if s == "submonitor":
+                    for c in campanhas:
+                        c["prefixos"] = CAMP.prefixos_da_campanha(c["name"])
+                out[s] = campanhas
+            # Tamanho da wordlist: a interface usa para estimar o custo da campanha
+            # ANTES de rodar (domínios × palavras × prefixos).
+            try:
+                subs = Path(CAMP._base()) / "submonitor" / "subs.txt"
+                wordlist_size = sum(
+                    1 for ln in subs.read_text(encoding="utf-8").splitlines()
+                    if ln.split("#", 1)[0].strip())
+            except Exception:
+                wordlist_size = 0
             return jsonify(ok=True, scopes={s: CAMP.SCOPES[s]["label"] for s in CAMP.SCOPES},
-                           campaigns=out)
+                           campaigns=out, prefixos_padrao=CAMP.PREFIXOS_PADRAO,
+                           wordlist_size=wordlist_size)
         except Exception as exc:
             return jsonify(ok=False, error=str(exc)), 500
+
+    @app.post("/api/campaigns/<scope>/<name>/prefixos")
+    def set_campaign_prefixos(scope, name):
+        if not _csrf_ok():
+            _audit(request, "AUTHZ_DENY", "ação negada: header CSRF ausente",
+                   outcome="deny", action="campaign_prefixos")
+            return jsonify(ok=False, error="CSRF: header ausente"), 403
+        if scope not in CAMP.SCOPES:
+            return jsonify(ok=False, error="escopo inválido"), 400
+        dados = request.get_json(silent=True) or {}
+        try:
+            salvos = CAMP.set_prefixos(name, dados.get("prefixos", []))
+        except CAMP.CampaignError as exc:
+            return jsonify(ok=False, error=str(exc)), 400
+        _audit(request, "CAMPAIGN_UPDATE",
+               f"prefixos da campanha {scope}/{name} alterados ({len(salvos)})",
+               outcome="success", action="campaign_prefixos", obj=name,
+               object_type="campaign")
+        return jsonify(ok=True, prefixos=salvos)
 
     @app.post("/api/campaigns")
     def create_campaign():
