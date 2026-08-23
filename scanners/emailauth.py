@@ -54,6 +54,16 @@ except Exception:                                   # pragma: no cover
     def _filtrar_campanhas(arquivos):
         return list(arquivos)
 
+# Mesma restrição (ARGUS_CAMPANHA), usada para NÃO fechar achado de campanha
+# alheia — ver o comentário no ponto de uso, em process_results() e no sync com
+# o store central. Import tolerante: sem o módulo, roda sempre como "sem
+# restrição" (igual ao fallback de filtrar_campanhas, que também não restringe).
+try:
+    from campaigns import campanha_pedida as _campanha_pedida
+except Exception:                                   # pragma: no cover
+    def _campanha_pedida():
+        return ""
+
 
 
 try:
@@ -506,16 +516,23 @@ def process_results(results: list[dict]):
                 (r["campanha"], domain, int(r["has_mx"]), r["mx"], r["spf_status"], r["dmarc_status"],
                  r["dkim_status"], r["dkim_selector"], r["risk"], issues_txt, now, now, "NOVO"))
 
-    grace_cutoff = (datetime.datetime.now() - datetime.timedelta(days=CLOSE_GRACE_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
-    cursor.execute("SELECT id,domain,campanha FROM domains WHERE status IN ('REINCIDENTE','RESSURGIDO') AND last_seen < ?", (grace_cutoff,))
-    for row_id, old_domain, old_campanha in cursor.fetchall():
-        if old_domain not in current:
-            entry = {"domain": old_domain, "campanha": old_campanha or "", "risk": "INFO",
-                     "status": "CORRIGIDO", "has_mx": False, "mx": "",
-                     "spf_status": "", "spf_raw": "", "dmarc_status": "", "dmarc_raw": "",
-                     "dkim_status": "", "dkim_selector": "", "issues": []}
-            removidos.append(entry); syslog_domain(entry)
-            cursor.execute("UPDATE domains SET status='CORRIGIDO', last_seen=? WHERE id=?", (now, row_id))
+    # Fail-secure (ARGUS_CAMPANHA): com a execução restrita a uma campanha, `current`
+    # só tem os domínios DESSA campanha — um domínio de OUTRA campanha que não
+    # rodou nesta execução seria marcado CORRIGIDO por engano (ex.: runner abortou
+    # cedo). Com restrição ativa, não fecha nada aqui — o fechamento acontece na
+    # próxima execução sem restrição, ou no cron diário. Atrasar é só atraso;
+    # fechar à toa é dado errado apresentado como verdade.
+    if not _campanha_pedida():
+        grace_cutoff = (datetime.datetime.now() - datetime.timedelta(days=CLOSE_GRACE_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+        cursor.execute("SELECT id,domain,campanha FROM domains WHERE status IN ('REINCIDENTE','RESSURGIDO') AND last_seen < ?", (grace_cutoff,))
+        for row_id, old_domain, old_campanha in cursor.fetchall():
+            if old_domain not in current:
+                entry = {"domain": old_domain, "campanha": old_campanha or "", "risk": "INFO",
+                         "status": "CORRIGIDO", "has_mx": False, "mx": "",
+                         "spf_status": "", "spf_raw": "", "dmarc_status": "", "dmarc_raw": "",
+                         "dkim_status": "", "dkim_selector": "", "issues": []}
+                removidos.append(entry); syslog_domain(entry)
+                cursor.execute("UPDATE domains SET status='CORRIGIDO', last_seen=? WHERE id=?", (now, row_id))
     conn.commit(); conn.close()
     return novos, reincidentes, removidos
 
@@ -600,6 +617,8 @@ def main():
         if _findings is not None:
             try:
                 _weak = [r for r in (novos + reincidentes) if r.get("risk") != "INFO"]
+                # Fail-secure (ARGUS_CAMPANHA): ver comentário equivalente no submonitor.py.
+                _sem_fechar = bool(_campanha_pedida())
                 obs, closed = _findings.sync_findings(
                     "email", _weak,
                     key_of=lambda r: r.get("domain", ""),
@@ -608,6 +627,7 @@ def main():
                     campanha_of=lambda r: r.get("campanha", ""),
                     details_of=lambda r: {"spf": r.get("spf_status",""), "dmarc": r.get("dmarc_status",""),
                                           "dkim": r.get("dkim_status",""), "issues": r.get("issues", [])},
+                    scope_predicate=(lambda k: False) if _sem_fechar else None,
                     corrected=removidos,
                     resurged=[r for r in reincidentes if r.get("status") == "RESSURGIDO"],
                     run_id=str(_run_id or ""))

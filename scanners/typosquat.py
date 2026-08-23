@@ -55,6 +55,16 @@ except Exception:                                   # pragma: no cover
     def _filtrar_campanhas(arquivos):
         return list(arquivos)
 
+# Mesma restrição (ARGUS_CAMPANHA), usada para NÃO fechar achado de campanha
+# alheia — ver o comentário no ponto de uso, em process_results() e no sync com
+# o store central. Import tolerante: sem o módulo, roda sempre como "sem
+# restrição" (igual ao fallback de filtrar_campanhas, que também não restringe).
+try:
+    from campaigns import campanha_pedida as _campanha_pedida
+except Exception:                                   # pragma: no cover
+    def _campanha_pedida():
+        return ""
+
 
 
 try:
@@ -391,14 +401,21 @@ def process_results(results: list[dict]):
                 (r["campanha"], r["base_domain"], dom, r["fuzzer"], r["ip"], int(r["mx"]),
                  r["risk"], now, now, "NOVO", _wst, _wcr, _wage))
 
-    grace_cutoff = (datetime.datetime.now() - datetime.timedelta(days=CLOSE_GRACE_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
-    cursor.execute("SELECT id,domain,base_domain,campanha FROM lookalikes WHERE status IN ('REINCIDENTE','RESSURGIDO') AND last_seen < ?", (grace_cutoff,))
-    for row_id, dom, base, camp in cursor.fetchall():
-        if dom not in current:
-            entry = {"domain": dom, "base_domain": base or "", "campanha": camp or "",
-                     "fuzzer": "", "ip": "", "mx": False, "risk": "INFO", "status": "CORRIGIDO"}
-            removidos.append(entry); syslog_look(entry)
-            cursor.execute("UPDATE lookalikes SET status='CORRIGIDO', last_seen=? WHERE id=?", (now, row_id))
+    # Fail-secure (ARGUS_CAMPANHA): com a execução restrita a uma campanha, `current`
+    # só tem os domínios DESSA campanha — um domínio de OUTRA campanha que não
+    # rodou nesta execução seria marcado CORRIGIDO por engano (ex.: runner abortou
+    # cedo). Com restrição ativa, não fecha nada aqui — o fechamento acontece na
+    # próxima execução sem restrição, ou no cron diário. Atrasar é só atraso;
+    # fechar à toa é dado errado apresentado como verdade.
+    if not _campanha_pedida():
+        grace_cutoff = (datetime.datetime.now() - datetime.timedelta(days=CLOSE_GRACE_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+        cursor.execute("SELECT id,domain,base_domain,campanha FROM lookalikes WHERE status IN ('REINCIDENTE','RESSURGIDO') AND last_seen < ?", (grace_cutoff,))
+        for row_id, dom, base, camp in cursor.fetchall():
+            if dom not in current:
+                entry = {"domain": dom, "base_domain": base or "", "campanha": camp or "",
+                         "fuzzer": "", "ip": "", "mx": False, "risk": "INFO", "status": "CORRIGIDO"}
+                removidos.append(entry); syslog_look(entry)
+                cursor.execute("UPDATE lookalikes SET status='CORRIGIDO', last_seen=? WHERE id=?", (now, row_id))
     conn.commit(); conn.close()
     return novos, reincidentes, removidos
 
@@ -502,6 +519,8 @@ def main():
         # ── Store central de achados (argus.db) — ADITIVO ─────────
         if _findings is not None:
             try:
+                # Fail-secure (ARGUS_CAMPANHA): ver comentário equivalente no submonitor.py.
+                _sem_fechar = bool(_campanha_pedida())
                 obs, closed = _findings.sync_findings(
                     "typosquat", novos + reincidentes,
                     key_of=lambda r: r.get("domain", ""),
@@ -510,6 +529,7 @@ def main():
                     campanha_of=lambda r: r.get("campanha", ""),
                     details_of=lambda r: {"base_domain": r.get("base_domain",""), "fuzzer": r.get("fuzzer",""),
                                           "ip": r.get("ip",""), "mx": r.get("mx", False)},
+                    scope_predicate=(lambda k: False) if _sem_fechar else None,
                     corrected=removidos,
                     resurged=[r for r in reincidentes if r.get("status") == "RESSURGIDO"],
                     run_id=str(_run_id or ""))

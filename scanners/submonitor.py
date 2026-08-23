@@ -71,6 +71,16 @@ except Exception:                                   # pragma: no cover
     def _prefixos_da_campanha(nome):
         return PREFIXES
 
+# Mesma restrição (ARGUS_CAMPANHA), usada para NÃO fechar achado de campanha
+# alheia — ver o comentário no ponto de uso, em process_results() e no sync com
+# o store central. Import tolerante: sem o módulo, roda sempre como "sem
+# restrição" (igual ao fallback de filtrar_campanhas, que também não restringe).
+try:
+    from campaigns import campanha_pedida as _campanha_pedida
+except Exception:                                   # pragma: no cover
+    def _campanha_pedida():
+        return ""
+
 
 
 try:
@@ -930,19 +940,29 @@ def process_results(results: list[dict]):
 
     # Carência: só marca REMOVIDO se o host estiver sem ser visto há ≥ CLOSE_GRACE_DAYS
     # (absorve falhas transitórias de DNS / fontes passivas — não remove por 1 miss).
-    grace_cutoff = (datetime.datetime.now() - datetime.timedelta(days=CLOSE_GRACE_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
-    cursor.execute("SELECT id,hostname,ip,campanha FROM subdomains WHERE status IN ('REINCIDENTE','RESSURGIDO') AND last_seen < ?", (grace_cutoff,))
-    for row_id, old_hostname, old_ip, old_campanha in cursor.fetchall():
-        if old_hostname not in current_hosts:
-            entry = {"hostname":old_hostname,"ip":old_ip or "","campanha":old_campanha or "",
-                     "risk":"INFO","status":"CORRIGIDO","asn":"",
-                     "http_status":"","abuse":None,
-                     "dnssec":"DESABILITADO","origem":"wordlist",
-                     "ssl":{"status":"SEM CERTIFICADO","expiry_date":""},
-                     "whois":{"creation_date":"","expiration_date":"","age_days":None,
-                              "status":"DESCONHECIDO","registrar":""}}
-            removidos.append(entry); syslog_host(entry)
-            cursor.execute("UPDATE subdomains SET status='CORRIGIDO', last_seen=? WHERE id=?", (now, row_id))
+    #
+    # Fail-secure (ARGUS_CAMPANHA): com a execução restrita a uma campanha,
+    # current_hosts só tem os hosts DESSA campanha — um host de OUTRA campanha que
+    # simplesmente não rodou nesta execução ficaria "sem ser visto" e seria
+    # marcado CORRIGIDO por engano (ex.: runner abortou cedo e as campanhas
+    # seguintes ficaram dias sem varredura). Por isso, com restrição ativa, não
+    # fecha nada aqui — o fechamento acontece na próxima execução sem restrição,
+    # ou no cron diário. Atrasar o fechamento é só atraso; fechar à toa é dado
+    # errado apresentado como verdade.
+    if not _campanha_pedida():
+        grace_cutoff = (datetime.datetime.now() - datetime.timedelta(days=CLOSE_GRACE_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+        cursor.execute("SELECT id,hostname,ip,campanha FROM subdomains WHERE status IN ('REINCIDENTE','RESSURGIDO') AND last_seen < ?", (grace_cutoff,))
+        for row_id, old_hostname, old_ip, old_campanha in cursor.fetchall():
+            if old_hostname not in current_hosts:
+                entry = {"hostname":old_hostname,"ip":old_ip or "","campanha":old_campanha or "",
+                         "risk":"INFO","status":"CORRIGIDO","asn":"",
+                         "http_status":"","abuse":None,
+                         "dnssec":"DESABILITADO","origem":"wordlist",
+                         "ssl":{"status":"SEM CERTIFICADO","expiry_date":""},
+                         "whois":{"creation_date":"","expiration_date":"","age_days":None,
+                                  "status":"DESCONHECIDO","registrar":""}}
+                removidos.append(entry); syslog_host(entry)
+                cursor.execute("UPDATE subdomains SET status='CORRIGIDO', last_seen=? WHERE id=?", (now, row_id))
     conn.commit(); conn.close()
     return novos, reincidentes, removidos
 
@@ -1156,6 +1176,13 @@ def main():
         # Cada subdomínio ativo é um ativo exposto rastreável (severidade real).
         if _findings is not None:
             try:
+                # Fail-secure (ARGUS_CAMPANHA): "seen" nesta sincronização só tem os
+                # hosts DESTA campanha — sem o predicado abaixo, mark_absent() fecharia
+                # (por ausência) os achados de TODAS as outras campanhas, que
+                # simplesmente não rodaram nesta execução. scope_predicate=False
+                # bloqueia qualquer fechamento enquanto a restrição estiver ativa
+                # (mesmo padrão do monitor.py, que faz isso por protocolo TCP/UDP).
+                _sem_fechar = bool(_campanha_pedida())
                 obs, closed = _findings.sync_findings(
                     "submonitor", novos + reincidentes,
                     key_of=lambda r: r.get("hostname", ""),
@@ -1164,6 +1191,7 @@ def main():
                     campanha_of=lambda r: r.get("campanha", ""),
                     details_of=lambda r: {"ip": r.get("ip",""),
                                           "http_status": r.get("http_status","")},
+                    scope_predicate=(lambda k: False) if _sem_fechar else None,
                     corrected=removidos,
                     resurged=[r for r in reincidentes if r.get("status") == "RESSURGIDO"],
                     run_id=str(_run_id or ""))
