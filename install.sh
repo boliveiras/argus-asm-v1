@@ -952,6 +952,16 @@ chown "root:$APP_USER" "$BASE_DIR/logpush.json" 2>/dev/null || true
 chmod 640 "$BASE_DIR/logpush.json"
 setfacl -m "g:$APP_GROUP:rw" "$BASE_DIR/logpush.json" 2>/dev/null   && ok "Logpush: configurável pela Web"   || warn "setfacl indisponível — a página Logpush ficará somente leitura"
 
+# Configuração por campanha (prefixos de wordlist). Criado no bootstrap com o
+# dono certo: o serviço argus-web GRAVA nele pela interface, e ProtectSystem=full
+# deixa /etc somente-leitura para tudo que não estiver em ReadWritePaths.
+if [ ! -f "$BASE_DIR/campaigns.json" ]; then
+  printf '{}\n' > "$BASE_DIR/campaigns.json"
+  ok "Configuração de campanhas criada: $BASE_DIR/campaigns.json"
+fi
+chown "root:$APP_USER" "$BASE_DIR/campaigns.json" 2>/dev/null || true
+chmod 664 "$BASE_DIR/campaigns.json" 2>/dev/null || true
+
 step "12b. Configurando serviço web (API de achados)"
 cat > /etc/systemd/system/argus-web.service << UNITEOF
 [Unit]
@@ -982,7 +992,7 @@ ProtectHome=true
 # ProtectSystem=full deixa TODO o /etc somente-leitura para este serviço. Sem liberar
 # explicitamente os caminhos abaixo, a gestão de campanhas e a edição da wordlist pela
 # Web falham com "Read-only file system" — a ACL sozinha não basta (o systemd bloqueia antes).
-ReadWritePaths=$BASE_DIR/store $APACHE_DOCROOT $LOG_DIR_AUDIT $MONITOR_DIR/targets $SUBMONITOR_DIR/targets $SUBMONITOR_DIR/subs.txt $HTPASSWD_FILE $THREATINTEL_DIR/config.json $BASE_DIR/logpush.json
+ReadWritePaths=$BASE_DIR/store $APACHE_DOCROOT $LOG_DIR_AUDIT $MONITOR_DIR/targets $SUBMONITOR_DIR/targets $SUBMONITOR_DIR/subs.txt $HTPASSWD_FILE $THREATINTEL_DIR/config.json $BASE_DIR/logpush.json $BASE_DIR/campaigns.json
 
 [Install]
 WantedBy=multi-user.target
