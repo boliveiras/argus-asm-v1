@@ -110,5 +110,39 @@ class TestAllowlist(Base):
         self.assertEqual(CAMP.prefixos_da_campanha("RIOCARD"), [""])
 
 
+class TestNomeDeCampanha(Base):
+    """O nome da campanha vira nome de arquivo (targets/<NOME>.txt) e chave do
+    campaigns.json. Validar uma string e usar OUTRA escancara justamente a porta
+    que a allowlist existe para fechar."""
+
+    def test_recusa_nome_com_quebra_de_linha(self):
+        # `$` casa também antes de um \n final: com .match() — e com o strip()
+        # que valid_name dava por dentro — "RIOCARD\n" era aprovado.
+        self.assertFalse(CAMP.valid_name("RIOCARD\n"))
+        self.assertTrue(CAMP.valid_name("RIOCARD"))
+
+    def test_valid_name_nao_normaliza_por_conta_propria(self):
+        # Quem valida não pode limpar em silêncio: o chamador seguia usando o
+        # texto cru. Tolerância a espaço é trabalho de normalize_name().
+        self.assertFalse(CAMP.valid_name(" RIOCARD "))
+        self.assertEqual(CAMP.normalize_name(" RIOCARD \n"), "RIOCARD")
+
+    def test_caminho_do_txt_nao_carrega_quebra_de_linha(self):
+        # Antes: targets/RIOCARD\n.txt — arquivo distinto do da campanha real.
+        caminho = CAMP._campaign_path("monitor", "RIOCARD\n", self.tmp.name)
+        self.assertEqual(caminho.name, "RIOCARD.txt")
+
+    def test_quebra_de_linha_no_meio_do_nome_continua_recusada(self):
+        with self.assertRaises(CAMP.CampaignError):
+            CAMP._campaign_path("monitor", "RIO\nCARD", self.tmp.name)
+
+    def test_chave_do_campaigns_json_nao_carrega_quebra_de_linha(self):
+        # Antes gravava sob "RIOCARD\n": uma segunda campanha, invisível na
+        # interface, sombreando a configuração da verdadeira.
+        CAMP.set_prefixos("RIOCARD\n", ["dev-"])
+        self.assertEqual(list(CAMP.ler_config()), ["RIOCARD"])
+        self.assertEqual(CAMP.prefixos_da_campanha("RIOCARD"), ["dev-"])
+
+
 if __name__ == "__main__":
     unittest.main()

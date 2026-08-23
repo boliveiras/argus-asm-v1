@@ -71,11 +71,26 @@ class CampaignError(ValueError):
 
 # ── validação ────────────────────────────────────────────────────────────────
 
+def normalize_name(name: str) -> str:
+    """Forma canônica do nome. É ESTA string que vira arquivo e chave — quem chama
+    normaliza ANTES de validar e usa sempre o retorno, nunca o texto cru."""
+    return (name or "").strip()
+
+
 def valid_name(name: str) -> bool:
-    name = (name or "").strip()
-    if name in (".", ".."):
+    """Valida o nome EXATAMENTE como recebido — de propósito não normaliza.
+
+    Antes esta função dava strip() interno e devolvia o veredito sobre a string
+    limpa, enquanto o chamador seguia usando o texto cru: "RIOCARD\n" era
+    aprovado e ia inteiro para targets/RIOCARD\n.txt e para a chave do
+    campaigns.json. Validar uma string e usar outra é o bug; quem precisa de
+    tolerância a espaço nas pontas passa por normalize_name() primeiro.
+    """
+    if not isinstance(name, str) or name in (".", ".."):
         return False
-    return bool(_NAME_RE.match(name))
+    # fullmatch (não match): "$" casa também antes de uma quebra de linha final,
+    # então match() aprovaria um nome terminado em "\n".
+    return bool(_NAME_RE.fullmatch(name))
 
 
 # ── Configuração por campanha (campaigns.json) ───────────────────────
@@ -104,7 +119,7 @@ def ler_config() -> dict:
 
 def prefixos_da_campanha(nome: str) -> list[str]:
     """Prefixos da campanha; o padrão quando ela não tem configuração própria."""
-    entrada = ler_config().get(str(nome or ""), {})
+    entrada = ler_config().get(normalize_name(nome), {})
     if not isinstance(entrada, dict):
         return list(PREFIXOS_PADRAO)
     prefixos = entrada.get("prefixos")
@@ -123,6 +138,7 @@ def set_prefixos(nome: str, prefixos) -> list[str]:
     Grava IN-PLACE (mesmo inode): o serviço precisa de permissão apenas NESTE
     arquivo, nunca de criar arquivos no diretório de configuração.
     """
+    nome = normalize_name(nome)          # a chave gravada é a validada, não a crua
     if not valid_name(nome):
         raise CampaignError("nome de campanha inválido")
     if not isinstance(prefixos, list):
@@ -219,7 +235,8 @@ def valid_target(scope: str, value: str) -> bool:
         return False
     except ValueError:
         pass
-    return bool(_HOSTNAME_RE.match(value))
+    # fullmatch (não match): "$" casa também antes de uma quebra de linha final.
+    return bool(_HOSTNAME_RE.fullmatch(value))
 
 
 def _split_entries(raw) -> list[str]:
@@ -272,6 +289,7 @@ def targets_dir(scope: str, base: str | None = None) -> Path:
 
 def _campaign_path(scope: str, name: str, base: str | None = None) -> Path:
     """Caminho do .txt da campanha — com checagem de contenção (anti-traversal)."""
+    name = normalize_name(name)          # o .txt sai do nome validado, não do cru
     if not valid_name(name):
         raise CampaignError(
             "nome inválido: use apenas letras, números, ponto, hífen ou underscore (até 64)")
@@ -442,7 +460,8 @@ def wordlist_path(base: str | None = None) -> Path:
 
 def valid_word(value: str) -> bool:
     v = (value or "").strip()
-    return len(v) <= _WORD_MAXLEN and bool(_LABEL_RE.match(v))
+    # fullmatch (não match): "$" casa também antes de uma quebra de linha final.
+    return len(v) <= _WORD_MAXLEN and bool(_LABEL_RE.fullmatch(v))
 
 
 def parse_words(raw) -> tuple[list[str], list[str]]:
