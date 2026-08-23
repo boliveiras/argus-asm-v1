@@ -40,9 +40,37 @@ import html
 import json
 from pathlib import Path
 
+# Nome da campanha restrita (ARGUS_CAMPANHA) — import tolerante, mesmo padrão
+# usado pelos scanners: sem o módulo, o relatório segue sem o aviso de escopo.
+try:
+    from campaigns import campanha_pedida as _campanha_pedida
+except Exception:                                   # pragma: no cover
+    def _campanha_pedida():
+        return ""
+
 # ============================================================
 # UTILITÁRIOS COMPARTILHADOS
 # ============================================================
+
+
+def _scope_banner() -> str:
+    """Aviso de escopo quando o relatório foi gerado com ARGUS_CAMPANHA restrita.
+
+    O runner agora executa campanha por campanha, e os relatórios do submonitor/
+    credentials/email/typosquat são montados a partir do resultado EM MEMÓRIA da
+    execução corrente — cada campanha sobrescreve o mesmo arquivo no docroot, e só
+    sobra no disco o da ÚLTIMA campanha rodada. Sem este aviso o operador lê um
+    relatório parcial como se fosse o total (mentira por omissão). O correto —
+    montar do banco, como o monitor já faz — é maior que cabe aqui; isso só
+    declara o escopo de forma visível."""
+    nome = _campanha_pedida()
+    if not nome:
+        return ""
+    return (
+        '<div class="scope-banner">&#9888;&#65039; Escopo desta execução: campanha '
+        f'<strong>{html.escape(nome)}</strong>. As demais campanhas não estão '
+        'neste relatório.</div>'
+    )
 
 
 def _abuse_to_js(abuse: dict | None) -> dict:
@@ -213,6 +241,12 @@ def _common_css() -> str:
   .breadcrumb a:hover { color:var(--accent); }
   .breadcrumb .sep { color:var(--faint); }
   .breadcrumb .cur { color:var(--text); font-weight:600; }
+
+  /* ── Aviso de escopo (relatório restrito a UMA campanha) ─ */
+  .scope-banner { background:rgba(251,146,60,.12); border:1px solid rgba(251,146,60,.4);
+                  color:var(--text); border-radius:var(--radius-sm); padding:10px 14px;
+                  font-size:12.5px; font-weight:600; margin:0 0 14px; }
+  .scope-banner strong { color:var(--orange); }
 
   /* ── Cabeçalho da página ─────────────────────────────── */
   .page-head { display:flex; align-items:flex-end; justify-content:space-between; gap:14px; flex-wrap:wrap; margin:6px 0 18px; }
@@ -1877,6 +1911,7 @@ def generate_submonitor_report(
 <script id="exm-rows" type="application/json">{corr_rows}</script>
 <div class="wrap" id="conteudo" role="main">
 
+{_scope_banner()}
 <div class="page-head">
   <div>
     <h1 class="page-title">Monitor de Subdomínios <span class="chip">{intel_badge}</span></h1>
@@ -2330,6 +2365,7 @@ def generate_credentials_report(
 <script id="exm-kpis" type="application/json">{kpi_json}</script>
 <div class="wrap" id="conteudo" role="main">
 
+{_scope_banner()}
 <div class="page-head">
   <div>
     <h1 class="page-title">Exposição de Credenciais <span class="chip">infostealer · Hudson Rock</span></h1>
@@ -2628,6 +2664,7 @@ def generate_email_report(
 <script id="exm-kpis" type="application/json">{kpi_json}</script>
 <div class="wrap" id="conteudo" role="main">
 
+{_scope_banner()}
 <div class="page-head">
   <div>
     <h1 class="page-title">Postura de E-mail <span class="chip">SPF · DMARC · DKIM</span></h1>
@@ -3053,6 +3090,7 @@ def generate_typosquat_report(
 <script id="exm-kpis" type="application/json">{kpi_json}</script>
 <div class="wrap" id="conteudo" role="main">
 
+{_scope_banner()}
 <div class="page-head">
   <div>
     <h1 class="page-title">Typosquat <span class="chip">dnstwist · homoglyph</span></h1>
