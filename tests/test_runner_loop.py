@@ -155,10 +155,14 @@ class TestAbort(Base):
 class TestEscopoPorCampanha(Base):
     """Correção 1: uma campanha pode existir só em submonitor (domínio), só em
     monitor (IP) ou nos dois — a interface permite criar campanha só com IPs
-    (escopo "Monitor de Portas"). Cada campanha só deve rodar as etapas do(s)
-    escopo(s) em que de fato tem arquivo de alvos; senão as etapas de domínio
-    falhariam com "Campanha X não encontrada neste escopo" em toda campanha
-    só-de-IP (4 erros falsos)."""
+    (escopo "Monitor de Portas"). Uma campanha só-de-IP (sem arquivo em
+    submonitor) só deve rodar as 2 etapas de porta; senão as etapas de domínio
+    falhariam com "Campanha X não encontrada neste escopo" (erro falso). Já uma
+    campanha com domínio planeja SEMPRE as 6 — mesmo sem monitor/targets/X.txt
+    ainda existir no disco —, porque é a própria etapa `submonitor` que cria
+    esse arquivo (`feed_monitor_targets`) antes de as etapas de porta rodarem
+    na mesma execução; olhar só o disco no planejamento perderia o scan de
+    porta em silêncio na primeira execução de toda campanha nova."""
 
     def setUp(self):
         super().setUp()
@@ -169,20 +173,27 @@ class TestEscopoPorCampanha(Base):
             (base / "submonitor" / "targets" / f"{nome}.txt").unlink(missing_ok=True)
             (base / "monitor" / "targets" / f"{nome}.txt").unlink(missing_ok=True)
 
-    def test_so_dominio_roda_so_as_etapas_de_dominio(self):
+    def test_so_dominio_planeja_as_6_pois_submonitor_alimenta_monitor(self):
+        # Campanha nova típica: só domínio (monitor/targets/SODOMINIO.txt
+        # ainda NÃO existe). Antes da correção do Achado 1, isto planejava só
+        # as 4 etapas de domínio e a campanha nunca escaneava porta.
         base = Path(self.tmp.name)
         (base / "submonitor" / "targets" / "SODOMINIO.txt").write_text(
             "empresa.com\n", encoding="utf-8")
+        self.assertFalse((base / "monitor" / "targets" / "SODOMINIO.txt").exists())
         self.fingir_execucao({})
         self.runner.run_all("teste")
         st = self.status()
         self.assertEqual([c["nome"] for c in st["campanhas"]], ["SODOMINIO"])
         self.assertEqual({s["key"] for s in st["steps"]},
-                         {"submonitor", "email", "credentials", "typosquat"})
-        self.assertEqual(st["total"], 4)
+                         {"submonitor", "monitor_tcp", "monitor_udp",
+                          "email", "credentials", "typosquat"})
+        self.assertEqual(st["total"], 6)
         self.assertEqual(st["campanhas"][0]["status"], "succeeded")
 
-    def test_so_ip_roda_so_as_etapas_de_porta(self):
+    def test_so_ip_continua_so_com_as_2_etapas_de_porta(self):
+        # Guarda de não-regressão do caso inverso: campanha só-de-IP (sem
+        # domínio) não pode ganhar as etapas de domínio.
         base = Path(self.tmp.name)
         (base / "monitor" / "targets" / "SOIP.txt").write_text(
             "10.0.0.1\n", encoding="utf-8")
@@ -245,6 +256,49 @@ class TestEscopoPorCampanha(Base):
         # falhas seguidas" que aborta o restante.
         self.assertEqual(st["failed"], 0)
         self.assertNotIn("FANTASMA", [c for c, _ in self.executadas])
+        # Achado 4: FANTASMA é a campanha corrente ao pular — o estado não pode
+        # continuar mostrando as etapas de TEMALVO (a anterior) como se fossem
+        # dela.
+        self.assertEqual(st["steps"], [])
+        self.assertEqual(st["total"], 0)
+        self.assertEqual(st["current"], 0)
+
+
+class TestLogPorCampanha(Base):
+    """Achado 2: `_gravar_saida` grava <chave>.<campanha>.log para o log de
+    uma campanha não apagar o da anterior. Sem este teste, remover o sufixo
+    deixaria a suíte verde e reintroduziria o defeito (log da campanha 1
+    sobrescrito assim que a campanha 2 roda a mesma etapa)."""
+
+    def test_logs_de_campanhas_diferentes_coexistem(self):
+        self.fingir_execucao({})
+        self.runner.run_all("teste")
+        log_dir = self.runner.LOG_DIR
+        alpha = log_dir / "submonitor.ALPHA.log"
+        beta = log_dir / "submonitor.BETA.log"
+        self.assertTrue(alpha.exists(), f"faltou {alpha}")
+        self.assertTrue(beta.exists(), f"faltou {beta}")
+        # Conteúdo de cada um corresponde à sua campanha — não é só o nome do
+        # arquivo que muda, o cabeçalho grava a campanha certa.
+        self.assertIn("campanha: ALPHA", alpha.read_text(encoding="utf-8"))
+        self.assertIn("campanha: BETA", beta.read_text(encoding="utf-8"))
+        self.assertNotIn("campanha: BETA", alpha.read_text(encoding="utf-8"))
+
+
+class TestNomeCampanhaSeguro(Base):
+    """Achado 3: a allowlist do fallback local (só usada quando o import de
+    `campaigns` falha) precisa da mesma defesa que `campaigns.valid_name` já
+    tem (commit 150d4c8): `re.match` com "$" casa também antes de uma quebra
+    de linha final, então "RIOCARD\\n" passaria por match() mas não deveria
+    ser aceito como nome de campanha."""
+
+    def test_fallback_rejeita_nome_com_quebra_de_linha_final(self):
+        with mock.patch.object(self.runner, "_valid_name", None):
+            self.assertEqual(self.runner._nome_campanha_seguro("RIOCARD\n"), "")
+
+    def test_fallback_aceita_nome_valido(self):
+        with mock.patch.object(self.runner, "_valid_name", None):
+            self.assertEqual(self.runner._nome_campanha_seguro("RIOCARD"), "RIOCARD")
 
 
 if __name__ == "__main__":

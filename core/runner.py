@@ -128,9 +128,22 @@ def _etapas_da_campanha(campanha: str) -> list[dict]:
 
     Uma campanha só entra na execução de uma etapa quando o arquivo de alvos do
     escopo dela existe — senão as 4 etapas de domínio falhariam com "Campanha X
-    não encontrada neste escopo" em toda campanha só-de-IP (e vice-versa), 4
-    erros falsos por campanha só porque a lista tentou unir os dois escopos sem
-    filtrar. Sem campanha (modo antigo) ou sem como checar o disco, roda tudo.
+    não encontrada neste escopo" em toda campanha só-de-IP, erro falso só porque
+    a lista tentou unir os dois escopos sem filtrar. Sem campanha (modo antigo)
+    ou sem como checar o disco, roda tudo.
+
+    Exceção proposital para o escopo `monitor`: quando a campanha JÁ tem
+    arquivo em `submonitor` (domínio), o escopo `monitor` entra no plano mesmo
+    que `monitor/targets/<campanha>.txt` ainda não exista no disco AGORA — é a
+    própria etapa `submonitor` que cria esse arquivo ao final do scan de
+    subdomínios (`feed_monitor_targets`, scanners/submonitor.py), antes de as
+    etapas de porta rodarem, na mesma execução. Se o plano olhasse só o disco
+    no início (congelado antes de qualquer etapa rodar), toda campanha NOVA
+    (criada só com domínio, fluxo normal da interface) perderia monitor_tcp/
+    monitor_udp em silêncio na primeira execução — 4 etapas verdes, painel sem
+    aviso nenhum, e nunca escaneava porta. O caso inverso continua de fora:
+    campanha só-de-IP (sem domínio) não ganha as etapas de domínio, porque
+    nada aqui cria submonitor/targets/<campanha>.txt.
     """
     if not campanha or _targets_dir is None:
         return list(STEPS)
@@ -141,6 +154,8 @@ def _etapas_da_campanha(campanha: str) -> list[dict]:
                 escopos_disponiveis.add(escopo)
         except Exception:
             continue
+    if "submonitor" in escopos_disponiveis:
+        escopos_disponiveis.add("monitor")
     return [s for s in STEPS if s["scope"] in escopos_disponiveis]
 
 
@@ -160,7 +175,10 @@ def _nome_campanha_seguro(campanha: str) -> str:
         return ""
     if _valid_name is not None:
         return campanha if _valid_name(campanha) else ""
-    if campanha in (".", "..") or not re.match(r"^[A-Za-z0-9._-]{1,64}$", campanha):
+    # fullmatch (não match): "$" casa também antes de uma quebra de linha
+    # final, então match() aprovaria "RIOCARD\n" — mesmo defeito corrigido em
+    # campaigns.valid_name no commit 150d4c8.
+    if campanha in (".", "..") or not re.fullmatch(r"^[A-Za-z0-9._-]{1,64}$", campanha):
         return ""
     return campanha
 
@@ -363,9 +381,20 @@ def run_all(actor: str = "web", campanha: str = "") -> int:
             state["campanhas"][i]["status"] = "skipped"
             state["campanhas"][i]["detail"] = "nenhum alvo encontrado em escopo nenhum"
             state["etapas_feitas_anteriores"] += len(etapas)
+            # Reseta as etapas: sem isto, enquanto esta é a campanha corrente
+            # o painel mostra os passos da campanha ANTERIOR como se fossem
+            # dela (state["steps"] só é substituído de novo pela próxima
+            # campanha que de fato rodar).
+            state["steps"] = []
+            state["total"] = 0
+            state["current"] = 0
             _write_status(state)
             print(f"[ARGUS] === campanha {i + 1}/{len(alvos)}: {alvo} — "
                   "sem alvo em escopo nenhum, pulada ===")
+            # falhas_seguidas NÃO é zerada aqui de propósito: pular não é
+            # recuperação do ambiente (nada rodou para provar que voltou a
+            # funcionar). Então falha → pulada → falha ainda soma duas
+            # seguidas e aborta o restante, como se a pulada não existisse.
             continue
 
         state["campanhas"][i]["status"] = "running"
