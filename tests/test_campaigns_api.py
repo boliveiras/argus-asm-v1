@@ -70,6 +70,13 @@ class TestGravacao(Base):
                           headers=self.H, json={"prefixos": [""]})
         self.assertEqual(r.status_code, 400)
 
+    def test_escopo_monitor_recusado(self):
+        # Prefixo de wordlist só existe p/ domínio (submonitor); monitor guarda
+        # IP/CIDR — aceitar aqui gravaria configuração que nunca seria lida.
+        r = self.app.post("/api/campaigns/monitor/RIOCARD/prefixos",
+                          headers=self.H, json={"prefixos": [""]})
+        self.assertEqual(r.status_code, 400)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -775,6 +775,14 @@ def create_app():
             return jsonify(ok=False, error="CSRF: header ausente"), 403
         if scope not in CAMP.SCOPES:
             return jsonify(ok=False, error="escopo inválido"), 400
+        # Prefixo de wordlist só existe p/ o submonitor (domínio): o monitor guarda
+        # IP/CIDR, que não tem prefixo DNS para combinar. Aceitar scope=monitor
+        # gravava uma configuração que NUNCA seria lida — 200 OK sobre um "sim"
+        # que na prática é ignorado é pior do que recusar; a interface nunca
+        # manda isso, então recusar aqui não quebra nenhum fluxo existente.
+        if scope != "submonitor":
+            return jsonify(ok=False,
+                           error="prefixos de wordlist só se aplicam ao escopo submonitor"), 400
         dados = request.get_json(silent=True) or {}
         try:
             salvos = CAMP.set_prefixos(name, dados.get("prefixos", []))
