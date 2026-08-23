@@ -6,9 +6,11 @@ nunca ignorado em silêncio.
 """
 
 import os
+import sqlite3
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, "core")
@@ -142,6 +144,47 @@ class TestNomeDeCampanha(Base):
         CAMP.set_prefixos("RIOCARD\n", ["dev-"])
         self.assertEqual(list(CAMP.ler_config()), ["RIOCARD"])
         self.assertEqual(CAMP.prefixos_da_campanha("RIOCARD"), ["dev-"])
+
+    def test_save_campaign_normaliza_o_nome_no_cabecalho_e_no_retorno(self):
+        # Antes: _campaign_path normalizava e gravava o .txt certo, mas _render()
+        # e o dict de retorno (auditoria) ainda usavam o nome CRU com espaço.
+        info = CAMP.save_campaign("submonitor", " RIOCARD ", ["empresa.com"],
+                                  overwrite=False, base=self.tmp.name)
+        self.assertEqual(info["name"], "RIOCARD")
+        conteudo = (Path(self.tmp.name) / "submonitor" / "targets" / "RIOCARD.txt").read_text(encoding="utf-8")
+        self.assertIn("# Campanha: RIOCARD\n", conteudo)
+        self.assertNotIn(" RIOCARD ", conteudo)
+
+    def test_delete_campaign_normaliza_o_nome(self):
+        CAMP.save_campaign("submonitor", "RIOCARD", ["empresa.com"],
+                           overwrite=False, base=self.tmp.name)
+        info = CAMP.delete_campaign("submonitor", " RIOCARD ", base=self.tmp.name)
+        self.assertEqual(info["name"], "RIOCARD")
+        self.assertFalse((Path(self.tmp.name) / "submonitor" / "targets" / "RIOCARD.txt").exists())
+
+    def test_rename_campaign_com_nome_cru_migra_o_historico(self):
+        # Era o bug concreto: renomear a partir de " RIOCARD" (espaço na ponta)
+        # renomeava o arquivo certo (_campaign_path já normalizava) mas
+        # _migrate_history recebia old/new CRUS e o UPDATE...WHERE campanha=old
+        # nunca casava nenhuma linha -> "migrated: 0" sem erro, histórico órfão.
+        base = Path(self.tmp.name)
+        CAMP.save_campaign("submonitor", "RIOCARD", ["empresa.com"],
+                           overwrite=False, base=self.tmp.name)
+        db_dir = base / "submonitor"
+        db_dir.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(db_dir / "submonitor.db"))
+        conn.execute("CREATE TABLE subdomains (id INTEGER PRIMARY KEY, campanha TEXT, hostname TEXT)")
+        conn.execute("INSERT INTO subdomains (campanha, hostname) VALUES ('RIOCARD', 'www.empresa.com')")
+        conn.commit(); conn.close()
+
+        info = CAMP.rename_campaign("submonitor", " RIOCARD", "RIOCARD2 ", base=self.tmp.name)
+        self.assertEqual(info["migrated"], 1)
+        self.assertEqual(info["name"], "RIOCARD2")
+
+        conn = sqlite3.connect(str(db_dir / "submonitor.db"))
+        rows = conn.execute("SELECT campanha FROM subdomains").fetchall()
+        conn.close()
+        self.assertEqual(rows, [("RIOCARD2",)])
 
 
 if __name__ == "__main__":

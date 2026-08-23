@@ -386,6 +386,12 @@ def _render(scope: str, name: str, targets: list[str]) -> str:
 def save_campaign(scope: str, name: str, targets, *, overwrite: bool,
                   base: str | None = None) -> dict:
     """Cria (overwrite=False) ou atualiza (True) a campanha. Recusa alvo inválido."""
+    # Normaliza ANTES de usar: _campaign_path já normaliza por dentro, mas devolve
+    # só o caminho — sem isto o cabeçalho do .txt e o dict de retorno (auditoria)
+    # seguiam com o nome CRU (ex.: " RIOCARD" com espaço), enquanto o arquivo no
+    # disco já era o normalizado. Validar uma string e usar outra é o mesmo bug
+    # que normalize_name() existe para fechar (ver valid_name()).
+    name = normalize_name(name)
     path = _campaign_path(scope, name, base)
     if path.exists() and not overwrite:
         raise CampaignError(f"campanha já existe: {name}")
@@ -403,6 +409,7 @@ def save_campaign(scope: str, name: str, targets, *, overwrite: bool,
 
 def delete_campaign(scope: str, name: str, base: str | None = None) -> dict:
     """Remove APENAS o arquivo de alvos. Histórico/achados nos bancos são preservados."""
+    name = normalize_name(name)          # mesmo motivo de save_campaign: nome cru != nome usado
     path = _campaign_path(scope, name, base)
     if not path.exists():
         raise CampaignError(f"campanha não encontrada: {name}")
@@ -519,6 +526,12 @@ def save_wordlist(raw, base: str | None = None) -> dict:
 
 def rename_campaign(scope: str, old: str, new: str, base: str | None = None) -> dict:
     """Renomeia a campanha e MIGRA o histórico (campo campanha nos bancos)."""
+    # Normaliza old/new ANTES de tudo: _migrate_history fazia UPDATE ... WHERE
+    # campanha=old com o nome CRU (ex.: " RIOCARD" com espaço na ponta) enquanto o
+    # arquivo já tinha sido renomeado para o normalizado — o WHERE nunca casava
+    # nenhuma linha e "migrated: 0" voltava sem erro, escondendo o histórico órfão.
+    old = normalize_name(old)
+    new = normalize_name(new)
     src = _campaign_path(scope, old, base)
     dst = _campaign_path(scope, new, base)
     if not src.exists():
