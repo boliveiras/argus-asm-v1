@@ -959,8 +959,12 @@ if [ ! -f "$BASE_DIR/campaigns.json" ]; then
   printf '{}\n' > "$BASE_DIR/campaigns.json"
   ok "Configuração de campanhas criada: $BASE_DIR/campaigns.json"
 fi
+# 660, não 664: dono root, grupo $APP_USER (já dono do grupo acima, sem precisar
+# de ACL) tem leitura/escrita; "outros" fica sem acesso nenhum — igual aos demais
+# .json de configuração deste script (ver bloco do logpush.json). Os scanners
+# rodam como root e leem de qualquer forma.
 chown "root:$APP_USER" "$BASE_DIR/campaigns.json" 2>/dev/null || true
-chmod 664 "$BASE_DIR/campaigns.json" 2>/dev/null || true
+chmod 660 "$BASE_DIR/campaigns.json" 2>/dev/null || true
 
 step "12b. Configurando serviço web (API de achados)"
 cat > /etc/systemd/system/argus-web.service << UNITEOF
