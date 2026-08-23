@@ -11,6 +11,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, "core")
 
@@ -25,11 +26,21 @@ class Base(unittest.TestCase):
         os.environ.pop("ARGUS_DB", None)
         os.environ["ARGUS_BASE"] = self.tmp.name
         base = Path(self.tmp.name)
+        # Sem apontar para dentro do tmp dir, _gravar_saida tentaria escrever no
+        # /var/log/argus/scan REAL a cada etapa simulada — inofensivo no Windows
+        # (falha calada), mas em Linux como root a suíte escreveria no diretório
+        # de log de produção.
+        os.environ["ARGUS_SCAN_LOG_DIR"] = str(base / "scanlog")
         (base / "store").mkdir(parents=True, exist_ok=True)
+        # Caso normal: a campanha existe nos DOIS escopos, porque a etapa de
+        # subdomínios cria automaticamente o arquivo de IPs correspondente.
         alvos = base / "submonitor" / "targets"
         alvos.mkdir(parents=True, exist_ok=True)
+        ips = base / "monitor" / "targets"
+        ips.mkdir(parents=True, exist_ok=True)
         for nome in ("ALPHA", "BETA", "GAMA"):
             (alvos / f"{nome}.txt").write_text("empresa.com\n", encoding="utf-8")
+            (ips / f"{nome}.txt").write_text("10.0.0.1\n", encoding="utf-8")
         import runner
         # BASE_DIR/STORE_DIR são constantes de módulo lidas de ARGUS_BASE na
         # importação. Sem recarregar, o segundo teste em diante herdaria o
@@ -42,13 +53,18 @@ class Base(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
         os.environ.pop("ARGUS_BASE", None)
+        os.environ.pop("ARGUS_SCAN_LOG_DIR", None)
         os.environ.pop("ARGUS_CAMPANHA", None)
 
     def fingir_execucao(self, resultado_por_campanha):
         """Substitui a execução real do subprocess por um dublê.
 
         Devolve rc=0 ou rc=1 conforme o mapa {campanha: True/False}, registrando
-        a ordem em que campanha e etapa foram chamadas.
+        a ordem em que campanha e etapa foram chamadas. Usa patch.object (com
+        addCleanup) em vez de atribuir direto em self.runner.subprocess.run: esse
+        atributo é o objeto-módulo `subprocess`, COMPARTILHADO entre todos os
+        arquivos de teste — atribuir sem restaurar vaza o dublê para a suíte
+        inteira (mesma classe de vazamento já vista com ARGUS_DB).
         """
         registro = self.executadas
 
@@ -63,7 +79,9 @@ class Base(unittest.TestCase):
             ok = resultado_por_campanha.get(campanha, True)
             return FakeProc(0 if ok else 1)
 
-        self.runner.subprocess.run = fake_run
+        patcher = mock.patch.object(self.runner.subprocess, "run", fake_run)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def status(self):
         return json.loads((Path(self.tmp.name) / "store" / "scan_status.json")
@@ -106,6 +124,14 @@ class TestLoop(Base):
         st = self.status()
         self.assertEqual(st["campanha"], "BETA")
 
+    def test_argus_campanha_e_limpa_ao_final(self):
+        # O tearDown faz pop() de ARGUS_CAMPANHA — sem esta asserção, uma
+        # regressão que deixasse a variável vazando entre execuções passaria
+        # despercebida (o pop no tearDown mascararia o vazamento).
+        self.fingir_execucao({})
+        self.runner.run_all("teste")
+        self.assertNotIn("ARGUS_CAMPANHA", os.environ)
+
 
 class TestAbort(Base):
     def test_duas_falhas_seguidas_abortam_o_restante(self):
@@ -124,6 +150,101 @@ class TestAbort(Base):
         st = self.status()
         self.assertEqual([c["status"] for c in st["campanhas"]],
                          ["failed", "succeeded", "failed"])
+
+
+class TestEscopoPorCampanha(Base):
+    """Correção 1: uma campanha pode existir só em submonitor (domínio), só em
+    monitor (IP) ou nos dois — a interface permite criar campanha só com IPs
+    (escopo "Monitor de Portas"). Cada campanha só deve rodar as etapas do(s)
+    escopo(s) em que de fato tem arquivo de alvos; senão as etapas de domínio
+    falhariam com "Campanha X não encontrada neste escopo" em toda campanha
+    só-de-IP (4 erros falsos)."""
+
+    def setUp(self):
+        super().setUp()
+        # Isola o teste: remove as campanhas padrão do Base (ALPHA/BETA/GAMA,
+        # que existem nos dois escopos) para não interferir na união enumerada.
+        base = Path(self.tmp.name)
+        for nome in ("ALPHA", "BETA", "GAMA"):
+            (base / "submonitor" / "targets" / f"{nome}.txt").unlink(missing_ok=True)
+            (base / "monitor" / "targets" / f"{nome}.txt").unlink(missing_ok=True)
+
+    def test_so_dominio_roda_so_as_etapas_de_dominio(self):
+        base = Path(self.tmp.name)
+        (base / "submonitor" / "targets" / "SODOMINIO.txt").write_text(
+            "empresa.com\n", encoding="utf-8")
+        self.fingir_execucao({})
+        self.runner.run_all("teste")
+        st = self.status()
+        self.assertEqual([c["nome"] for c in st["campanhas"]], ["SODOMINIO"])
+        self.assertEqual({s["key"] for s in st["steps"]},
+                         {"submonitor", "email", "credentials", "typosquat"})
+        self.assertEqual(st["total"], 4)
+        self.assertEqual(st["campanhas"][0]["status"], "succeeded")
+
+    def test_so_ip_roda_so_as_etapas_de_porta(self):
+        base = Path(self.tmp.name)
+        (base / "monitor" / "targets" / "SOIP.txt").write_text(
+            "10.0.0.1\n", encoding="utf-8")
+        self.fingir_execucao({})
+        self.runner.run_all("teste")
+        st = self.status()
+        self.assertEqual([c["nome"] for c in st["campanhas"]], ["SOIP"])
+        self.assertEqual({s["key"] for s in st["steps"]},
+                         {"monitor_tcp", "monitor_udp"})
+        self.assertEqual(st["total"], 2)
+        self.assertEqual(st["campanhas"][0]["status"], "succeeded")
+
+    def test_campanha_com_os_dois_roda_as_6_sem_regressao(self):
+        base = Path(self.tmp.name)
+        (base / "submonitor" / "targets" / "AMBOS.txt").write_text(
+            "empresa.com\n", encoding="utf-8")
+        (base / "monitor" / "targets" / "AMBOS.txt").write_text(
+            "10.0.0.1\n", encoding="utf-8")
+        self.fingir_execucao({})
+        self.runner.run_all("teste")
+        st = self.status()
+        self.assertEqual(len(st["steps"]), 6)
+        self.assertEqual(st["total"], 6)
+        self.assertEqual(len([c for c, _ in self.executadas if c == "AMBOS"]), 6)
+
+    def test_uniao_inclui_campanha_so_do_escopo_monitor(self):
+        base = Path(self.tmp.name)
+        (base / "submonitor" / "targets" / "COMDOMINIO.txt").write_text(
+            "empresa.com\n", encoding="utf-8")
+        (base / "monitor" / "targets" / "SOMONITOR.txt").write_text(
+            "10.0.0.2\n", encoding="utf-8")
+        self.fingir_execucao({})
+        self.runner.run_all("teste")
+        st = self.status()
+        # Antes da correção, _campanhas_do_submonitor só olhava o escopo
+        # submonitor — SOMONITOR (só-IP) sumiria da lista.
+        self.assertEqual([c["nome"] for c in st["campanhas"]],
+                         ["COMDOMINIO", "SOMONITOR"])
+        self.assertEqual([c["status"] for c in st["campanhas"]],
+                         ["succeeded", "succeeded"])
+
+    def test_campanha_sem_alvo_em_escopo_nenhum_e_pulada_sem_contar_falha(self):
+        base = Path(self.tmp.name)
+        (base / "submonitor" / "targets" / "TEMALVO.txt").write_text(
+            "empresa.com\n", encoding="utf-8")
+        self.fingir_execucao({})
+        # Simula o arquivo sumindo entre listar as campanhas e checar as
+        # etapas dela (ex.: outra requisição apagou a campanha no meio do
+        # caminho): força a união a incluir um nome sem arquivo em escopo
+        # nenhum, sem depender de janela de corrida real no teste.
+        with mock.patch.object(self.runner, "_campanhas_a_rodar",
+                               return_value=["TEMALVO", "FANTASMA"]):
+            self.runner.run_all("teste")
+        st = self.status()
+        self.assertEqual([c["nome"] for c in st["campanhas"]],
+                         ["TEMALVO", "FANTASMA"])
+        self.assertEqual([c["status"] for c in st["campanhas"]],
+                         ["succeeded", "skipped"])
+        # Campanha pulada não conta como falha nem entra na contagem de "duas
+        # falhas seguidas" que aborta o restante.
+        self.assertEqual(st["failed"], 0)
+        self.assertNotIn("FANTASMA", [c for c, _ in self.executadas])
 
 
 if __name__ == "__main__":

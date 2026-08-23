@@ -46,6 +46,7 @@ from __future__ import annotations
 import datetime
 import json
 import os
+import re
 import subprocess  # nosec B404 - sequência FIXA de comandos, sem shell e sem entrada do usuário
 import sys
 import time
@@ -73,50 +74,121 @@ STEP_TIMEOUT = int(os.environ.get("ARGUS_STEP_TIMEOUT", str(4 * 60 * 60)))
 # bem — e diagnosticar depois virava impossível (foi o que aconteceu com o "[ASN]").
 LOG_DIR = Path(os.environ.get("ARGUS_SCAN_LOG_DIR", "/var/log/argus/scan"))
 
-# Sequência FIXA (constante de código — nunca vem da Web).
+# Sequência FIXA (constante de código — nunca vem da Web). "scope" diz de qual
+# arquivo de alvos a etapa depende (submonitor/targets → domínios, monitor/targets
+# → IPs) — usado para decidir quais etapas rodam em cada campanha (ver
+# `_etapas_da_campanha`), já que uma campanha pode existir só num dos dois.
 STEPS: list[dict] = [
-    {"key": "submonitor",  "label": "Subdomínios",        "cmd": [str(BIN / "argus-submonitor")]},
-    {"key": "monitor_tcp", "label": "Portas TCP",         "cmd": [str(BIN / "argus-monitor"), "--tcp"]},
-    {"key": "monitor_udp", "label": "Portas UDP",         "cmd": [str(BIN / "argus-monitor"), "--udp"]},
-    {"key": "email",       "label": "Postura de e-mail",  "cmd": [str(BIN / "argus-email")]},
-    {"key": "credentials", "label": "Credenciais",        "cmd": [str(BIN / "argus-credentials")]},
-    {"key": "typosquat",   "label": "Typosquat",          "cmd": [str(BIN / "argus-typosquat")]},
+    {"key": "submonitor",  "label": "Subdomínios",        "scope": "submonitor",
+     "cmd": [str(BIN / "argus-submonitor")]},
+    {"key": "monitor_tcp", "label": "Portas TCP",         "scope": "monitor",
+     "cmd": [str(BIN / "argus-monitor"), "--tcp"]},
+    {"key": "monitor_udp", "label": "Portas UDP",         "scope": "monitor",
+     "cmd": [str(BIN / "argus-monitor"), "--udp"]},
+    {"key": "email",       "label": "Postura de e-mail",  "scope": "submonitor",
+     "cmd": [str(BIN / "argus-email")]},
+    {"key": "credentials", "label": "Credenciais",        "scope": "submonitor",
+     "cmd": [str(BIN / "argus-credentials")]},
+    {"key": "typosquat",   "label": "Typosquat",          "scope": "submonitor",
+     "cmd": [str(BIN / "argus-typosquat")]},
 ]
 
 # Lista de campanhas para o loop. Import tolerante: sem o módulo, o runner cai
 # no modo antigo (uma execução cobrindo todas as campanhas de uma vez).
 try:
     from campaigns import list_campaigns as _list_campaigns
+    from campaigns import targets_dir as _targets_dir
+    from campaigns import valid_name as _valid_name
 except Exception:                                   # pragma: no cover
     _list_campaigns = None
+    _targets_dir = None
+    _valid_name = None
 
 
-def _campanhas_do_submonitor() -> list[str]:
-    """Nomes das campanhas, em ordem. Vazio quando não há como listar."""
+def _campanhas_a_rodar() -> list[str]:
+    """Nomes das campanhas, em ordem — união dos dois escopos (submonitor ∪
+    monitor), sem duplicatas. Uma campanha pode existir só num escopo: a
+    interface permite criar campanha só com IPs (escopo "Monitor de Portas"),
+    e olhar só para submonitor (como antes) a fazia sumir do loop. Vazio quando
+    não há como listar."""
     if _list_campaigns is None:
         return []
-    try:
-        return sorted(c["name"] for c in _list_campaigns("submonitor"))
-    except Exception as exc:
-        print(f"[AVISO] não consegui listar as campanhas: {exc}", file=sys.stderr)
-        return []
+    nomes: set[str] = set()
+    for escopo in ("submonitor", "monitor"):
+        try:
+            nomes.update(c["name"] for c in _list_campaigns(escopo))
+        except Exception as exc:
+            print(f"[AVISO] não consegui listar as campanhas ({escopo}): {exc}",
+                  file=sys.stderr)
+    return sorted(nomes)
+
+
+def _etapas_da_campanha(campanha: str) -> list[dict]:
+    """Etapas de STEPS que se aplicam a esta campanha, na ordem original.
+
+    Uma campanha só entra na execução de uma etapa quando o arquivo de alvos do
+    escopo dela existe — senão as 4 etapas de domínio falhariam com "Campanha X
+    não encontrada neste escopo" em toda campanha só-de-IP (e vice-versa), 4
+    erros falsos por campanha só porque a lista tentou unir os dois escopos sem
+    filtrar. Sem campanha (modo antigo) ou sem como checar o disco, roda tudo.
+    """
+    if not campanha or _targets_dir is None:
+        return list(STEPS)
+    escopos_disponiveis = set()
+    for escopo in ("submonitor", "monitor"):
+        try:
+            if (_targets_dir(escopo) / f"{campanha}.txt").exists():
+                escopos_disponiveis.add(escopo)
+        except Exception:
+            continue
+    return [s for s in STEPS if s["scope"] in escopos_disponiveis]
+
+
+def _steps_state(etapas: list[dict]) -> list[dict]:
+    """Monta a lista `state["steps"]` para as etapas planejadas desta campanha."""
+    return [{"key": s["key"], "label": s["label"],
+             "cmd": " ".join(Path(c).name if i == 0 else c for i, c in enumerate(s["cmd"])),
+             "status": "pending", "rc": None, "duration": 0, "detail": ""} for s in etapas]
+
+
+def _nome_campanha_seguro(campanha: str) -> str:
+    """Nome de campanha seguro para compor um caminho de log (defesa em
+    profundidade): usa a mesma allowlist de `campaigns.valid_name` — e, se o
+    import de campaigns falhar, uma allowlist local equivalente — para o nome
+    nunca escapar do diretório de log. Devolve "" quando o nome é inválido."""
+    if not campanha:
+        return ""
+    if _valid_name is not None:
+        return campanha if _valid_name(campanha) else ""
+    if campanha in (".", "..") or not re.match(r"^[A-Za-z0-9._-]{1,64}$", campanha):
+        return ""
+    return campanha
 
 
 def _now() -> str:
     return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
-def _gravar_saida(chave: str, cmd: list, rc: int, saida: str) -> None:
-    """Grava a saída completa da etapa em /var/log/argus/scan/<chave>.log.
+def _gravar_saida(chave: str, cmd: list, rc: int, saida: str, campanha: str = "") -> None:
+    """Grava a saída completa da etapa em /var/log/argus/scan/<chave>[.campanha].log.
 
-    Sobrescreve a cada execução: interessa o último run, não histórico infinito.
-    Nunca deixa o log derrubar o scan — problema de disco/permissão só avisa.
-    Modo 0640 root:adm segue o padrão dos demais logs do Argus (PCI 10.3).
+    Um arquivo POR CAMPANHA quando há campanha: gravar sempre em <chave>.log
+    (sem distinguir campanha) fazia o log da campanha 1 ser sobrescrito assim
+    que a campanha 2 rodava a mesma etapa — sobrava só o log da última, e uma
+    falha na campanha 1 não deixava rastro depois que a 3 rodava. É a própria
+    razão de existir desta função (não perder o "porquê" de uma falha).
+    Sobrescreve a cada execução da MESMA campanha: interessa o último run
+    dela, não histórico infinito. Nunca deixa o log derrubar o scan —
+    problema de disco/permissão só avisa. Modo 0640 root:adm segue o padrão
+    dos demais logs do Argus (PCI 10.3).
     """
     try:
         LOG_DIR.mkdir(parents=True, exist_ok=True)
-        destino = LOG_DIR / f"{chave}.log"
+        nome_seguro = _nome_campanha_seguro(campanha)
+        sufixo = f".{nome_seguro}" if nome_seguro else ""
+        destino = LOG_DIR / f"{chave}{sufixo}.log"
         cabecalho = (f"# {' '.join(cmd)}\n"
+                     f"# campanha: {campanha or '(todas)'}\n"
                      f"# fim: {time.strftime('%Y-%m-%d %H:%M:%S')} | rc={rc}\n\n")
         fd = os.open(destino, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o640)
         with os.fdopen(fd, "w", encoding="utf-8", errors="replace") as fh:
@@ -150,9 +222,7 @@ def _initial_state(actor: str) -> dict:
         "total": len(STEPS),
         "percent": 0,
         "current_label": STEPS[0]["label"],
-        "steps": [{"key": s["key"], "label": s["label"],
-                   "cmd": " ".join(Path(c).name if i == 0 else c for i, c in enumerate(s["cmd"])),
-                   "status": "pending", "rc": None, "duration": 0, "detail": ""} for s in STEPS],
+        "steps": _steps_state(STEPS),
         # "succeeded" (e não "ok"): a API devolve o status com `ok=True` no envelope —
         # uma chave "ok" aqui colidiria com o campo de sucesso da própria resposta.
         "succeeded": 0, "failed": 0,
@@ -178,10 +248,11 @@ def _read_request() -> tuple[str, str]:
         return "web", ""
 
 
-def _executar_etapas(state: dict) -> tuple[int, int]:
-    """Roda os 6 módulos da campanha corrente. Devolve (ok, falhas)."""
+def _executar_etapas(state: dict, etapas: list[dict], campanha: str = "") -> tuple[int, int]:
+    """Roda os módulos planejados para a campanha corrente. Devolve (ok, falhas)."""
     ok = falhas = 0
-    for idx, step in enumerate(STEPS):
+    total = len(etapas)
+    for idx, step in enumerate(etapas):
         state["current"] = idx + 1
         state["current_label"] = step["label"]
         state["steps"][idx].update({"status": "running", "rc": None,
@@ -189,9 +260,10 @@ def _executar_etapas(state: dict) -> tuple[int, int]:
         _atualizar_percent(state, idx)
         _write_status(state)
 
-        print(f"[{idx + 1}/{len(STEPS)}] {step['label']} -> {' '.join(step['cmd'])}")
+        print(f"[{idx + 1}/{total}] {step['label']} -> {' '.join(step['cmd'])}")
         t0 = time.monotonic()
         rc, status, detail = 1, "fail", ""
+        # Falha NÃO interrompe a sequência: os scanners são independentes.
         try:
             # Captura a saída: quando um passo falha, a última linha útil vai para o status
             # e para o log — sem isso, a interface mostraria "falhou" sem dizer o porquê.
@@ -201,7 +273,7 @@ def _executar_etapas(state: dict) -> tuple[int, int]:
                 text=True, errors="replace")
             rc = proc.returncode
             status = "ok" if rc == 0 else "fail"
-            _gravar_saida(step["key"], step["cmd"], rc, proc.stdout or "")
+            _gravar_saida(step["key"], step["cmd"], rc, proc.stdout or "", campanha)
             if rc != 0:
                 lines = [ln.strip() for ln in (proc.stdout or "").splitlines() if ln.strip()]
                 detail = " | ".join(lines[-3:])[:300]
@@ -214,7 +286,7 @@ def _executar_etapas(state: dict) -> tuple[int, int]:
             parcial = exc.output or ""
             if isinstance(parcial, bytes):
                 parcial = parcial.decode("utf-8", "replace")
-            _gravar_saida(step["key"], step["cmd"], rc, parcial)
+            _gravar_saida(step["key"], step["cmd"], rc, parcial, campanha)
             ultimas = [ln.strip() for ln in parcial.splitlines() if ln.strip()][-3:]
             detail = (f"excedeu {STEP_TIMEOUT}s"
                       + (" · última saída: " + " | ".join(ultimas) if ultimas else ""))[:300]
@@ -244,55 +316,86 @@ def _executar_etapas(state: dict) -> tuple[int, int]:
 
 
 def _atualizar_percent(state: dict, etapas_feitas: int) -> None:
-    """Progresso global: conta as campanhas já concluídas mais as etapas da atual."""
-    total_campanhas = max(1, state.get("campanhas_total", 1))
-    feitas = state.get("campanha_idx", 1) - 1
-    total_etapas = total_campanhas * len(STEPS)
-    state["percent"] = int((feitas * len(STEPS) + etapas_feitas) * 100 / total_etapas)
+    """Progresso global: soma as etapas já concluídas nas campanhas anteriores
+    mais as desta. O total de etapas por campanha VARIA (nem toda campanha
+    roda as 6 — uma só-de-IP roda só 2), então não dá mais para multiplicar
+    campanhas × 6; o total vem da soma das etapas realmente planejadas para
+    cada campanha (`etapas_total_geral`, calculado no início do loop)."""
+    total_geral = max(1, state.get("etapas_total_geral", 1))
+    feitas_anteriores = state.get("etapas_feitas_anteriores", 0)
+    state["percent"] = int((feitas_anteriores + etapas_feitas) * 100 / total_geral)
 
 
 def run_all(actor: str = "web", campanha: str = "") -> int:
     # Campanha específica: uma execução só, como sempre foi.
     # Sem campanha: cada uma roda do início ao fim antes da próxima, para que o
     # resultado de uma esteja salvo mesmo se a seguinte falhar.
-    alvos = [campanha] if campanha else _campanhas_do_submonitor()
+    alvos = [campanha] if campanha else _campanhas_a_rodar()
     if not alvos:
         alvos = [""]          # sem lista de campanhas, mantém o modo antigo
+
+    # Etapas planejadas por campanha (varia: uma só-de-IP roda só 2, não 6) —
+    # calculado uma vez para o total do progresso global (`_atualizar_percent`).
+    planos = [_etapas_da_campanha(a) for a in alvos]
 
     state = _initial_state(actor)
     state["campanha"] = alvos[0]
     state["campanhas_total"] = len(alvos)
     state["campanha_idx"] = 1
     state["campanhas"] = [{"nome": n, "status": "pending"} for n in alvos]
+    state["etapas_total_geral"] = sum(len(p) for p in planos) or 1
+    state["etapas_feitas_anteriores"] = 0
     _write_status(state)
 
     escopo = f"campanha {campanha}" if campanha else f"{len(alvos)} campanha(s)"
-    print(f"[ARGUS] Execução sob demanda iniciada por '{actor}' ({escopo}) "
-          f"— {len(STEPS)} etapa(s) por campanha")
+    print(f"[ARGUS] Execução sob demanda iniciada por '{actor}' ({escopo})")
 
     falhas_seguidas = 0
     for i, alvo in enumerate(alvos):
         state["campanha"] = alvo
         state["campanha_idx"] = i + 1
+        etapas = planos[i]
+
+        if alvo and not etapas:
+            # Campanha sem arquivo de alvos em escopo nenhum — o arquivo foi
+            # apagado entre listar as campanhas e chegar aqui. Não é falha do
+            # scan (nada rodou, nada quebrou): é "nada para rodar".
+            state["campanhas"][i]["status"] = "skipped"
+            state["campanhas"][i]["detail"] = "nenhum alvo encontrado em escopo nenhum"
+            state["etapas_feitas_anteriores"] += len(etapas)
+            _write_status(state)
+            print(f"[ARGUS] === campanha {i + 1}/{len(alvos)}: {alvo} — "
+                  "sem alvo em escopo nenhum, pulada ===")
+            continue
+
         state["campanhas"][i]["status"] = "running"
         state["current"] = 0
-        # Cada campanha começa com as etapas zeradas: o painel mostra o progresso
-        # DELA, não o resíduo da anterior.
-        for s in state["steps"]:
-            s.update({"status": "pending", "rc": None, "duration": 0, "detail": ""})
+        state["total"] = len(etapas)
+        # Cada campanha começa com as etapas DELA (não as 6 fixas): o painel
+        # mostra o progresso real, sem exibir como pendente uma etapa que
+        # nunca vai rodar (ex.: as de domínio numa campanha só-de-IP).
+        state["steps"] = _steps_state(etapas)
         _write_status(state)
 
         if alvo:
             os.environ["ARGUS_CAMPANHA"] = alvo
         else:
             os.environ.pop("ARGUS_CAMPANHA", None)
-        print(f"[ARGUS] === campanha {i + 1}/{len(alvos)}: {alvo or 'todas'} ===")
+        print(f"[ARGUS] === campanha {i + 1}/{len(alvos)}: {alvo or 'todas'} "
+              f"({len(etapas)} etapa(s)) ===")
 
-        ok, falhas = _executar_etapas(state)
+        ok, falhas = _executar_etapas(state, etapas, alvo)
         # Campanha só conta como falha quando NENHUMA etapa passou: um typosquat
         # que falha sozinho não invalida os subdomínios já encontrados.
         completou = ok > 0
         state["campanhas"][i]["status"] = "succeeded" if completou else "failed"
+        # Detalhe da(s) etapa(s) que falharam: sem isto, o motivo da falha desta
+        # campanha some do estado assim que a próxima reseta `state["steps"]`.
+        detalhes = [f"{s['key']}: {s['detail']}" for s in state["steps"]
+                   if s["status"] not in ("ok", "pending") and s["detail"]]
+        if detalhes:
+            state["campanhas"][i]["detail"] = " | ".join(detalhes)[:500]
+        state["etapas_feitas_anteriores"] += len(etapas)
         falhas_seguidas = 0 if completou else falhas_seguidas + 1
         _write_status(state)
 
