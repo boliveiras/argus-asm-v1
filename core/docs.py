@@ -186,10 +186,18 @@ subdomínios, e-mail, credenciais e typosquat) de um cliente ou unidade.</p>
 <p>Renomear leva o histórico junto. Excluir tira do escopo mas <b>preserva os
 achados</b> — você deixa de varrer, sem perder o que já foi encontrado.</p>
 
+<p>Rodar sem escolher uma campanha no seletor não mistura tudo numa varredura só:
+a execução passa por <b>uma campanha de cada vez</b>, do início ao fim, e o
+resultado de cada uma é <b>salvo antes de a próxima começar</b>. Se a terceira
+campanha falhar, as duas primeiras já estão gravadas — não se perde o que já
+tinha sido encontrado.</p>
+
 <p class="doc-nota">O escopo cresce por multiplicação: cada domínio novo custa uma
-wordlist inteira de consultas. Muitos domínios com uma wordlist grande pode passar
-do tempo limite de execução — nesse caso, rode uma campanha por vez pelo seletor
-ao lado do botão.</p>
+wordlist inteira de consultas, e a wordlist padrão tem cinco prefixos
+(<code>prod-</code>, <code>hml-</code>, <code>dev-</code>, <code>aceite-</code> e o
+domínio puro) — é essa multiplicação por cinco que faz a execução arrastar. Os
+prefixos são configuráveis por campanha: desmarque os que não interessam para
+cortar o volume de consultas na mesma proporção.</p>
 """),
 
     ("scan", "Execução dos scans", """
