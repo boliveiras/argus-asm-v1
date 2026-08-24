@@ -920,7 +920,7 @@ if [ "$INSTALL_APACHE" = true ]; then
     # cai e o login continua funcionando (verificado num Apache 2.4.68 real). E
     # como login, index e a tela de troca ficam nos <Files> abaixo com valid-user,
     # o portal segue navegável e dá para recuperar com
-    # `users.py --sincronizar-grupos`. É o lado certo para errar: falha fechada no
+    # \`users.py --sincronizar-grupos\`. É o lado certo para errar: falha fechada no
     # dado, aberta no caminho de saída.
     #
     # Detalhe do Apache: negação de AUTORIZAÇÃO para quem JÁ está logado sai como
