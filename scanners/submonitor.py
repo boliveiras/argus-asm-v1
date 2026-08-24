@@ -794,7 +794,12 @@ def _build_candidates(campaigns: list[tuple[str, list[str]]],
                     if key not in candidates:
                         candidates[key] = "crtsh"
     else:
-        print("  [CRT.SH] provider indisponível — pulando descoberta passiva")
+        # Dizer só "indisponível" escondia três causas distintas: módulo não
+        # instalado, fonte desligada na tela, ou chave ausente. Cada uma tem uma
+        # ação diferente, e quem lê o log precisa saber qual é.
+        _motivo = ("módulo não instalado" if not _CRTSH_AVAILABLE
+                   else "desligado ou sem chave em Fontes")
+        print(f"  [CRT.SH] descoberta passiva pulada: {_motivo}")
 
     # 3. Candidatos do crt.name (Certificate Transparency, fonte independente)
     if _CRTNAME_AVAILABLE and _fonte_ligada("crtname"):
@@ -809,7 +814,12 @@ def _build_candidates(campaigns: list[tuple[str, list[str]]],
                     if key not in candidates:
                         candidates[key] = "crtname"
     else:
-        print("  [CRT.NAME] provider indisponível — pulando descoberta passiva")
+        # Dizer só "indisponível" escondia três causas distintas: módulo não
+        # instalado, fonte desligada na tela, ou chave ausente. Cada uma tem uma
+        # ação diferente, e quem lê o log precisa saber qual é.
+        _motivo = ("módulo não instalado" if not _CRTNAME_AVAILABLE
+                   else "desligado ou sem chave em Fontes")
+        print(f"  [CRT.NAME] descoberta passiva pulada: {_motivo}")
 
     # 4. Candidatos do urlscan.io (Search API, passivo)
     if _URLSCAN_AVAILABLE and _fonte_ligada("urlscan"):
@@ -824,7 +834,12 @@ def _build_candidates(campaigns: list[tuple[str, list[str]]],
                     if key not in candidates:
                         candidates[key] = "urlscan"
     else:
-        print("  [URLSCAN] provider indisponível — pulando descoberta passiva")
+        # Dizer só "indisponível" escondia três causas distintas: módulo não
+        # instalado, fonte desligada na tela, ou chave ausente. Cada uma tem uma
+        # ação diferente, e quem lê o log precisa saber qual é.
+        _motivo = ("módulo não instalado" if not _URLSCAN_AVAILABLE
+                   else "desligado ou sem chave em Fontes")
+        print(f"  [URLSCAN] descoberta passiva pulada: {_motivo}")
 
     return candidates
 

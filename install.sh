@@ -300,16 +300,13 @@ copy_if_exists "threatintel/__init__.py"              "$THREATINTEL_DIR/__init__
 # apagaria tudo isso a cada reinstalação. O merge abaixo preserva o que existe e
 # só acrescenta campos novos que a versão nova do repo trouxe.
 merge_ti_config "threatintel/config.json"              "$THREATINTEL_DIR/config.json"
-copy_if_exists "threatintel/providers/__init__.py"    "$THREATINTEL_DIR/providers/__init__.py"
-copy_if_exists "threatintel/providers/abuseipdb.py"   "$THREATINTEL_DIR/providers/abuseipdb.py"
-copy_if_exists "threatintel/providers/crtsh.py"       "$THREATINTEL_DIR/providers/crtsh.py"
-copy_if_exists "threatintel/providers/whois_lookup.py" "$THREATINTEL_DIR/providers/whois_lookup.py"
-copy_if_exists "threatintel/providers/urlscan.py"     "$THREATINTEL_DIR/providers/urlscan.py"
-copy_if_exists "threatintel/providers/hudsonrock.py"  "$THREATINTEL_DIR/providers/hudsonrock.py"
-copy_if_exists "threatintel/providers/internetdb.py"  "$THREATINTEL_DIR/providers/internetdb.py"
-copy_if_exists "threatintel/providers/cisa_kev.py"    "$THREATINTEL_DIR/providers/cisa_kev.py"
-copy_if_exists "threatintel/providers/nvd.py"         "$THREATINTEL_DIR/providers/nvd.py"
-copy_if_exists "threatintel/providers/virustotal.py"   "$THREATINTEL_DIR/providers/virustotal.py"
+# Todo provider .py do repositório, não uma lista mantida à mão: o crt.name foi
+# entregue, testado e NUNCA rodou em produção porque ninguém lembrou de
+# acrescentá-lo aqui — o scan seguia dizendo "provider indisponível".
+for _prov in threatintel/providers/*.py; do
+  [ -e "$_prov" ] || continue
+  copy_if_exists "$_prov" "$THREATINTEL_DIR/providers/$(basename "$_prov")"
+done
 copy_if_exists "threatintel/core/__init__.py"         "$THREATINTEL_DIR/core/__init__.py"
 copy_if_exists "threatintel/core/database.py"         "$THREATINTEL_DIR/core/database.py"
 copy_if_exists "threatintel/core/cache.py"            "$THREATINTEL_DIR/core/cache.py"
