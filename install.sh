@@ -77,8 +77,6 @@ warn() { _log "WARN $*";   _limpa; echo -e "  ${YELLOW}⚠${NC}  $*"; barra; }
 err()  { _log "ERRO $*";   _limpa; echo -e "  ${RED}✗${NC}  $*"
          echo -e "  ${YELLOW}Detalhes em $INSTALL_LOG${NC}"; exit 1; }
 step() { PASSO_ATUAL=$(( PASSO_ATUAL + 1 )); ROTULO="${*#*. }"; _log ""; _log "== $*"; barra; }
-# Usada antes de qualquer coisa que leia do teclado.
-pausa_barra() { _limpa; }
 
 # ── Configurações (edite aqui se necessário) ─────────────────
 BASE_DIR="/etc/argus"
@@ -99,6 +97,9 @@ LOG_DIR_AUDIT="/var/log/argus/audit"
 LOG_DIR_SCAN="/var/log/argus/scan"
 
 APACHE_DOCROOT="/var/www/argus"
+# Lista do grupo `liberados` (contas que já trocaram a senha inicial). Mantido
+# pelo users.py, lido pelo Apache no <Directory> do docroot.
+APACHE_GROUPFILE="$BASE_DIR/store/argus.groups"
 APACHE_CONF="/etc/apache2/sites-available/argus-monitor.conf"
 APACHE_PORT=8443
 APACHE_USER="monitor"
@@ -683,10 +684,24 @@ if [ "$INSTALL_APACHE" = true ]; then
 
   # auth_form/session/session_cookie/session_crypto/request → login form-based
   # (mod_auth_form) com sessão criptografada, no lugar do pop-up de Basic Auth.
+  # authz_groupfile → `Require group liberados` no docroot (contenção da senha
+  # inicial nos relatórios estáticos). NÃO vem habilitado por padrão no Debian/Kali.
   for mod in ssl rewrite headers auth_basic authn_file authn_core authz_core authz_user \
-             proxy proxy_http auth_form session session_cookie session_crypto request; do
+             authz_groupfile proxy proxy_http auth_form session session_cookie \
+             session_crypto request; do
     a2enmod "$mod" -q 2>/dev/null && ok "mod_$mod habilitado" || warn "mod_$mod não pôde ser habilitado"
   done
+
+  # Checagem DURA do authz_groupfile: o vhost gerado abaixo usa AuthGroupFile e
+  # `Require group`. Sem o módulo, essas linhas são diretiva desconhecida e o
+  # Apache se RECUSA a subir — o portal inteiro cairia, não só os relatórios.
+  # Abortar aqui é o lado seguro: nada foi reescrito ainda e o Apache que já roda
+  # continua com a configuração antiga.
+  if ! { apache2ctl -M 2>/dev/null | grep -q authz_groupfile_module; } \
+     && [ ! -e /etc/apache2/mods-enabled/authz_groupfile.load ]; then
+    err "mod_authz_groupfile ausente — sem ele o Apache não sobe com esta configuração. Habilite com: a2enmod authz_groupfile (pacote apache2) e rode o instalador de novo."
+  fi
+  ok "mod_authz_groupfile ativo (contenção dos relatórios)"
 
   # Docroot — arquivos estáticos servidos diretamente
   mkdir -p "$APACHE_DOCROOT"
@@ -757,20 +772,30 @@ if [ "$INSTALL_APACHE" = true ]; then
     [ -n "$ARGUS_SENHA_INICIAL" ] || err "não consegui gerar a senha inicial do portal"
     # -i lê a senha do stdin: com -b ela apareceria no `ps` de qualquer usuário
     # da máquina enquanto o htpasswd roda.
+    # -B: BCRYPT. Sem ele o padrão do Apache 2.4 é md5-apr1 ($apr1$), e a própria
+    # aplicação (users.py) grava e espera bcrypt — a conta nascia num formato que
+    # a troca de senha não conseguia migrar, e o portal ficava inacessível.
+    # -C 12: custo explícito. O default do htpasswd para bcrypt é 5, fraco demais
+    # para a credencial do administrador. O Apache lê bcrypt desde a 2.4.4, e o
+    # Debian/Kali empacota 2.4.5x — mod_auth_form/AuthBasicProvider file validam.
     if [ -f "$HTPASSWD_FILE" ]; then
       # Sem -c: o arquivo já existe com OUTRAS contas (criadas pela Web), e -c
       # o recria do zero — todas elas perderiam o acesso.
-      printf '%s' "$ARGUS_SENHA_INICIAL" | htpasswd -i "$HTPASSWD_FILE" "$APACHE_USER" 2>/dev/null \
+      printf '%s' "$ARGUS_SENHA_INICIAL" | htpasswd -i -B -C 12 "$HTPASSWD_FILE" "$APACHE_USER" 2>/dev/null \
         || err "não consegui gravar a credencial em $HTPASSWD_FILE"
     else
-      printf '%s' "$ARGUS_SENHA_INICIAL" | htpasswd -ci "$HTPASSWD_FILE" "$APACHE_USER" 2>/dev/null \
+      printf '%s' "$ARGUS_SENHA_INICIAL" | htpasswd -ci -B -C 12 "$HTPASSWD_FILE" "$APACHE_USER" 2>/dev/null \
         || err "não consegui criar $HTPASSWD_FILE"
     fi
-    # A conta nasce travada: até a troca, a API responde 403 em tudo. É o que
-    # torna aceitável uma senha que passou pela tela.
-    ARGUS_BASE="$BASE_DIR" "$PYTHON_BIN" "$BASE_DIR/users.py" --marcar-troca "$APACHE_USER" >/dev/null 2>&1 \
-      && ok "Conta $APACHE_USER criada (troca de senha obrigatória no 1º acesso)" \
-      || warn "não consegui marcar a troca obrigatória de $APACHE_USER — troque a senha no portal"
+    # A conta nasce travada: até a troca, a API responde 403 e o Apache nega os
+    # relatórios. É o que torna aceitável uma senha que passou pela tela — sem a
+    # marca, a senha impressa abaixo dá admin PLENO na hora. Por isso aqui é `err`,
+    # o mesmo rigor de falhar em GERAR a senha: metade da garantia não é garantia.
+    if ! ARGUS_BASE="$BASE_DIR" "$PYTHON_BIN" "$BASE_DIR/users.py" --marcar-troca "$APACHE_USER" >/dev/null 2>&1; then
+      ARGUS_SENHA_INICIAL=""               # não imprime senha sem o bloqueio de pé
+      err "não consegui marcar a troca obrigatória de $APACHE_USER. A conta ficaria com uma senha gerada e SEM bloqueio — abortando. Verifique $BASE_DIR/store/users.json e rode o instalador de novo."
+    fi
+    ok "Conta $APACHE_USER criada (troca de senha obrigatória no 1º acesso)"
   fi
   chmod 640 "$HTPASSWD_FILE"
   chown root:www-data "$HTPASSWD_FILE"
@@ -780,6 +805,26 @@ if [ "$INSTALL_APACHE" = true ]; then
   if [ -f "$BASE_DIR/store/users.json" ]; then
     chown "root:$APP_USER" "$BASE_DIR/store/users.json" 2>/dev/null || true
     chmod 660 "$BASE_DIR/store/users.json" 2>/dev/null || true
+  fi
+
+  # ── Group file do Apache: quem já trocou a senha inicial ──────────────────
+  # Os relatórios são HTML ESTÁTICO com o dado embutido — o Flask não os vê, e o
+  # desvio por JavaScript não segura quem usa curl. Quem contém é o Apache:
+  # `Require group liberados` no docroot. Este arquivo é a lista do grupo, e o
+  # users.py o regenera a cada marcação/liberação.
+  # A sincronização roda SEMPRE (idempotente): numa atualização, a instalação
+  # antiga não tem o arquivo, e sem ele o Apache negaria os relatórios a todos.
+  if ARGUS_BASE="$BASE_DIR" "$PYTHON_BIN" "$BASE_DIR/users.py" --sincronizar-grupos >/dev/null 2>&1; then
+    # 0644 e não 640: o Apache é www-data e não está no grupo $APP_GROUP; o
+    # serviço reescreve o arquivo e não conseguiria devolver o grupo www-data.
+    # O conteúdo é só uma lista de NOMES — nenhum hash, nenhum segredo.
+    chmod 644 "$APACHE_GROUPFILE" 2>/dev/null || true
+    ok "Group file de acesso aos relatórios criado ($APACHE_GROUPFILE)"
+  else
+    # Fail secure: sem o arquivo o Apache nega os relatórios (a todos), mas o
+    # login, o portal e a tela de troca de senha continuam de pé — dá para
+    # recuperar sem console. Por isso é warn, não err.
+    warn "não consegui gerar $APACHE_GROUPFILE — os relatórios ficarão negados até rodar: $PYTHON_BIN $BASE_DIR/users.py --sincronizar-grupos"
   fi
 
   # Gestão de contas pela Web: o serviço precisa GRAVAR o htpasswd (criar/remover
@@ -863,6 +908,26 @@ if [ "$INSTALL_APACHE" = true ]; then
     SessionCryptoPassphraseFile ${SESSION_KEY_FILE}
     SessionMaxAge 28800
 
+    # ── Contenção da senha inicial no ARQUIVO ESTÁTICO ────────────────
+    # Os relatórios (findings/monitor/submonitor/credentials/email/typosquat) são
+    # HTML gerado, com o achado EMBUTIDO — o Flask não os serve, então o guard da
+    # API não os alcança, e o desvio por JavaScript não segura quem baixa a página
+    # com curl. Quem contém é o Apache: só entra no grupo \`liberados\` quem já
+    # trocou a senha inicial (a lista é mantida pelo users.py).
+    #
+    # Se o group file sumir ou ficar ilegível, o mod_authz_groupfile registra
+    # AH01665 e devolve AUTHZ_DENIED: os relatórios são negados, o servidor NÃO
+    # cai e o login continua funcionando (verificado num Apache 2.4.68 real). E
+    # como login, index e a tela de troca ficam nos <Files> abaixo com valid-user,
+    # o portal segue navegável e dá para recuperar com
+    # `users.py --sincronizar-grupos`. É o lado certo para errar: falha fechada no
+    # dado, aberta no caminho de saída.
+    #
+    # Detalhe do Apache: negação de AUTORIZAÇÃO para quem JÁ está logado sai como
+    # 401 (o authz_core chama ap_note_auth_failure), não 403. Não é o formulário
+    # de login de volta — é a página de erro do Apache. Só se chega nela digitando
+    # a URL do relatório na mão: a navegação normal some para quem está travado
+    # (o portal esconde o menu) e o JS leva direto para /usuarios.html.
     <Directory "${APACHE_DOCROOT}">
         Options -Indexes
         AllowOverride None
@@ -870,14 +935,33 @@ if [ "$INSTALL_APACHE" = true ]; then
         AuthName "Argus"
         AuthFormProvider file
         AuthUserFile ${HTPASSWD_FILE}
+        AuthGroupFile ${APACHE_GROUPFILE}
         AuthFormLoginRequiredLocation "/login.html"
-        Require valid-user
+        Require group liberados
     </Directory>
 
     # A página de login é PÚBLICA (precisa ser alcançável sem sessão).
     <Files "login.html">
         Require all granted
     </Files>
+
+    # Saída do bloqueio: a tela de troca de senha e a home para onde o login cai.
+    # Fechá-las junto com os relatórios trancaria a própria porta de saída — o
+    # usuário logaria e receberia 403 sem chegar ao formulário de troca.
+    # Nenhuma das duas traz achado embutido: usuarios.html é formulário e index.html
+    # é o hub de links (o conteúdo delas vem da API, que o guard já barra).
+    <Files "usuarios.html">
+        Require valid-user
+    </Files>
+    <Files "index.html">
+        Require valid-user
+    </Files>
+
+    # CSS/fontes/logo: sem eles a tela de troca renderiza quebrada. São estáticos
+    # de apresentação, sem dado de cliente.
+    <Directory "${APACHE_DOCROOT}/assets">
+        Require valid-user
+    </Directory>
 
     <FilesMatch "\.(db|log|json|py|sh)$">
         Require all denied
@@ -958,7 +1042,14 @@ APACHECONF
   fi
 
   a2ensite argus-monitor -q 2>/dev/null && ok "Site argus-monitor habilitado" || warn "Falha ao habilitar site"
-  apache2ctl configtest 2>/dev/null && ok "Configuração Apache válida" || warn "Verifique: apache2ctl configtest"
+  # configtest é ERRO, não aviso: seguir para o `systemctl restart` com uma
+  # configuração inválida derruba o Apache — e um portal fora do ar é pior do que
+  # uma instalação que parou avisando o motivo.
+  if apache2ctl configtest >>"$INSTALL_LOG" 2>&1; then
+    ok "Configuração Apache válida"
+  else
+    err "a configuração do Apache não passou no configtest — NÃO reiniciei o serviço (o que está no ar continua no ar). Detalhes: apache2ctl configtest"
+  fi
   systemctl enable apache2 2>/dev/null
   systemctl restart apache2 2>/dev/null && ok "Apache2 reiniciado" || warn "Falha ao reiniciar Apache"
 

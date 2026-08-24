@@ -281,18 +281,30 @@ vazar, o dano se limita a gravar objeto no prefixo. O recurso é <code>logs/*</c
 </table>
 
 <p>Cada um troca a própria senha informando a atual; o administrador redefine a de
-qualquer um. As senhas são guardadas apenas como hash, e toda ação em contas fica
-na trilha de auditoria.</p>
+qualquer um. As senhas são guardadas apenas como hash <b>bcrypt</b> (instalações
+antigas, em md5-apr1, migram sozinhas na primeira troca), e toda ação em contas
+fica na trilha de auditoria.</p>
 
 <p><b>Senha inicial.</b> Ninguém inventa senha aqui: o Argus gera a senha de toda
 conta nova — a do administrador aparece ao final da instalação, a das demais
 aparece uma única vez ao criar a conta. Ela não é guardada em lugar nenhum, então
 anote na hora e repasse por um canal seguro.</p>
 
-<p>Enquanto a pessoa não trocar essa senha, a conta <b>não abre mais nada</b>:
-toda consulta é recusada e a interface leva direto à troca. É o que torna seguro
-mostrar a senha na tela — se alguém a vir no caminho, ela não dá acesso a achado
-algum, só à própria troca.</p>
+<p>Enquanto a pessoa não trocar essa senha, a conta fica <b>presa na tela de
+troca</b>: toda consulta da API é recusada e os relatórios são negados pelo
+próprio servidor web — a conta só entra na lista de liberados depois que a senha
+nova é definida. Sobram o login, esta tela e a página inicial, que não trazem
+achado nenhum. É o que torna seguro mostrar a senha na tela: vista por alguém no
+caminho, ela serve para trocar a senha e nada mais.</p>
+
+<p><b>Conta presa?</b> Se a troca não passar (senha inicial perdida, por exemplo),
+quem tem acesso ao servidor destrava por linha de comando:
+<code>sudo python3 /etc/argus/users.py --limpar-marca NOME</code>. Em seguida o
+administrador redefine a senha pela tela — ela nasce gerada e travada de novo.</p>
+
+<p><b>Redefinir a senha de alguém.</b> O Argus gera a senha nova e mostra uma
+única vez, do mesmo jeito que na criação; a conta volta a ficar presa na troca até
+a pessoa definir a dela. O administrador não inventa senha em lugar nenhum.</p>
 """),
 
     ("correlacao", "Mapa de correlação", """

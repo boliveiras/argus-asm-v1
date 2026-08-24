@@ -139,10 +139,19 @@ sudo bash install.sh
 O instalador cuida do resto — dependências, comandos, agendamento, o portal e o
 usuário administrador. Ele não pergunta senha: gera uma e **mostra ao final, na
 tela** (não vai para log nenhum). No primeiro acesso o portal exige a troca, e até
-lá a conta não abre mais nada — se alguém vir a senha por cima do seu ombro, ela
-não serve para ler os achados. Reinstalar não mexe na senha que você já trocou.
-Ele mostra o progresso e o que exige atenção; o detalhe fica em
+lá a conta fica presa nessa tela: a API recusa toda consulta e o Apache nega os
+relatórios a quem ainda não trocou. Se alguém vir a senha por cima do seu ombro,
+ela serve para trocar a senha e nada mais. Reinstalar não mexe na senha que você
+já trocou. Ele mostra o progresso e o que exige atenção; o detalhe fica em
 `/var/log/argus-install.log`, e `--verbose` traz tudo para a tela.
+
+Se uma conta ficar **presa na troca de senha** (senha inicial perdida, por
+exemplo), destrave pelo console da máquina:
+
+```bash
+sudo python3 /etc/argus/users.py --limpar-marca monitor   # libera a conta
+sudo python3 /etc/argus/users.py --sincronizar-grupos     # refaz a lista do Apache
+```
 
 Os serviços rodam com uma conta própria (`argus`), **sem shell e sem login** — o que
 expõe serviço na rede não carrega os privilégios de quem administra a máquina. Quem

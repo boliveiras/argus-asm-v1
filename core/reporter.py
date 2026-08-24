@@ -5525,11 +5525,13 @@ _USERS_SCRIPT = r"""<script>
       .then(function(){ msg('Perfil de "'+name+'" atualizado.'); load(); })
       .catch(function(e){ msg(e.message,'err'); load(); });
   }
+  // Redefinir = mesmo modelo da criação: o servidor gera, a tela mostra UMA vez e
+  // a conta volta travada. O administrador não inventa nem digita senha aqui.
   function reset(name){
-    var pw=window.prompt('Nova senha para "'+name+'" (mínimo 8 caracteres):');
-    if(pw===null) return;
-    api('/api/users/'+encodeURIComponent(name),{method:'POST',body:JSON.stringify({password:pw})})
-      .then(function(){ msg('Senha de "'+name+'" redefinida. Informe a nova senha ao usuário por um canal seguro.'); })
+    if(!window.confirm('Redefinir a senha de "'+name+'"?\n\nO Argus gera uma senha nova e '
+       +'mostra aqui uma única vez. A conta fica travada na troca até "'+name+'" definir a dele.')) return;
+    api('/api/users/'+encodeURIComponent(name),{method:'POST',body:JSON.stringify({reset_password:true})})
+      .then(function(j){ mostrarSenha(name, j.password); load(); })
       .catch(function(e){ msg(e.message,'err'); });
   }
   function del(name){

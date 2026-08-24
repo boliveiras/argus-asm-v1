@@ -558,7 +558,26 @@ def create_app():
         # para LEITURA também: o achado é o dado sensível, e um guard só de POST
         # deixaria quem tem a senha gerada ler a superfície inteira da empresa sem
         # nunca trocá-la — o que destruiria a razão de a senha gerada ser aceitável.
-        if path not in _LIVRE_SENHA_INICIAL and USERS.must_change_password(_actor(request)):
+        try:
+            # A leitura acontece SEMPRE, mesmo nas rotas livres: com o arquivo
+            # ilegível não existe resposta segura para dar, e nem a troca de senha
+            # conseguiria concluir (ela precisa gravar nesse mesmo arquivo).
+            marcado = USERS.must_change_password(_actor(request))
+            travado = path not in _LIVRE_SENHA_INICIAL and marcado
+        except USERS.RolesUnavailable as exc:
+            # O arquivo que guarda a marca EXISTE mas não abre / não é JSON válido.
+            # Isso é anomalia, não instalação nova: sem ele não dá para afirmar que
+            # a conta está liberada, e afirmar que está era o que devolvia admin
+            # pleno (o papel do `monitor` vem do nome) com a senha do instalador.
+            # Nega tudo e deixa rastro — a saída é o console (users.py).
+            _audit(request, "AUTHZ_DENY",
+                   f"acesso negado: registro de perfis indisponível ({exc}) em {path}",
+                   outcome="deny", action="roles_unavailable")
+            return jsonify(ok=False,
+                           error="o registro de perfis do Argus está ilegível — o acesso "
+                                 "fica suspenso até um administrador corrigir "
+                                 "/etc/argus/store/users.json"), 403
+        if travado:
             _audit(request, "AUTHZ_DENY",
                    f"acesso negado: senha inicial ainda não trocada ({path})",
                    outcome="deny", action="must_change_password")
@@ -993,18 +1012,26 @@ def create_app():
             return jsonify(ok=False, error="CSRF: header ausente"), 403
         data = request.get_json(silent=True) or {}
         role = str(data.get("role", "") or "").lower()
-        password = str(data.get("password", "") or "")
-        if not role and not password:
-            return jsonify(ok=False, error="informe um novo perfil ou uma nova senha"), 400
+        # A senha da redefinição é GERADA pelo servidor, igual à da criação: uma
+        # senha enviada aqui é IGNORADA de propósito (aceitá-la reabriria o "admin
+        # escolhe a senha"). Qualquer um dos dois campos pede a redefinição — o
+        # `password` continua aceito só para não quebrar cliente antigo.
+        redefinir = bool(data.get("reset_password") or data.get("password"))
+        if not role and not redefinir:
+            return jsonify(ok=False, error="informe um novo perfil ou peça a redefinição "
+                                           "da senha"), 400
         try:
             out = {}
             if role:
                 out["role"] = USERS.set_role(name, role)
                 _audit(request, "USER_ROLE", f"perfil de {name} alterado para {role}",
                        outcome="success", action="user_role", obj=name, object_type="user")
-            if password:
-                USERS.set_password(name, password)
-                out["password"] = True
+            if redefinir:
+                res = USERS.set_password(name)
+                # A senha volta ao admin UMA vez, nesta resposta; a conta nasce
+                # travada de novo, então ela só serve para o dono trocá-la.
+                out["password"] = res["password"]
+                out["must_change_password"] = True
                 _audit(request, "USER_PASSWORD", f"senha de {name} redefinida pelo administrador",
                        outcome="success", action="user_password", obj=name, object_type="user")
         except USERS.UserError as exc:
@@ -1039,6 +1066,16 @@ def create_app():
         try:
             USERS.change_own_password(actor, str(data.get("current", "")),
                                       str(data.get("new", "")))
+        except USERS.PasswordChangedIncomplete as exc:
+            # A senha JÁ mudou; o que faltou foi liberar a conta. Precisa ser 500
+            # (o servidor falhou) e a resposta precisa dizer qual senha vale agora,
+            # senão o usuário tenta a antiga e ouve "senha atual incorreta".
+            _audit(request, "USER_PASSWORD_SELF",
+                   f"senha trocada mas a conta não foi liberada: {exc}",
+                   outcome="failure", action="user_password_self", obj=actor,
+                   object_type="user")
+            return jsonify(ok=False, password_changed=True, must_change_password=True,
+                           error=str(exc)), 500
         except USERS.UserError as exc:
             _audit(request, "USER_PASSWORD_SELF", f"troca de senha recusada: {exc}",
                    outcome="deny", action="user_password_self", obj=actor, object_type="user")
