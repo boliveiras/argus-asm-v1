@@ -80,3 +80,43 @@ class TestGravacao(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestWordlistGrande(unittest.TestCase):
+    """O teto de corpo da API não pode contradizer o teto de prefixos do domínio.
+
+    campaigns.WORDLIST_MAX aceita 20.000 prefixos, mas o MAX_CONTENT_LENGTH do
+    Flask cortava em 64 KB — na prática ~6.000 palavras curtas, e bem menos com
+    nomes reais. O usuário recebia um 413 cru, gerado antes de a requisição
+    chegar ao endpoint, sem mensagem que explicasse o que fazer.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        os.environ["ARGUS_BASE"] = self.tmp.name
+        os.environ["ARGUS_DB"] = os.path.join(self.tmp.name, "store", "argus.db")
+        os.makedirs(os.path.join(self.tmp.name, "store"), exist_ok=True)
+        os.makedirs(os.path.join(self.tmp.name, "submonitor"), exist_ok=True)
+        import webapp
+        self.app = webapp.create_app().test_client()
+        self.H = {"X-Requested-With": "argus", "X-Remote-User": "monitor"}
+
+    def tearDown(self):
+        os.environ.pop("ARGUS_DB", None)
+        self.tmp.cleanup()
+
+    def test_wordlist_realista_de_5000_prefixos_e_aceita(self):
+        # Nomes com o comprimento que aparece de verdade (abtbackoffice, wsgatewaypagamento).
+        palavras = "\n".join(f"wsgatewaypagamento-{i:05d}" for i in range(5000))
+        r = self.app.post("/api/wordlist", headers=self.H, json={"words": palavras})
+        self.assertEqual(r.status_code, 200, "wordlist realista foi recusada pelo teto de corpo")
+        self.assertEqual(r.get_json()["count"], 5000)
+
+    def test_corpo_absurdo_e_recusado_com_mensagem_util(self):
+        # O teto continua existindo — o que muda é ele caber no domínio e explicar-se.
+        r = self.app.post("/api/wordlist", headers=self.H,
+                          json={"words": "\n".join("x" * 60 for _ in range(60000))})
+        self.assertEqual(r.status_code, 413)
+        erro = (r.get_json() or {}).get("error", "")
+        self.assertTrue(erro, "413 sem corpo JSON: o usuário não descobre o motivo")
+        self.assertIn("grande", erro.lower())

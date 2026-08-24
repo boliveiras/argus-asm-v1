@@ -518,7 +518,19 @@ def create_app():
     if not _FLASK_OK:
         raise RuntimeError("Flask não instalado — pip install flask")
     app = Flask(__name__)
-    app.config["MAX_CONTENT_LENGTH"] = 64 * 1024   # corpo pequeno
+    # O teto de corpo precisa caber o maior payload legítimo: a wordlist, que o
+    # domínio permite ter até WORDLIST_MAX prefixos. Com 64 KB, uma wordlist real
+    # de 5 mil itens era recusada com 413 — o transporte contradizendo a regra de
+    # negócio. Dimensionado pelo teto de prefixos, com folga para nomes longos.
+    app.config["MAX_CONTENT_LENGTH"] = CAMP.WORDLIST_MAX * 40
+
+    @app.errorhandler(413)
+    def _corpo_grande(_e):
+        """413 vem do Flask ANTES do endpoint, então sem isto o usuário recebia
+        uma página de erro crua, sem dizer o que reduzir."""
+        return jsonify(ok=False,
+                       error=f"conteúdo grande demais — a wordlist aceita até "
+                             f"{CAMP.WORDLIST_MAX} prefixos"), 413
 
     def _csrf_ok() -> bool:
         return request.headers.get("X-Requested-With") == "argus"
