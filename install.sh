@@ -102,7 +102,9 @@ APACHE_DOCROOT="/var/www/argus"
 APACHE_CONF="/etc/apache2/sites-available/argus-monitor.conf"
 APACHE_PORT=8443
 APACHE_USER="monitor"
-APACHE_PASS=""
+# Senha inicial GERADA na instalação (só quando a conta ainda não existe).
+# Vive só em memória e vai para a tela no resumo final — nunca para o log.
+ARGUS_SENHA_INICIAL=""
 
 # Conta de SERVIÇO: sem login, sem home, sem senha. Roda o argus-web e o
 # argus-logpush. Separar da conta de pessoa é o que garante que um serviço
@@ -739,21 +741,46 @@ if [ "$INSTALL_APACHE" = true ]; then
     ok "Certificado TLS já existe"
   fi
 
-  # Senha HTTP Basic Auth
+  # Credencial do portal. O instalador NÃO pergunta senha: gera uma, marca a
+  # conta para troca obrigatória e mostra a senha no resumo final. Quem reinstala
+  # a toda hora (VM de teste) não digita nada, e ninguém precisa inventar senha.
   HTPASSWD_FILE="/etc/apache2/.htpasswd-monitor"
-  if [ -z "$APACHE_PASS" ]; then
-    pausa_barra          # a barra não pode disputar a linha com o prompt
-    echo -e "\n  ${BOLD}Senha de acesso ao portal${NC}  (usuário: ${BOLD}$APACHE_USER${NC})"
-    read -r -s -p "  Senha: " APACHE_PASS_INPUT; echo
-    read -r -s -p "  Confirme: " APACHE_PASS_CONFIRM; echo
-    [ "$APACHE_PASS_INPUT" = "$APACHE_PASS_CONFIRM" ] || err "Senhas não conferem."
-    APACHE_PASS="$APACHE_PASS_INPUT"
-    echo
+  if grep -q "^${APACHE_USER}:" "$HTPASSWD_FILE" 2>/dev/null; then
+    # Reinstalação: a credencial já existe. Sobrescrevê-la trocaria a senha do
+    # operador sem ele pedir, e remarcar a troca ressuscitaria uma exigência que
+    # ele já cumpriu. O instalador é idempotente — aqui ele não mexe.
+    ok "Conta $APACHE_USER já existe — senha preservada"
+  else
+    # `secrets` do Python (CSPRNG do SO), mesma regra que a Web usa para criar
+    # conta. $RANDOM é um PRNG previsível e não serve para credencial.
+    ARGUS_SENHA_INICIAL="$("$PYTHON_BIN" "$BASE_DIR/users.py" --gerar-senha 2>/dev/null || true)"
+    [ -n "$ARGUS_SENHA_INICIAL" ] || err "não consegui gerar a senha inicial do portal"
+    # -i lê a senha do stdin: com -b ela apareceria no `ps` de qualquer usuário
+    # da máquina enquanto o htpasswd roda.
+    if [ -f "$HTPASSWD_FILE" ]; then
+      # Sem -c: o arquivo já existe com OUTRAS contas (criadas pela Web), e -c
+      # o recria do zero — todas elas perderiam o acesso.
+      printf '%s' "$ARGUS_SENHA_INICIAL" | htpasswd -i "$HTPASSWD_FILE" "$APACHE_USER" 2>/dev/null \
+        || err "não consegui gravar a credencial em $HTPASSWD_FILE"
+    else
+      printf '%s' "$ARGUS_SENHA_INICIAL" | htpasswd -ci "$HTPASSWD_FILE" "$APACHE_USER" 2>/dev/null \
+        || err "não consegui criar $HTPASSWD_FILE"
+    fi
+    # A conta nasce travada: até a troca, a API responde 403 em tudo. É o que
+    # torna aceitável uma senha que passou pela tela.
+    ARGUS_BASE="$BASE_DIR" "$PYTHON_BIN" "$BASE_DIR/users.py" --marcar-troca "$APACHE_USER" >/dev/null 2>&1 \
+      && ok "Conta $APACHE_USER criada (troca de senha obrigatória no 1º acesso)" \
+      || warn "não consegui marcar a troca obrigatória de $APACHE_USER — troque a senha no portal"
   fi
-  htpasswd -cb "$HTPASSWD_FILE" "$APACHE_USER" "$APACHE_PASS" 2>/dev/null
   chmod 640 "$HTPASSWD_FILE"
   chown root:www-data "$HTPASSWD_FILE"
   ok "Autenticação HTTP configurada (usuário: $APACHE_USER)"
+  # users.json guarda perfis e a marca de troca; o serviço argus-web precisa
+  # reescrevê-lo (é lá que a marca cai quando o usuário troca a senha).
+  if [ -f "$BASE_DIR/store/users.json" ]; then
+    chown "root:$APP_USER" "$BASE_DIR/store/users.json" 2>/dev/null || true
+    chmod 660 "$BASE_DIR/store/users.json" 2>/dev/null || true
+  fi
 
   # Gestão de contas pela Web: o serviço precisa GRAVAR o htpasswd (criar/remover
   # usuários e redefinir senhas). ACL restrita a este arquivo — o Apache segue dono.
@@ -1250,6 +1277,16 @@ echo ""
 if [ "$INSTALL_APACHE" = true ]; then
   echo -e "  ${BOLD}Acesse:${NC}  ${CYAN}https://${SERVER_IP}:${APACHE_PORT}/${NC}   usuário: ${BOLD}${APACHE_USER}${NC}"
   echo -e "            ${YELLOW}certificado self-signed — aceite o aviso do navegador${NC}"
+  # A senha aparece AQUI e em nenhum outro lugar: não vai para $INSTALL_LOG (o
+  # _log só grava o que recebe) nem fica em arquivo. Copie da tela agora.
+  if [ -n "$ARGUS_SENHA_INICIAL" ]; then
+    echo ""
+    echo -e "  ${BOLD}${YELLOW}▸ Senha inicial (aparece só agora, copie da tela):${NC}"
+    echo ""
+    echo -e "      ${BOLD}${GREEN}${ARGUS_SENHA_INICIAL}${NC}"
+    echo ""
+    echo -e "  ${YELLOW}No primeiro acesso o portal exige a troca — até lá nada mais abre.${NC}"
+  fi
 else
   echo -e "  ${BOLD}Portal não instalado${NC} (--no-apache)"
 fi
