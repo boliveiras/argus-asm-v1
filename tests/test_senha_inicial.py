@@ -233,5 +233,40 @@ class TestCriacaoPelaWeb(BaseWeb):
             self.assertNotIn(senha, linha)
 
 
+# ── Interface (páginas estáticas) ────────────────────────────────────────────
+
+class TestPagina(unittest.TestCase):
+    """O portal é HTML estático: quem leva o usuário à troca é o JS que consulta
+    /api/me. Sem isso ele veria telas cujos dados nunca carregam."""
+
+    @classmethod
+    def setUpClass(cls):
+        import reporter
+        cls.R = reporter
+        cls.html = reporter.build_users_page()
+
+    def test_boot_desvia_para_a_troca_de_senha(self):
+        self.assertIn("must_change_password", self.R._RBAC_BOOT_JS)
+        self.assertIn("/usuarios.html", self.R._RBAC_BOOT_JS)
+
+    def test_pagina_tem_o_estado_de_senha_inicial(self):
+        self.assertIn("u-trocar", self.html)
+        self.assertIn("Troque a senha para continuar", self.html)
+
+    def test_pagina_mostra_a_senha_gerada_uma_vez(self):
+        self.assertIn("u-senha-box", self.html)
+        self.assertIn("não é guardada", self.html)
+
+    def test_admin_nao_escolhe_mais_a_senha_inicial(self):
+        # O campo de senha no formulário de criação sumiu: quem gera é o servidor.
+        self.assertNotIn('id="u-new-pw"', self.html)
+        self.assertIn("JSON.stringify({name:name,role:role})", self.R._USERS_SCRIPT)
+
+    def test_bloco_da_propria_senha_aparece_uma_unica_vez(self):
+        # Id repetido faria o getElementById devolver o formulário escondido.
+        self.assertEqual(self.html.count('id="u-cur-pw"'), 1)
+        self.assertEqual(self.html.count('id="u-self"'), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

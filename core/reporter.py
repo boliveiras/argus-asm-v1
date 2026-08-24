@@ -322,6 +322,11 @@ def _common_css() -> str:
 
   /* RBAC: perfil somente leitura não vê controles de escrita (o servidor também recusa). */
   body.ro-user [data-write] { display:none !important; }
+  /* Senha inicial pendente: a conta só troca a senha. Some com a navegação — todo
+     link levaria a uma página cuja API responde 403 (o servidor é quem manda). */
+  body.senha-inicial .nav { display:none !important; }
+  body.senha-inicial .nav-toggle { display:none !important; }
+  body.senha-inicial .breadcrumb { display:none !important; }
   .role-badge { font-size:11px; font-weight:700; letter-spacing:.4px; text-transform:uppercase;
        padding:2px 8px; border-radius:999px; border:1px solid var(--border); color:var(--muted); }
   .role-admin  { color:var(--accent);  border-color:var(--accent);  background:rgba(51,163,239,.10); }
@@ -1200,9 +1205,21 @@ _RBAC_BOOT_JS = r"""
 // que recusa a ação de qualquer forma (defesa em profundidade).
 window.__ARGUS_ME = null;
 (function(){
+  // Senha inicial pendente: a conta só pode trocar a senha. A API já recusa tudo
+  // com 403 — este desvio existe porque as páginas são HTML ESTÁTICO servido pelo
+  // Apache (o Flask não vê a navegação), então sem ele o usuário ficaria olhando
+  // uma tela cujos dados nunca carregam, sem entender o motivo.
+  function travar(){
+    var aqui = String(location.pathname||'');
+    document.body.classList.add('senha-inicial');
+    if(aqui.indexOf('/usuarios.html') >= 0) return true;   // já está na troca
+    location.replace('/usuarios.html');
+    return true;
+  }
   function apply(me){
     window.__ARGUS_ME = me;
     var b = document.body; if(!b) return;
+    if(me && me.must_change_password && travar()) return;
     b.classList.toggle('ro-user', !(me && me.can_write));
     b.classList.toggle('is-admin', !!(me && me.is_admin));
     if(!(me && me.is_admin)){
@@ -5396,7 +5413,13 @@ _USERS_SCRIPT = r"""<script>
 (function(){
   var ME=null, USERS=[], ROLES=[];
   function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
-  function show(id){['u-off','u-denied','u-main'].forEach(function(x){var e=document.getElementById(x);if(e)e.style.display=(x===id?'block':'none');});}
+  function show(id){
+    ['u-off','u-trocar','u-denied','u-main'].forEach(function(x){var e=document.getElementById(x);if(e)e.style.display=(x===id?'block':'none');});
+    // O bloco "Minha senha" é ÚNICO na página e aparece em todos os estados
+    // menos "backend fora". Duplicá-lo dentro de cada estado faria o
+    // getElementById devolver sempre a primeira cópia — a escondida.
+    var s=document.getElementById('u-self'); if(s) s.style.display=(id==='u-off'?'none':'block');
+  }
   function msg(text,kind,box){
     var b=document.getElementById(box||'u-msg'); if(!b)return;
     if(!text){b.style.display='none';return;}
@@ -5423,6 +5446,13 @@ _USERS_SCRIPT = r"""<script>
       ME=me;
       var self=document.getElementById('u-self-name');
       if(self) self.textContent=me.user+' — '+(me.role_label||me.role);
+      // Senha inicial pendente: nem tenta listar contas — a API responde 403 em
+      // tudo, e o erro cairia no "serviço indisponível", que é mentira.
+      if(me.must_change_password){
+        show('u-trocar');
+        var cur=document.getElementById('u-cur-pw'); if(cur) cur.focus();
+        return;
+      }
       if(!me.is_admin){ show('u-denied'); return; }
       return api('/api/users',{cache:'no-store'}).then(function(j){
         USERS=j.users||[]; ROLES=j.roles||[]; show('u-main'); render();
@@ -5453,15 +5483,42 @@ _USERS_SCRIPT = r"""<script>
   }
   function novo(){
     var name=document.getElementById('u-new-name').value.trim();
-    var pw=document.getElementById('u-new-pw').value;
     var role=document.getElementById('u-new-role').value;
     if(!name){ msg('Informe o nome do usuário.','err'); return; }
-    api('/api/users',{method:'POST',body:JSON.stringify({name:name,password:pw,role:role})})
+    // A senha NÃO é enviada: quem gera é o servidor. O administrador não inventa
+    // senha e não precisa pensar em força — só repassar a que voltar aqui.
+    api('/api/users',{method:'POST',body:JSON.stringify({name:name,role:role})})
       .then(function(j){
-        msg('Usuário "'+name+'" criado como '+(j.user.role_label||j.user.role)+'.');
-        document.getElementById('u-new-name').value=''; document.getElementById('u-new-pw').value='';
+        document.getElementById('u-new-name').value='';
+        mostrarSenha(name, j.password);
         load();
       }).catch(function(e){ msg(e.message,'err'); });
+  }
+  // A senha gerada aparece UMA vez: não fica gravada em claro em lugar nenhum,
+  // então não há de onde mostrá-la de novo. O painel diz isso com todas as letras.
+  function mostrarSenha(nome,senha){
+    var box=document.getElementById('u-senha-box'); if(!box) return;
+    var quem=document.getElementById('u-senha-quem'); if(quem) quem.textContent=nome;
+    var campo=document.getElementById('u-senha-valor');
+    if(campo){ campo.value=senha||''; }
+    box.style.display='block';
+    if(campo) campo.select();
+  }
+  function copiarSenha(){
+    var campo=document.getElementById('u-senha-valor'); if(!campo) return;
+    campo.select(); campo.setSelectionRange(0,200);
+    if(navigator.clipboard&&navigator.clipboard.writeText){
+      navigator.clipboard.writeText(campo.value)
+        .then(function(){ msg('Senha copiada. Repasse por um canal seguro.'); })
+        .catch(function(){ msg('Não consegui copiar — selecione e copie na mão.','err'); });
+      return;
+    }
+    msg('Selecione o campo e copie na mão (Ctrl+C).');
+  }
+  function fecharSenha(){
+    var box=document.getElementById('u-senha-box'); if(!box) return;
+    var campo=document.getElementById('u-senha-valor'); if(campo) campo.value='';
+    box.style.display='none';
   }
   function role(name,value){
     api('/api/users/'+encodeURIComponent(name),{method:'POST',body:JSON.stringify({role:value})})
@@ -5487,11 +5544,19 @@ _USERS_SCRIPT = r"""<script>
     if(nw!==cf){ msg('A confirmação não confere com a nova senha.','err','u-msg-self'); return; }
     api('/api/me/password',{method:'POST',body:JSON.stringify({current:cur,new:nw})})
       .then(function(){
-        msg('Sua senha foi alterada.', 'ok', 'u-msg-self');
         ['u-cur-pw','u-new-pw2','u-new-pw3'].forEach(function(i){document.getElementById(i).value='';});
+        // Estava travado pela senha inicial: a marca acabou de cair no servidor.
+        // Recarregar é o que devolve o portal — a página atual foi montada travada.
+        if(ME&&ME.must_change_password){
+          msg('Senha alterada. Liberando o portal...', 'ok', 'u-msg-self');
+          setTimeout(function(){ location.replace('/index.html'); }, 1200);
+          return;
+        }
+        msg('Sua senha foi alterada.', 'ok', 'u-msg-self');
       }).catch(function(e){ msg(e.message,'err','u-msg-self'); });
   }
-  window.__u={novo:novo,role:role,reset:reset,del:del,senha:trocarSenha};
+  window.__u={novo:novo,role:role,reset:reset,del:del,senha:trocarSenha,
+              copiar:copiarSenha,fechar:fecharSenha};
   if(document.readyState!=='loading') load(); else document.addEventListener('DOMContentLoaded',load);
 })();
 </script>"""
@@ -5511,6 +5576,10 @@ def build_users_page() -> str:
         '.u-form input:focus,.u-form select:focus{border-color:var(--accent);outline:none;'
         'box-shadow:0 0 0 3px rgba(51,163,239,.12)}'
         '#u-msg,#u-msg-self{display:none;margin-bottom:14px;font-size:13px}'
+        '#u-senha-box{display:none;border-left:3px solid var(--green);margin-bottom:16px}'
+        '#u-senha-valor{width:100%;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;'
+        'font-size:17px;letter-spacing:1.5px;background:var(--bg);color:var(--text);'
+        'border:1px solid var(--border);border-radius:var(--radius-sm);padding:11px 12px}'
         '</style>'
 
         '<div id="u-off" class="panel panel-pad" style="display:none;text-align:center;padding:40px 24px">'
@@ -5518,27 +5587,49 @@ def build_users_page() -> str:
         '<div style="color:var(--muted);font-size:13px">Esta página depende do serviço <code>argus-web</code>. '
         'Verifique com: <code>systemctl status argus-web</code>.</div></div>'
 
+        # Senha inicial pendente: a conta não faz mais nada até trocar. Explica o
+        # porquê — sem isso o usuário só veria botões que não funcionam.
+        '<div id="u-trocar" style="display:none">'
+        '<div class="panel panel-pad" style="border-left:3px solid var(--red);margin-bottom:16px">'
+        '<div style="font-weight:700;font-size:15px;margin-bottom:4px">Troque a senha para continuar</div>'
+        '<div style="color:var(--muted);font-size:13px;line-height:1.6">Esta conta ainda usa a '
+        '<b>senha inicial gerada pelo sistema</b>, que foi exibida uma única vez. Até você definir '
+        'uma senha sua, o Argus não libera nenhuma outra tela nem consulta — é o que garante que a '
+        'senha inicial, se tiver sido vista por alguém no caminho, não dê acesso aos achados.</div></div>'
+        '</div>'
+
         # Sem permissão: mostra só a troca da própria senha (todo perfil pode).
         '<div id="u-denied" style="display:none">'
         '<div class="panel panel-pad" style="border-left:3px solid var(--accent);margin-bottom:16px">'
         '<div style="font-weight:700;font-size:15px;margin-bottom:4px">Acesso restrito ao administrador</div>'
         '<div style="color:var(--muted);font-size:13px;line-height:1.6">A gestão de contas é exclusiva do '
         'administrador definido na instalação. Você pode alterar a sua própria senha abaixo.</div></div>'
-        + _users_self_block() +
         '</div>'
 
         '<div id="u-main" style="display:none">'
         '<div id="u-msg" class="panel panel-pad"></div>'
 
+        # Senha da conta recém-criada: aparece UMA vez (não é guardada em claro).
+        '<div id="u-senha-box" class="panel panel-pad">'
+        '<div style="font-weight:700;font-size:15px;margin-bottom:4px">Senha de '
+        '<span id="u-senha-quem">&mdash;</span></div>'
+        '<p class="page-sub" style="margin:2px 0 10px">Anote e repasse por um canal seguro: '
+        'ela <b>não é guardada</b> e não aparece de novo. Até o usuário trocá-la, a conta '
+        'não abre nada.</p>'
+        '<input id="u-senha-valor" type="text" readonly aria-label="Senha gerada">'
+        '<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">'
+        '<button class="btn btn-pdf" type="button" onclick="window.__u&&window.__u.copiar()">Copiar</button>'
+        '<button class="btn btn-clr" type="button" onclick="window.__u&&window.__u.fechar()">Já anotei</button>'
+        '</div></div>'
+
         '<div class="panel panel-pad" style="margin-bottom:16px">'
         f'<h2>{_NAV_ICONS.get("usuarios", "")} Novo usuário</h2>'
         '<p class="page-sub" style="margin:2px 0 12px"><b>Master</b> edita, <b>User</b> só consulta. '
+        'A senha inicial é gerada pelo Argus e mostrada aqui uma vez. '
         '<a href="#" data-doc="usuarios">Sobre os perfis</a></p>'
         '<div class="u-form">'
         '<div><label for="u-new-name">Usuário</label>'
         '<input id="u-new-name" type="text" maxlength="32" autocomplete="off" placeholder="ex.: ana.silva"></div>'
-        '<div><label for="u-new-pw">Senha inicial</label>'
-        '<input id="u-new-pw" type="password" autocomplete="new-password" placeholder="mínimo 8 caracteres"></div>'
         '<div><label for="u-new-role">Perfil</label>'
         '<select id="u-new-role"><option value="user">User (somente leitura)</option>'
         '<option value="master">Master (leitura e edição)</option></select></div>'
@@ -5549,12 +5640,14 @@ def build_users_page() -> str:
         '<div class="panel panel-pad" style="margin-bottom:16px">'
         '<h2>Contas <span class="badge"><span id="u-count">&mdash;</span></span></h2>'
         '<div id="u-list" class="tbl-wrap"></div></div>'
+        '</div>'
 
+        # Bloco ÚNICO na página (ids não podem repetir) — o script mostra em todos
+        # os estados, menos quando o serviço está fora.
         + _users_self_block() +
 
         '<p class="page-sub">Senhas são gravadas apenas como hash. Toda ação em contas fica registrada. '
         '<a href="#" data-doc="usuarios">Sobre os perfis</a></p>'
-        '</div>'
     )
     return _portal_shell(
         "usuarios", "Usuários",
@@ -5563,9 +5656,14 @@ def build_users_page() -> str:
 
 
 def _users_self_block() -> str:
-    """Bloco de troca da própria senha — disponível para qualquer perfil."""
+    """Bloco de troca da própria senha — disponível para qualquer perfil.
+
+    Entra UMA vez na página: os ids são fixos, e duas cópias fariam o
+    getElementById devolver sempre a primeira (escondida) — o formulário visível
+    mandaria campos vazios.
+    """
     return (
-        '<div class="panel panel-pad" style="margin-bottom:16px">'
+        '<div id="u-self" class="panel panel-pad" style="display:none;margin-bottom:16px">'
         '<h2>Minha senha</h2>'
         '<p class="page-sub" style="margin:2px 0 12px">Conectado como <b id="u-self-name">&mdash;</b>. '
         'Para trocar, informe a senha atual.</p>'
