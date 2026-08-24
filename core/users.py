@@ -40,6 +40,11 @@ Postura de segurança:
   • O htpasswd é gravado IN-PLACE: o serviço tem permissão apenas NESTE arquivo, e
     nunca de criar/trocar arquivos em /etc/apache2 (onde vive a config do servidor).
   • A senha atual é exigida para o usuário trocar a própria senha.
+  • Senha INICIAL é gerada pelo sistema (`secrets`, o CSPRNG do SO) e mostrada
+    uma única vez — ninguém precisa inventar nem transmitir senha. Ela nasce com
+    a marca `must_change_password`, e enquanto a marca existir a conta não faz
+    nada além de trocar a senha (o guard da API barra o resto). É isso que torna
+    a senha gerada aceitável: vazando antes da troca, não abre acesso a dado algum.
 """
 
 from __future__ import annotations
@@ -47,6 +52,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import secrets
 from pathlib import Path
 
 try:                                  # dependência opcional: erro claro se faltar
@@ -66,6 +72,20 @@ ROLE_LABEL = {ROLE_ADMIN: "Administrador", ROLE_MASTER: "Master (leitura e ediç
 _NAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,32}$")
 MIN_PASSWORD = 8
 MAX_PASSWORD = 72                          # bcrypt ignora bytes além de 72
+
+# Chave que marca a conta como "ainda usa a senha inicial gerada pelo sistema".
+MUST_CHANGE_KEY = "must_change_password"
+
+# Alfabeto da senha gerada: sem 0/O e 1/l/I. A senha é LIDA DA TELA (saída do
+# instalador ou o campo mostrado uma vez na Web) e digitada de novo — um par
+# ambíguo vira suporte, não segurança.
+PASSWORD_ALPHABET = ("ABCDEFGHJKLMNPQRSTUVWXYZ"
+                     "abcdefghijkmnopqrstuvwxyz"
+                     "23456789")
+# 20 caracteres nesse alfabeto (57 símbolos) ≈ 116 bits de entropia: forte o
+# bastante para não precisar de política de expiração, curto o bastante para
+# alguém copiar da tela sem errar.
+PASSWORD_LENGTH = 20
 
 
 class UserError(ValueError):
@@ -108,6 +128,16 @@ def _check_password(password: str) -> str:
     if len(pw.encode("utf-8")) > MAX_PASSWORD:
         raise UserError(f"senha muito longa (máximo {MAX_PASSWORD} bytes)")
     return pw
+
+
+def generate_password(length: int = PASSWORD_LENGTH) -> str:
+    """Senha inicial aleatória.
+
+    `secrets` usa o CSPRNG do sistema operacional. `random` NÃO serve aqui: é um
+    Mersenne Twister semeado por relógio — quem observa algumas saídas prevê as
+    próximas, e isso é uma credencial.
+    """
+    return "".join(secrets.choice(PASSWORD_ALPHABET) for _ in range(max(1, length)))
 
 
 def _hash(password: str) -> str:
@@ -213,6 +243,48 @@ def role_of(name: str) -> str:
     return role if role in ROLES else ROLE_USER
 
 
+def must_change_password(name: str) -> bool:
+    """A conta ainda está com a senha inicial gerada pelo sistema?
+
+    Enquanto isto for verdade a conta não faz NADA além de trocar a senha — quem
+    aplica a regra é o guard da API (webapp._authorize). Vale para qualquer perfil,
+    inclusive o administrador da instalação.
+    """
+    name = (name or "").strip()
+    if not name:
+        return False
+    return bool((_read_roles().get(name) or {}).get(MUST_CHANGE_KEY, False))
+
+
+def mark_must_change(name: str) -> None:
+    """Marca a conta como "precisa trocar a senha" (usado pelo instalador).
+
+    Cria a entrada em users.json se ela não existir — o administrador da instalação
+    não tem perfil gravado (o papel dele é derivado do nome), mas a marca precisa
+    de um lugar para morar.
+    """
+    name = (name or "").strip()
+    if not name:
+        raise UserError("nome vazio")
+    roles = _read_roles()
+    entry = roles.get(name) or {}
+    entry[MUST_CHANGE_KEY] = True
+    roles[name] = entry
+    _write_roles(roles)
+
+
+def _clear_must_change(name: str) -> None:
+    """Tira a marca. Só grava se ela existia — evita reescrever users.json a cada
+    troca de senha de quem já está em dia."""
+    roles = _read_roles()
+    entry = roles.get(name)
+    if not entry or not entry.get(MUST_CHANGE_KEY):
+        return
+    entry.pop(MUST_CHANGE_KEY, None)
+    roles[name] = entry
+    _write_roles(roles)
+
+
 def can_write(name: str) -> bool:
     return role_of(name) in (ROLE_ADMIN, ROLE_MASTER)
 
@@ -234,11 +306,16 @@ def list_users() -> list[dict]:
         role = role if role in (ROLE_ADMIN, *ROLES) else ROLE_USER
         out.append({"name": name, "role": role, "role_label": ROLE_LABEL.get(role, role),
                     "is_admin": name == adm,
+                    # Mostra ao administrador quem ainda não trocou a senha inicial
+                    # (essa conta está travada até trocar).
+                    "must_change_password": bool(
+                        (roles.get(name) or {}).get(MUST_CHANGE_KEY, False)),
                     "created": (roles.get(name) or {}).get("created", "")})
     return out
 
 
-def create_user(name: str, password: str, role: str, *, now: str = "") -> dict:
+def create_user(name: str, password: str, role: str, *, now: str = "",
+                must_change: bool = False) -> dict:
     name = (name or "").strip()
     if not valid_name(name):
         raise UserError("nome inválido: use letras, números, ponto, hífen ou underscore (até 32)")
@@ -254,8 +331,11 @@ def create_user(name: str, password: str, role: str, *, now: str = "") -> dict:
     _write_htpasswd(entries)
     roles = _read_roles()
     roles[name] = {"role": role, "created": now}
+    if must_change:
+        roles[name][MUST_CHANGE_KEY] = True
     _write_roles(roles)
-    return {"name": name, "role": role, "role_label": ROLE_LABEL[role]}
+    return {"name": name, "role": role, "role_label": ROLE_LABEL[role],
+            "must_change_password": bool(must_change)}
 
 
 def set_role(name: str, role: str) -> dict:
@@ -299,6 +379,10 @@ def change_own_password(name: str, current: str, new: str) -> dict:
         raise UserError("a nova senha precisa ser diferente da atual")
     entries[name] = _hash(new)
     _write_htpasswd(entries)
+    # A senha inicial deixou de valer: some com a marca e a conta é liberada.
+    # A ordem importa — limpar a marca ANTES de gravar o hash liberaria a conta
+    # sem que a nova senha tivesse entrado.
+    _clear_must_change(name)
     return {"name": name, "updated": True}
 
 
@@ -316,3 +400,24 @@ def delete_user(name: str) -> dict:
         del roles[name]
         _write_roles(roles)
     return {"name": name, "deleted": True}
+
+
+# ── CLI do instalador ────────────────────────────────────────────────────────
+# O install.sh é shell, mas a senha gerada e a marca de troca são regra de
+# domínio: repeti-las em shell (`$RANDOM`, JSON no sed) daria duas verdades e
+# uma delas seria fraca. Duas operações só, e nenhuma delas ESCREVE senha em
+# lugar nenhum — quem grava a credencial segue sendo o `htpasswd`.
+if __name__ == "__main__":
+    import sys
+
+    _uso = ("uso: users.py --gerar-senha | --marcar-troca NOME")
+    _args = sys.argv[1:]
+    if _args[:1] == ["--gerar-senha"] and len(_args) == 1:
+        # Só para stdout, para o instalador capturar. Nunca vai para log.
+        print(generate_password())
+    elif _args[:1] == ["--marcar-troca"] and len(_args) == 2:
+        mark_must_change(_args[1])
+        print(f"[users] {_args[1]}: troca de senha obrigatória no 1º acesso")
+    else:
+        print(_uso, file=sys.stderr)
+        sys.exit(2)

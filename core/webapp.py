@@ -542,11 +542,30 @@ def create_app():
     # brecha. Leitura (GET) segue liberada a qualquer usuário autenticado.
     _SELF_SERVICE = ("/api/me/password",)      # trocar a PRÓPRIA senha: qualquer perfil
 
+    # Rotas que continuam respondendo para quem ainda está com a senha INICIAL.
+    # Bloquear qualquer uma delas trancaria a conta para sempre: /api/me é como a
+    # interface descobre que precisa levar o usuário à troca, e /api/me/password é
+    # a troca em si. /version entra porque o rodapé do portal a lê em toda página e
+    # ela não diz nada sobre a superfície monitorada.
+    # /api/health fica FORA de propósito: devolve a contagem de achados, que já é
+    # informação da superfície de ataque do cliente.
+    _LIVRE_SENHA_INICIAL = ("/api/me", "/api/me/password", "/version", "/api/version")
+
     @app.before_request
     def _authorize():
+        path = request.path.rstrip("/")
+        # Senha inicial pendente ⇒ a conta só serve para trocar a senha. Isto vale
+        # para LEITURA também: o achado é o dado sensível, e um guard só de POST
+        # deixaria quem tem a senha gerada ler a superfície inteira da empresa sem
+        # nunca trocá-la — o que destruiria a razão de a senha gerada ser aceitável.
+        if path not in _LIVRE_SENHA_INICIAL and USERS.must_change_password(_actor(request)):
+            _audit(request, "AUTHZ_DENY",
+                   f"acesso negado: senha inicial ainda não trocada ({path})",
+                   outcome="deny", action="must_change_password")
+            return jsonify(ok=False, must_change_password=True,
+                           error="troque a senha inicial para usar o Argus"), 403
         if request.method != "POST":
             return None
-        path = request.path.rstrip("/")
         if path in _SELF_SERVICE:
             return None
         actor = _actor(request)
@@ -927,7 +946,11 @@ def create_app():
         role = USERS.role_of(actor)
         return jsonify(ok=True, user=actor, role=role,
                        role_label=USERS.ROLE_LABEL.get(role, role),
-                       can_write=USERS.can_write(actor), is_admin=USERS.is_admin(actor))
+                       can_write=USERS.can_write(actor), is_admin=USERS.is_admin(actor),
+                       # A interface é estática (o Flask não intercepta a navegação),
+                       # então é por aqui que ela sabe que precisa levar o usuário
+                       # à troca da senha inicial.
+                       must_change_password=USERS.must_change_password(actor))
 
     @app.get("/api/users")
     def list_users_api():
@@ -945,16 +968,24 @@ def create_app():
             return jsonify(ok=False, error="CSRF: header ausente"), 403
         data = request.get_json(silent=True) or {}
         name = str(data.get("name", "")).strip()
+        # A senha inicial é GERADA aqui: o administrador não inventa nem transmite
+        # senha. Uma senha eventualmente enviada no corpo é IGNORADA de propósito —
+        # aceitá-la reabriria o "admin escolhe a senha" pela porta dos fundos.
+        # A conta nasce travada (must_change), então esta senha só serve para trocá-la.
+        senha = USERS.generate_password()
         try:
-            res = USERS.create_user(name, str(data.get("password", "")),
-                                    str(data.get("role", "")).lower(), now=_now_str())
+            res = USERS.create_user(name, senha, str(data.get("role", "")).lower(),
+                                    now=_now_str(), must_change=True)
         except USERS.UserError as exc:
             return jsonify(ok=False, error=str(exc)), 400
         except OSError as exc:
             return jsonify(ok=False, error=f"sem permissão para gravar as credenciais: {exc}"), 500
+        # A auditoria registra QUEM criou QUEM — nunca a senha.
         _audit(request, "USER_CREATE", f"conta {name} criada com perfil {res['role']}",
                outcome="success", action="user_create", obj=name, object_type="user")
-        return jsonify(ok=True, user=res)
+        # Única vez que a senha aparece: a resposta desta chamada. Não é gravada em
+        # claro em lugar nenhum, e a interface a mostra uma vez para o admin repassar.
+        return jsonify(ok=True, user=res, password=senha)
 
     @app.post("/api/users/<name>")
     def update_user_api(name):
