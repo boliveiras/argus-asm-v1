@@ -287,17 +287,37 @@ def syslog_error(context: str, exc: Exception):
     syslog_write("ERR","SCAN_ERR",f"{context}: {exc}",
                  module=SYSLOG_APP, context=context, error_type=type(exc).__name__)
 
-def syslog_end(novos, reincidentes, removidos, duration_s: int, status: str = "success"):
+def syslog_end(novos, reincidentes, removidos, duration_s: int, status: str = "success",
+               partial_failures: list[dict] | None = None):
     all_risk = novos + reincidentes
     criticos = sum(1 for r in all_risk if r.get("risk")=="CRITICO")
     altos    = sum(1 for r in all_risk if r.get("risk")=="ALTO")
     sev = "INFO" if status == "success" else "ERR"
-    syslog_write(sev,"SCAN_END",
-                 f"Scan {status} em {duration_s}s — novos={len(novos)} reincidentes={len(reincidentes)} removidos={len(removidos)} criticos={criticos}",
+
+    # Cobertura parcial: alguma fonte de descoberta passiva falhou nesta
+    # execução. Sem registrar isso aqui, o SCAN_END de um scan que perdeu o
+    # crt.sh fica idêntico ao de um scan completo — a única diferença visível
+    # seria menos hosts, e quem lê o syslog não tem como saber se é porque a
+    # superfície diminuiu ou porque a fonte caiu.
+    falhas = partial_failures or []
+    fontes_falhas = sorted({f.get("fonte", "") for f in falhas if f.get("fonte")})
+    cobertura = "PARCIAL" if fontes_falhas else "COMPLETA"
+    # Eleva INFO -> WARN em cobertura parcial (mais visível a quem filtra por
+    # WARN+), mas nunca rebaixa um status já "error" (ERR é mais severo).
+    if fontes_falhas and sev == "INFO":
+        sev = "WARN"
+
+    msg = (f"Scan {status} em {duration_s}s — novos={len(novos)} reincidentes={len(reincidentes)} "
+           f"removidos={len(removidos)} criticos={criticos} cobertura={cobertura}")
+    if fontes_falhas:
+        msg += f" fontes_falhas={','.join(fontes_falhas)}"
+
+    syslog_write(sev,"SCAN_END", msg,
                  module=SYSLOG_APP, status=status,
                  novos=str(len(novos)), reincidentes=str(len(reincidentes)),
                  removidos=str(len(removidos)), criticos=str(criticos),
-                 altos=str(altos), duration_s=str(duration_s))
+                 altos=str(altos), duration_s=str(duration_s),
+                 cobertura=cobertura, fontes_falhas=",".join(fontes_falhas))
     _syslog_close()
 
 # ============================================================
@@ -756,7 +776,7 @@ async def probe_subdomain(session: aiohttp.ClientSession, entry: dict,
             "dnssec":dnssec, "ssl":ssl_info}
 
 def _build_candidates(campaigns: list[tuple[str, list[str]]],
-                      subs: list[str]) -> dict[tuple[str, str], str]:
+                      subs: list[str]) -> tuple[dict[tuple[str, str], str], list[dict]]:
     """
     Constrói o dicionário de candidatos a resolver.
 
@@ -767,8 +787,16 @@ def _build_candidates(campaigns: list[tuple[str, list[str]]],
     2. Consulta crt.sh para cada domínio e injeta os subdomínios descobertos
     3. Se um hostname já existe pela wordlist, mantém origem "wordlist"
        (não sobrescreve — a wordlist tem precedência por ser determinística)
+
+    Devolve também a lista de FALHAS de descoberta passiva: quando crt.sh ou
+    crt.name não respondem (rede/timeout/HTTP), "0 nomes descobertos" e "fonte
+    fora do ar" ficavam indistinguíveis no log — um domínio real sumia da
+    superfície reportada sem nenhum aviso. Cada entrada é
+    {"fonte", "domain", "motivo"}; quem chama usa isso para marcar a execução
+    como cobertura parcial (syslog SCAN_END e relatório HTML).
     """
     candidates: dict[tuple[str, str], str] = {}
+    falhas: list[dict] = []
 
     # 1. Candidatos da wordlist
     for campanha, domains in campaigns:
@@ -785,8 +813,11 @@ def _build_candidates(campaigns: list[tuple[str, list[str]]],
     if _CRTSH_AVAILABLE and _fonte_ligada("crtsh"):
         for campanha, domains in campaigns:
             for domain in domains:
-                discovered = crtsh.get_subdomains_safe(domain)
-                if discovered:
+                discovered, erro = crtsh.get_subdomains_safe_ex(domain)
+                if erro is not None:
+                    print(f"  [CRT.SH] {domain}: indisponível — {erro}")
+                    falhas.append({"fonte": "CRT.SH", "domain": domain, "motivo": erro})
+                elif discovered:
                     print(f"  [CRT.SH] {domain}: {len(discovered)} nome(s) em Certificate Transparency")
                 for host in discovered:
                     key = (host, campanha)
@@ -805,8 +836,11 @@ def _build_candidates(campaigns: list[tuple[str, list[str]]],
     if _CRTNAME_AVAILABLE and _fonte_ligada("crtname"):
         for campanha, domains in campaigns:
             for domain in domains:
-                discovered = crtname.get_subdomains_safe(domain)
-                if discovered:
+                discovered, erro = crtname.get_subdomains_safe_ex(domain)
+                if erro is not None:
+                    print(f"  [CRT.NAME] {domain}: indisponível — {erro}")
+                    falhas.append({"fonte": "CRT.NAME", "domain": domain, "motivo": erro})
+                elif discovered:
                     print(f"  [CRT.NAME] {domain}: {len(discovered)} nome(s) em Certificate Transparency")
                 for host in discovered:
                     key = (host, campanha)
@@ -841,10 +875,11 @@ def _build_candidates(campaigns: list[tuple[str, list[str]]],
                    else "desligado ou sem chave em Fontes")
         print(f"  [URLSCAN] descoberta passiva pulada: {_motivo}")
 
-    return candidates
+    return candidates, falhas
 
 
-async def run_scan(campaigns: list[tuple[str, list[str]]], subs: list[str]) -> list[dict]:
+async def run_scan(campaigns: list[tuple[str, list[str]]],
+                   subs: list[str]) -> tuple[list[dict], list[dict]]:
     resolver  = aiodns.DNSResolver(timeout=3)
     dns_sem   = asyncio.Semaphore(CONCURRENCY * 4)
     http_sem  = asyncio.Semaphore(CONCURRENCY)
@@ -852,7 +887,7 @@ async def run_scan(campaigns: list[tuple[str, list[str]]], subs: list[str]) -> l
 
     # Constrói candidatos (wordlist + Certificate Transparency + urlscan)
     print("[+] Coletando candidatos (wordlist + crt.sh + crt.name + urlscan)...")
-    candidates = _build_candidates(campaigns, subs)
+    candidates, falhas_descoberta = _build_candidates(campaigns, subs)
     n_wordlist = sum(1 for o in candidates.values() if o == "wordlist")
     n_crtsh    = sum(1 for o in candidates.values() if o == "crtsh")
     n_crtname  = sum(1 for o in candidates.values() if o == "crtname")
@@ -900,7 +935,7 @@ async def run_scan(campaigns: list[tuple[str, list[str]]], subs: list[str]) -> l
     if _URLSCAN_AVAILABLE and results and _fonte_ligada("urlscan"):
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, urlscan.enrich_results, results)
-    return results
+    return results, falhas_descoberta
 
 # ============================================================
 # DATABASE PROCESS
@@ -1131,7 +1166,7 @@ def main():
     print()
 
     try:
-        results = asyncio.run(run_scan(campaigns, subs))
+        results, falhas_descoberta = asyncio.run(run_scan(campaigns, subs))
 
         if _THREATINTEL_AVAILABLE:
             print()
@@ -1250,13 +1285,15 @@ def main():
 
         generate_submonitor_report(novos, reincidentes, removidos,
                                    output_path=_out,
-                                   threatintel_available=_THREATINTEL_AVAILABLE)
+                                   threatintel_available=_THREATINTEL_AVAILABLE,
+                                   partial_failures=falhas_descoberta)
         _os.chmod(_out, 0o644)
         if _out != _local_path:
             _shutil.copy2(_out, _local_path)
 
         duration_s = int(time.monotonic() - _start)
-        syslog_end(novos, reincidentes, removidos, duration_s)
+        syslog_end(novos, reincidentes, removidos, duration_s,
+                  partial_failures=falhas_descoberta)
 
     except Exception as exc:
         duration_s = int(time.monotonic() - _start)

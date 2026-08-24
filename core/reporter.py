@@ -73,6 +73,36 @@ def _scope_banner() -> str:
     )
 
 
+def _coverage_banner(partial_failures: list[dict] | None) -> str:
+    """Aviso quando alguma fonte de descoberta passiva (crt.sh/crt.name) falhou
+    durante o scan.
+
+    Sem isto, uma fonte fora do ar (ex.: crt.sh devolvendo HTTP 502) produz
+    silenciosamente MENOS subdomínios no relatório, e quem lê conclui — errado
+    — que a superfície diminuiu. A wordlist continua cobrindo o resto
+    normalmente; isto só declara que a cobertura desta execução ficou parcial
+    e por causa de quê."""
+    falhas = partial_failures or []
+    if not falhas:
+        return ""
+    fontes = sorted({f.get("fonte", "") for f in falhas if f.get("fonte")})
+    itens = "".join(
+        f'<li>{html.escape(str(f.get("fonte","")))} &middot; '
+        f'{html.escape(str(f.get("domain","")))}: '
+        f'{html.escape(str(f.get("motivo","")))}</li>'
+        for f in falhas[:20]
+    )
+    resto = len(falhas) - 20
+    if resto > 0:
+        itens += f'<li>&hellip; e mais {resto} ocorrência(s)</li>'
+    return (
+        '<div class="scope-banner">&#9888;&#65039; Cobertura parcial nesta execução: '
+        f'<strong>{html.escape(", ".join(fontes))}</strong> ficou indisponível para '
+        'um ou mais domínios — a lista abaixo pode estar menor do que a superfície '
+        f'real, não porque ela diminuiu.<ul style="margin:6px 0 0 18px;padding:0">{itens}</ul></div>'
+    )
+
+
 def _abuse_to_js(abuse: dict | None) -> dict:
     """Normaliza dict de reputação AbuseIPDB para serialização JS segura."""
     if not abuse:
@@ -1854,8 +1884,14 @@ def generate_submonitor_report(
     removidos: list[dict],
     output_path: str = "submonitor_report.html",
     threatintel_available: bool = False,
+    partial_failures: list[dict] | None = None,
 ) -> None:
-    """Gera relatório HTML do submonitor e salva em output_path."""
+    """Gera relatório HTML do submonitor e salva em output_path.
+
+    partial_failures: falhas de fontes de descoberta passiva (crt.sh/crt.name)
+    nesta execução, vindas de scanners.submonitor._build_candidates(). Quando
+    não-vazio, exibe o aviso de cobertura parcial no topo — ver
+    _coverage_banner()."""
 
     now         = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     all_results = novos + reincidentes + removidos
@@ -1929,6 +1965,7 @@ def generate_submonitor_report(
 <div class="wrap" id="conteudo" role="main">
 
 {_scope_banner()}
+{_coverage_banner(partial_failures)}
 <div class="page-head">
   <div>
     <h1 class="page-title">Monitor de Subdomínios <span class="chip">{intel_badge}</span></h1>

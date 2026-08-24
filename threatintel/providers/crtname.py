@@ -38,6 +38,10 @@ Características:
     - Filtra ao domínio base e valida cada hostname (anti-injeção)
     - Tolerante a falhas: se o crt.name estiver lento/fora, retorna vazio sem
       quebrar o scan (degradação graciosa)
+    - get_subdomains()/get_subdomains_safe() mantêm o contrato antigo (só o
+      set) por compatibilidade. Quem precisa saber SE a fonte falhou — e não
+      confundir "0 resultados reais" com "consulta não respondeu" — usa
+      get_subdomains_ex()/get_subdomains_safe_ex(), que devolvem (subs, motivo).
 """
 
 import json
@@ -122,22 +126,18 @@ def _normalize(raw: str, base_domain: str) -> str | None:
     return host
 
 
-def get_subdomains(domain: str, use_cache: bool = True) -> set[str]:
-    """Subdomínios de `domain` segundo o crt.name.
+def _fetch_remote(domain: str) -> tuple[set[str], str | None]:
+    """Consulta o crt.name de fato e devolve (subdomínios, motivo do erro).
 
-    Em erro de rede/timeout, retorna conjunto vazio (não levanta).
+    motivo é None em sucesso — mesmo com conjunto vazio, pois o domínio pode
+    realmente não ter certificado nenhum listado. Quando motivo não é None,
+    a consulta FALHOU e o conjunto vazio não significa "nada encontrado" (a
+    mesma confusão que escondia o crt.sh fora do ar em produção se aplica
+    aqui — fonte independente, mesmo risco).
     """
-    domain = domain.strip().lower().rstrip(".")
-    if not domain:
-        return set()
-
-    if use_cache:
-        cached = _read_cache(domain)
-        if cached is not None:
-            return cached
-
     url = CRTNAME_URL.format(domain=domain)
     subs: set[str] = set()
+    resp = None
     try:
         resp = requests.get(url, headers={"User-Agent": USER_AGENT},
                             timeout=REQUEST_TIMEOUT, stream=True)
@@ -149,18 +149,60 @@ def get_subdomains(domain: str, use_cache: bool = True) -> set[str]:
             host = _normalize(linha, domain)
             if host:
                 subs.add(host)
-    except (requests.exceptions.RequestException, ValueError):
-        return set()          # degradação graciosa
-    except Exception:
-        return set()
+        return subs, None
+    except requests.exceptions.Timeout:
+        return set(), "timeout"
+    except requests.exceptions.HTTPError as e:
+        status = getattr(e.response, "status_code", None)
+        return set(), f"HTTP {status}" if status else f"erro HTTP ({e})"
+    except requests.exceptions.RequestException as e:
+        return set(), f"erro de rede ({type(e).__name__})"
+    except ValueError:
+        # Corpo/encoding que não bate com o texto puro esperado — resposta
+        # ilegível, não "vazia".
+        return set(), "resposta ilegível"
+    except Exception as e:
+        return set(), f"erro inesperado ({type(e).__name__})"
     finally:
         try:
-            resp.close()
+            if resp is not None:
+                resp.close()
         except Exception:
             pass
 
-    if subs:
+
+def get_subdomains_ex(domain: str, use_cache: bool = True) -> tuple[set[str], str | None]:
+    """Como get_subdomains(), mas devolve também o motivo quando a fonte falha.
+
+    (subdomínios, None)  -> sucesso, mesmo que o conjunto venha vazio.
+    (set(), motivo)      -> a fonte falhou (rede/timeout/HTTP/resposta
+                             ilegível); NUNCA leia motivo != None como "0
+                             subdomínios encontrados".
+    """
+    domain = domain.strip().lower().rstrip(".")
+    if not domain:
+        return set(), None
+
+    if use_cache:
+        cached = _read_cache(domain)
+        if cached is not None:
+            return cached, None
+
+    subs, erro = _fetch_remote(domain)
+    if erro is None and subs:
         _write_cache(domain, subs)
+    return subs, erro
+
+
+def get_subdomains(domain: str, use_cache: bool = True) -> set[str]:
+    """Subdomínios de `domain` segundo o crt.name.
+
+    Em erro de rede/timeout, retorna conjunto vazio (não levanta).
+    Fachada de compatibilidade: mantém a assinatura antiga para quem só
+    precisa do conjunto — o motivo do erro (quando houver) fica em
+    get_subdomains_ex().
+    """
+    subs, _erro = get_subdomains_ex(domain, use_cache=use_cache)
     return subs
 
 
@@ -170,3 +212,13 @@ def get_subdomains_safe(domain: str) -> set[str]:
         return get_subdomains(domain)
     except Exception:
         return set()
+
+
+def get_subdomains_safe_ex(domain: str) -> tuple[set[str], str | None]:
+    """Como get_subdomains_safe(), mas preserva o motivo da falha para quem
+    precisa logar/relatar cobertura parcial (ex.: scanners/submonitor.py)
+    em vez de só engolir o erro."""
+    try:
+        return get_subdomains_ex(domain)
+    except Exception as e:
+        return set(), f"erro inesperado ({type(e).__name__})"

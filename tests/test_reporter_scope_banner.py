@@ -97,5 +97,42 @@ class TestAvisoDeEscopo(Base):
         self.assertNotIn("<script>alert(1)</script>", html)
 
 
+class TestAvisoDeCoberturaParcial(Base):
+    """Quando crt.sh/crt.name falham durante o scan, o relatório precisa dizer
+    isso — sem o aviso, quem olha a tela vê menos subdomínios que o normal e
+    conclui (errado) que a superfície diminuiu, em vez de "a fonte caiu"."""
+
+    def test_sem_falha_nao_mostra_aviso_de_cobertura(self):
+        out = self._out("s.html")
+        REP.generate_submonitor_report([], [], [], output_path=out)
+        html = Path(out).read_text(encoding="utf-8")
+        self.assertNotIn("Cobertura parcial", html)
+
+    def test_com_falha_mostra_aviso_de_cobertura_e_a_fonte(self):
+        out = self._out("s.html")
+        falhas = [{"fonte": "CRT.SH", "domain": "empresa.com.br", "motivo": "HTTP 502"}]
+        REP.generate_submonitor_report([], [], [], output_path=out,
+                                       partial_failures=falhas)
+        html = Path(out).read_text(encoding="utf-8")
+        self.assertIn("Cobertura parcial", html)
+        self.assertIn("CRT.SH", html)
+        self.assertIn("empresa.com.br", html)
+        self.assertIn("HTTP 502", html)
+
+    def test_falha_vazia_e_equivalente_a_sem_falha(self):
+        out = self._out("s.html")
+        REP.generate_submonitor_report([], [], [], output_path=out, partial_failures=[])
+        html = Path(out).read_text(encoding="utf-8")
+        self.assertNotIn("Cobertura parcial", html)
+
+    def test_dominio_e_motivo_sao_escapados_no_html(self):
+        out = self._out("s.html")
+        falhas = [{"fonte": "CRT.SH", "domain": "<script>alert(1)</script>", "motivo": "x"}]
+        REP.generate_submonitor_report([], [], [], output_path=out,
+                                       partial_failures=falhas)
+        html = Path(out).read_text(encoding="utf-8")
+        self.assertNotIn("<script>alert(1)</script>", html)
+
+
 if __name__ == "__main__":
     unittest.main()

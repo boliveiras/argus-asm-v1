@@ -37,7 +37,7 @@ class Base(unittest.TestCase):
         self.tmp.cleanup()
 
     def hosts(self, campanha="RIOCARD"):
-        cands = self.SUB._build_candidates([(campanha, ["empresa.com"])], ["www", "api"])
+        cands, _falhas = self.SUB._build_candidates([(campanha, ["empresa.com"])], ["www", "api"])
         return sorted(h for (h, _c) in cands)
 
 

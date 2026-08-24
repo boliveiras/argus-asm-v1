@@ -47,6 +47,22 @@ def _sem_cache(monkey_linhas, status=200):
         crtname._write_cache = orig_write
 
 
+def _sem_cache_ex(monkey_linhas=None, status=200, get_fn=None):
+    """Mesma injeção, mas devolvendo (subs, erro) via get_subdomains_ex."""
+    orig_get = crtname.requests.get
+    orig_read = crtname._read_cache
+    orig_write = crtname._write_cache
+    crtname.requests.get = get_fn or (lambda *a, **k: FakeResp(monkey_linhas, status))
+    crtname._read_cache = lambda d: None
+    crtname._write_cache = lambda d, s: None
+    try:
+        return crtname.get_subdomains_ex("empresa.com.br")
+    finally:
+        crtname.requests.get = orig_get
+        crtname._read_cache = orig_read
+        crtname._write_cache = orig_write
+
+
 class TestParse(unittest.TestCase):
     def test_extrai_hostnames_do_dominio(self):
         subs = _sem_cache([
@@ -122,6 +138,71 @@ class TestDegradacao(unittest.TestCase):
 
     def test_dominio_vazio_nao_consulta(self):
         self.assertEqual(crtname.get_subdomains(""), set())
+
+
+class TestMotivoDaFalha(unittest.TestCase):
+    """get_subdomains_ex/get_subdomains_safe_ex: a fonte precisa dizer POR QUÊ
+    quando falha — indistinguibilidade entre '0 achados reais' e 'fonte fora
+    do ar' foi exatamente o bug observado em produção com o crt.sh irmão
+    deste provider (mesmo padrão de degradação, mesma correção)."""
+
+    def test_sucesso_com_zero_nomes_nao_e_erro(self):
+        subs, erro = _sem_cache_ex([])
+        self.assertEqual(subs, set())
+        self.assertIsNone(erro)
+
+    def test_http_502_reporta_indisponibilidade_nao_zero_resultado(self):
+        subs, erro = _sem_cache_ex(["qualquer.empresa.com.br"], status=502)
+        self.assertEqual(subs, set())
+        self.assertIsNotNone(erro)
+        self.assertIn("502", erro)
+
+    def test_timeout_e_distinto_de_erro_de_servidor(self):
+        def explode(*a, **k):
+            import requests
+            raise requests.exceptions.Timeout("demorou demais")
+        subs, erro = _sem_cache_ex(get_fn=explode)
+        self.assertEqual(subs, set())
+        self.assertEqual(erro, "timeout")
+        self.assertNotIn("502", erro)
+
+    def test_erro_de_rede_e_reportado(self):
+        def explode(*a, **k):
+            import requests
+            raise requests.exceptions.ConnectionError("sem rede")
+        subs, erro = _sem_cache_ex(get_fn=explode)
+        self.assertEqual(subs, set())
+        self.assertIsNotNone(erro)
+
+    def test_cache_hit_e_sucesso_sem_erro(self):
+        orig_read = crtname._read_cache
+        crtname._read_cache = lambda d: {"cached.empresa.com.br"}
+        try:
+            subs, erro = crtname.get_subdomains_ex("empresa.com.br")
+            self.assertEqual(subs, {"cached.empresa.com.br"})
+            self.assertIsNone(erro)
+        finally:
+            crtname._read_cache = orig_read
+
+    def test_get_subdomains_continua_so_com_set_apos_falha(self):
+        # Compat: get_subdomains (assinatura antiga) não pode passar a devolver
+        # tupla — scanners/submonitor.py e outros consumidores dependem do set puro.
+        self.assertEqual(_sem_cache(["x"], status=500), set())
+
+    def test_get_subdomains_safe_ex_nunca_levanta(self):
+        def explode(*a, **k):
+            raise RuntimeError("catástrofe inesperada")
+        orig_get = crtname.requests.get
+        orig_read = crtname._read_cache
+        crtname.requests.get = explode
+        crtname._read_cache = lambda d: None
+        try:
+            subs, erro = crtname.get_subdomains_safe_ex("empresa.com.br")
+            self.assertEqual(subs, set())
+            self.assertIsNotNone(erro)
+        finally:
+            crtname.requests.get = orig_get
+            crtname._read_cache = orig_read
 
 
 if __name__ == "__main__":
