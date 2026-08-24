@@ -4841,7 +4841,15 @@ _CAMP_SCRIPT = r"""<script>
     if(wlCount()===0){ msg('A wordlist não pode ficar vazia — informe ao menos um prefixo.','err'); return; }
     var btn=document.getElementById('wl-save'); btn.disabled=true;
     api('/api/wordlist',{method:'POST',body:JSON.stringify({words:ta.value})}).then(function(j){
-      msg('Wordlist salva com '+j.count+' prefixo(s). O próximo scan de subdomínios já usa a nova lista.');
+      var aviso='';
+      if(j.descartados){
+        // Descarte precisa aparecer: wordlist pública traz item que não é rótulo
+        // DNS, e o operador tem de saber o que ficou de fora do escopo.
+        aviso=' '+j.descartados+' item(ns) descartado(s) por não ser prefixo válido'
+             +(j.invalidos&&j.invalidos.length?(': '+esc(j.invalidos.slice(0,5).join(', '))):'')
+             +(j.descartados>5?'…':'')+'.';
+      }
+      msg('Wordlist salva com '+j.count+' prefixo(s).'+aviso+' O próximo scan de subdomínios já usa a nova lista.');
       ta.value=(j.words||[]).join('\n'); wlSync();
     }).catch(function(e){ msg(e.message,'err'); }).then(function(){ wlSync(); });
   }

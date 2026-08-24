@@ -120,3 +120,50 @@ class TestWordlistGrande(unittest.TestCase):
         erro = (r.get_json() or {}).get("error", "")
         self.assertTrue(erro, "413 sem corpo JSON: o usuário não descobre o motivo")
         self.assertIn("grande", erro.lower())
+
+
+class TestWordlistItensInvalidos(unittest.TestCase):
+    """Item inválido não pode derrubar a wordlist inteira.
+
+    Wordlist pública traz entradas que não são rótulo DNS (`s/mime`, do SecLists).
+    Recusar as 4.656 por causa de uma obrigava o operador a caçar a linha na mão —
+    e a mensagem só mostrava as cinco primeiras. Grava o que vale e diz o que ficou
+    de fora: descartar em silêncio seria pior, mas travar tudo também.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        os.environ["ARGUS_BASE"] = self.tmp.name
+        os.environ["ARGUS_DB"] = os.path.join(self.tmp.name, "store", "argus.db")
+        os.makedirs(os.path.join(self.tmp.name, "store"), exist_ok=True)
+        os.makedirs(os.path.join(self.tmp.name, "submonitor"), exist_ok=True)
+        import webapp
+        self.app = webapp.create_app().test_client()
+        self.H = {"X-Requested-With": "argus", "X-Remote-User": "monitor"}
+
+    def tearDown(self):
+        os.environ.pop("ARGUS_DB", None)
+        self.tmp.cleanup()
+
+    def test_grava_os_validos_e_relata_o_descarte(self):
+        r = self.app.post("/api/wordlist", headers=self.H,
+                          json={"words": "www\ns/mime\napi\ndev"})
+        self.assertEqual(r.status_code, 200)
+        j = r.get_json()
+        self.assertEqual(j["count"], 3)
+        self.assertEqual(j["descartados"], 1)
+        self.assertIn("s/mime", j["invalidos"])
+        # o que valia foi realmente gravado
+        g = self.app.get("/api/wordlist", headers=self.H).get_json()
+        self.assertEqual(sorted(g["words"]), ["api", "dev", "www"])
+
+    def test_sem_invalidos_nao_relata_descarte(self):
+        j = self.app.post("/api/wordlist", headers=self.H,
+                          json={"words": "www\napi"}).get_json()
+        self.assertEqual(j["descartados"], 0)
+
+    def test_wordlist_so_com_invalidos_ainda_e_recusada(self):
+        # Nada aproveitável não pode virar wordlist vazia em silêncio.
+        r = self.app.post("/api/wordlist", headers=self.H,
+                          json={"words": "s/mime\nhttp://x\n..."})
+        self.assertEqual(r.status_code, 400)

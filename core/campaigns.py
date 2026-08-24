@@ -505,11 +505,17 @@ def save_wordlist(raw, base: str | None = None) -> dict:
     inode, preservando a ACL do arquivo. Assim o app user precisa de escrita apenas
     NESTE arquivo — e não no diretório submonitor/ (que guarda o banco)."""
     words, bad = parse_words(raw)
-    if bad:
-        raise CampaignError(
-            f"{len(bad)} item(ns) inválido(s) — use apenas o prefixo (ex.: 'api', 'dev-app'), "
-            f"sem pontos nem domínio: " + ", ".join(bad[:5]))
+    # Item inválido é DESCARTADO, não derruba a gravação: wordlist pública traz
+    # entradas que não são rótulo DNS (o `s/mime` do SecLists é o caso típico), e
+    # recusar milhares por causa de uma obrigava a caçar a linha na mão. O
+    # descarte é relatado a quem chamou — sumir em silêncio seria pior.
     if not words:
+        # Nada aproveitável: aí é erro de verdade, e não pode virar wordlist
+        # vazia sem ninguém perceber.
+        if bad:
+            raise CampaignError(
+                "nenhum prefixo válido — use só o rótulo (ex.: 'api', 'dev-app'), "
+                "sem pontos, barras nem domínio: " + ", ".join(bad[:5]))
         raise CampaignError("a wordlist não pode ficar vazia — informe ao menos um prefixo")
     if len(words) > WORDLIST_MAX:
         raise CampaignError(f"limite de {WORDLIST_MAX} prefixos excedido ({len(words)})")
@@ -521,7 +527,8 @@ def save_wordlist(raw, base: str | None = None) -> dict:
         fh.write(content)
         fh.flush()
         os.fsync(fh.fileno())
-    return {"count": len(words), "words": words}
+    return {"count": len(words), "words": words,
+            "descartados": len(bad), "invalidos": bad[:20]}
 
 
 def rename_campaign(scope: str, old: str, new: str, base: str | None = None) -> dict:
