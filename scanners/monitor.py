@@ -938,6 +938,12 @@ def _falha_total(ips: list[str], falhas: int) -> bool:
 # execuções é normal (host que cai, serviço reiniciado); 30% é a fronteira
 # escolhida para separar ruído de sinal — ajuste se a prática mostrar outro.
 QUEDA_COBERTURA_ALERTA = 0.30
+# Piso de amostra para o aviso valer. Com histórico pequeno, a variação normal
+# cruza qualquer percentual: 3 portas caindo para 2 já são 33%, e um serviço
+# reiniciado bastaria para alarmar toda execução. Aviso que dispara à toa é
+# aviso que o operador aprende a ignorar — e aí a rede de segurança deixa de
+# existir justamente quando importa.
+QUEDA_COBERTURA_MIN_AMOSTRA = 10
 
 
 def _portas_da_execucao_anterior(campanha: str) -> int:
@@ -970,8 +976,10 @@ def _alertar_queda_cobertura(campanha: str, achadas: int,
     if paralelismo <= 1:
         return None
     anterior = _portas_da_execucao_anterior(campanha)
-    if anterior <= 0:
-        return None                     # sem histórico, nada a comparar
+    if anterior < QUEDA_COBERTURA_MIN_AMOSTRA:
+        # Sem histórico, ou com histórico pequeno demais para o percentual
+        # significar alguma coisa.
+        return None
     if achadas >= anterior * (1 - QUEDA_COBERTURA_ALERTA):
         return None
     return (f"cobertura caiu de {anterior} para {achadas} porta(s) com "
