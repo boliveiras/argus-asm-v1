@@ -132,12 +132,43 @@ def prefixos_da_campanha(nome: str) -> list[str]:
     return limpos or [""]
 
 
-def set_prefixos(nome: str, prefixos) -> list[str]:
-    """Valida e grava os prefixos da campanha. Devolve a lista efetivamente salva.
+def _gravar_config(cfg: dict) -> None:
+    """Grava campaigns.json IN-PLACE (mesmo inode): o serviço precisa de
+    permissão apenas NESTE arquivo, nunca de criar arquivos no diretório de
+    configuração.
 
-    Grava IN-PLACE (mesmo inode): o serviço precisa de permissão apenas NESTE
-    arquivo, nunca de criar arquivos no diretório de configuração.
+    campaigns.json é compartilhado por TODAS as campanhas: uma falha de I/O no
+    meio da escrita não pode truncar o arquivo e levar junto a configuração das
+    demais. Guarda o conteúdo anterior e restaura se a gravação falhar (mesmo
+    padrão de logpush_config.gravar). Usada por toda função que grava uma chave
+    de campanha (prefixos, paralelismo, ...) — um único ponto com a proteção.
     """
+    corpo = json.dumps(cfg, ensure_ascii=False, indent=2) + "\n"
+    caminho = config_path()
+    try:
+        anterior = caminho.read_text(encoding="utf-8") if caminho.exists() else ""
+    except OSError:
+        anterior = ""
+    try:
+        caminho.parent.mkdir(parents=True, exist_ok=True)
+        with open(caminho, "w", encoding="utf-8", newline="") as fh:
+            fh.write(corpo)
+            fh.flush()
+            os.fsync(fh.fileno())
+    except OSError as exc:
+        if anterior:
+            try:
+                with open(caminho, "w", encoding="utf-8", newline="") as fh:
+                    fh.write(anterior)
+                    fh.flush()
+                    os.fsync(fh.fileno())
+            except OSError:
+                pass
+        raise CampaignError(f"sem permissão para gravar a configuração: {exc}") from exc
+
+
+def set_prefixos(nome: str, prefixos) -> list[str]:
+    """Valida e grava os prefixos da campanha. Devolve a lista efetivamente salva."""
     nome = normalize_name(nome)          # a chave gravada é a validada, não a crua
     if not valid_name(nome):
         raise CampaignError("nome de campanha inválido")
@@ -159,33 +190,56 @@ def set_prefixos(nome: str, prefixos) -> list[str]:
         limpos = [""]        # sem nenhum prefixo, ainda se testa a palavra pura
     cfg = ler_config()
     cfg[nome] = {**cfg.get(nome, {}), "prefixos": limpos}
-    corpo = json.dumps(cfg, ensure_ascii=False, indent=2) + "\n"
-    caminho = config_path()
-    # campaigns.json é compartilhado por TODAS as campanhas: uma falha de I/O
-    # no meio da escrita não pode truncar o arquivo e levar junto a
-    # configuração das demais. Guarda o conteúdo anterior e restaura se a
-    # gravação falhar (mesmo padrão de logpush_config.gravar).
-    try:
-        anterior = caminho.read_text(encoding="utf-8") if caminho.exists() else ""
-    except OSError:
-        anterior = ""
-    try:
-        caminho.parent.mkdir(parents=True, exist_ok=True)
-        with open(caminho, "w", encoding="utf-8", newline="") as fh:
-            fh.write(corpo)
-            fh.flush()
-            os.fsync(fh.fileno())
-    except OSError as exc:
-        if anterior:
-            try:
-                with open(caminho, "w", encoding="utf-8", newline="") as fh:
-                    fh.write(anterior)
-                    fh.flush()
-                    os.fsync(fh.fileno())
-            except OSError:
-                pass
-        raise CampaignError(f"sem permissão para gravar a configuração: {exc}") from exc
+    _gravar_config(cfg)
     return limpos
+
+
+# Paralelismo da varredura TCP. O valor vira o número de nmaps simultâneos
+# contra alvos reais: acima do teto, a perda de pacote faz porta ABERTA ser
+# reportada como "filtered" e sumir do relatório — o scan fica mais rápido e
+# mais pobre, sem dizer. Por isso a faixa é estreita e o padrão é série.
+PARALELISMO_TCP_MIN = 1
+PARALELISMO_TCP_MAX = 5
+
+
+def paralelismo_da_campanha(nome: str) -> int:
+    """Varreduras TCP simultâneas da campanha. 1 (série) quando não configurado.
+
+    Revalida na LEITURA porque o arquivo pode ser editado à mão no servidor:
+    um 20 gravado direto no JSON não pode virar 20 nmaps concorrentes.
+    """
+    entrada = ler_config().get(normalize_name(nome), {})
+    if not isinstance(entrada, dict):
+        return PARALELISMO_TCP_MIN
+    try:
+        valor = int(entrada.get("paralelismo_tcp", PARALELISMO_TCP_MIN))
+    except (TypeError, ValueError):
+        return PARALELISMO_TCP_MIN
+    if not PARALELISMO_TCP_MIN <= valor <= PARALELISMO_TCP_MAX:
+        return PARALELISMO_TCP_MIN
+    return valor
+
+
+def set_paralelismo(nome: str, valor) -> int:
+    """Valida e grava o paralelismo TCP da campanha. Devolve o valor salvo."""
+    nome = normalize_name(nome)
+    if not valid_name(nome):
+        raise CampaignError("nome de campanha inválido")
+    try:
+        valor = int(valor)
+    except (TypeError, ValueError) as exc:
+        raise CampaignError(
+            f"paralelismo inválido: informe um número entre "
+            f"{PARALELISMO_TCP_MIN} e {PARALELISMO_TCP_MAX}") from exc
+    if not PARALELISMO_TCP_MIN <= valor <= PARALELISMO_TCP_MAX:
+        raise CampaignError(
+            f"paralelismo fora da faixa: use de {PARALELISMO_TCP_MIN} a "
+            f"{PARALELISMO_TCP_MAX} (acima disso a varredura perde pacote e "
+            f"deixa de reportar porta aberta)")
+    cfg = ler_config()
+    cfg[nome] = {**cfg.get(nome, {}), "paralelismo_tcp": valor}
+    _gravar_config(cfg)
+    return valor
 
 
 def campanha_pedida() -> str:
