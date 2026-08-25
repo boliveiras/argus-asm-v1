@@ -45,6 +45,7 @@ import sqlite3
 import sys
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import requests
@@ -56,6 +57,14 @@ try:
 except Exception:                                   # pragma: no cover
     def _filtrar_campanhas(arquivos):
         return list(arquivos)
+
+# Teto de paralelismo por campanha (ARGUS_PARALELISMO em campaigns.py): sem
+# módulo, cai em 1 — mesmo comportamento em série de sempre.
+try:
+    from campaigns import paralelismo_da_campanha as _paralelismo_da_campanha
+except Exception:                                   # pragma: no cover
+    def _paralelismo_da_campanha(nome):
+        return 1
 
 
 
@@ -905,6 +914,50 @@ def _parse_modes(argv: list[str]) -> list[str]:
     return modes or ["tcp"]
 
 
+def _varrer_alvos(ips: list[str], campanha: str, mode: str,
+                  paralelismo: int) -> list[dict]:
+    """Varre a lista de IPs e devolve os resultados agregados.
+
+    Thread pool basta porque o nmap é processo externo e o trabalho é espera de
+    rede — não há disputa de CPU (3min32 de CPU para 3h23 de relógio na medição
+    que motivou isto) nem estado compartilhado dentro de run_scan.
+
+    Falha de um alvo NÃO derruba os demais: um nmap que morre custa aquele IP,
+    não a varredura inteira.
+    """
+    total = len(ips)
+    if total == 0:
+        return []
+    if paralelismo <= 1:
+        # Caminho de série idêntico ao histórico — inclusive na saída impressa.
+        resultados: list[dict] = []
+        for i, ip in enumerate(ips, 1):
+            print(f"[{i}/{total}]", end=" ")
+            try:
+                resultados.extend(run_scan(ip, campanha, mode))
+            except Exception as exc:
+                print(f"  [ERRO] {ip}: {exc}", file=sys.stderr)
+        return resultados
+
+    resultados = []
+    concluidos = 0
+    with ThreadPoolExecutor(max_workers=paralelismo) as pool:
+        futuros = {pool.submit(run_scan, ip, campanha, mode): ip for ip in ips}
+        for fut in as_completed(futuros):
+            ip = futuros[fut]
+            concluidos += 1
+            # Imprime ao TERMINAR, não ao começar: com execuções concorrentes,
+            # anunciar o início embaralha a saída e o progresso deixa de fazer
+            # sentido para quem acompanha o log.
+            try:
+                parciais = fut.result()
+                resultados.extend(parciais)
+                print(f"[{concluidos}/{total}] {ip}: {len(parciais)} porta(s)")
+            except Exception as exc:
+                print(f"[{concluidos}/{total}] {ip}: ERRO — {exc}", file=sys.stderr)
+    return resultados
+
+
 def main():
     modes = _parse_modes(sys.argv)
     if "--install-cron" in sys.argv:
@@ -948,10 +1001,14 @@ def main():
             print(f"\n========== Varredura {mode.upper()} ==========")
             for campanha, targets in campaigns:
                 ips = _expand_targets(targets)
-                print(f"\n--- Campanha: {campanha} ({len(ips)} IP(s) — varredura individual {mode.upper()}) ---")
-                for i, ip in enumerate(ips, 1):
-                    print(f"[{i}/{len(ips)}]", end=" ")
-                    all_results.extend(run_scan(ip, campanha, mode))
+                # Paralelismo só no TCP: o UDP não tem handshake e a distinção
+                # entre "aberta" e "filtrada" já é frágil — concorrência ali
+                # multiplica o falso negativo num scan que também não é o gargalo.
+                paralelo = _paralelismo_da_campanha(campanha) if mode == "tcp" else 1
+                extra = f" — {paralelo} em paralelo" if paralelo > 1 else ""
+                print(f"\n--- Campanha: {campanha} ({len(ips)} IP(s) — "
+                      f"varredura individual {mode.upper()}{extra}) ---")
+                all_results.extend(_varrer_alvos(ips, campanha, mode, paralelo))
 
         print(f"\n[ASN] Total de portas abertas: {len(all_results)}")
         resolve_asn_bulk(all_results)
