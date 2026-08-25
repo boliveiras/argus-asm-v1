@@ -102,6 +102,10 @@ DATABASE_FILE  = "email.db"
 # Carência (dias) antes de marcar um domínio como REMOVIDO — absorve "misses"
 # transitórios de DNS. Ajustável por env.
 CLOSE_GRACE_DAYS = int(os.environ.get("ARGUS_CLOSE_GRACE_DAYS", "3"))
+# Janela (dias) para manter domínios CORRIGIDOS visíveis no relatório lido do
+# banco. Mesmo valor e mesma razão do monitor.py: sem janela, o corrigido de
+# ontem sumiria da tela assim que outra campanha rodasse.
+CLOSED_WINDOW_DAYS = 7
 HTML_REPORT    = "email_report.html"
 APACHE_DOCROOT = "/var/www/argus"
 
@@ -536,6 +540,69 @@ def process_results(results: list[dict]):
     conn.commit(); conn.close()
     return novos, reincidentes, removidos
 
+
+# ── Relatório lido do BANCO (modelo do monitor.py) ──────────────────────────
+# Colunas na MESMA ordem que _row_to_result desempacota. Constante literal —
+# nunca recebe entrada do usuário.
+_REPORT_COLS = ("campanha,domain,has_mx,mx,spf_status,dmarc_status,"
+                "dkim_status,dkim_selector,risk,issues,status")
+
+
+def _row_to_result(row) -> dict:
+    """Converte uma linha de `domains` no dicionário que o relatório espera."""
+    (campanha, domain, has_mx, mx, spf_status, dmarc_status,
+     dkim_status, dkim_selector, risk, issues, status) = row
+    return {
+        "campanha": campanha or "", "domain": domain or "",
+        "has_mx": bool(has_mx), "mx": mx or "",
+        "spf_status": spf_status or "", "dmarc_status": dmarc_status or "",
+        "dkim_status": dkim_status or "", "dkim_selector": dkim_selector or "",
+        "risk": risk or "INFO", "status": status or "",
+        # process_results grava issues como texto " | "; o relatório espera lista.
+        "issues": [i for i in (issues or "").split(" | ") if i],
+        # O banco guarda o VEREDITO (AUSENTE/NONE/...), não o TXT bruto de
+        # SPF/DMARC. Domínios de campanhas que NÃO rodaram nesta execução
+        # aparecem com o veredito certo e sem o registro bruto; o que a execução
+        # corrente descobriu volta inteiro pelo overlay de load_report_rows().
+        "spf_raw": "", "dmarc_raw": "",
+    }
+
+
+def load_report_rows(frescos: list[dict] | None = None):
+    """Monta a entrada do relatório a partir do estado COMPLETO do banco:
+    ativos (NOVO/REINCIDENTE/RESSURGIDO) + corrigidos recentes (janela
+    CLOSED_WINDOW_DAYS).
+
+    Com o runner rodando campanha por campanha (ARGUS_CAMPANHA), montar o HTML
+    a partir do resultado em memória fazia cada campanha sobrescrever o
+    relatório da anterior no docroot — só sobrava o da ÚLTIMA. Lendo do banco,
+    cada execução regenera a visão inteira sem apagar as outras campanhas.
+
+    `frescos` são os resultados desta execução; entram POR CIMA da linha do
+    banco (só eles têm o TXT bruto de SPF/DMARC) e como CÓPIA, para que o
+    reconhecimento (ack) sobre a visão do relatório não reescreva o resultado
+    que segue para o syslog."""
+    conn = sqlite3.connect(DATABASE_FILE)
+    cur = conn.cursor()
+    cutoff = (datetime.datetime.now()
+              - datetime.timedelta(days=CLOSED_WINDOW_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        novos = [_row_to_result(r) for r in cur.execute(
+            f"SELECT {_REPORT_COLS} FROM domains WHERE status='NOVO'").fetchall()]  # nosec B608 - _REPORT_COLS constante, status literal
+        reincidentes = [_row_to_result(r) for r in cur.execute(
+            f"SELECT {_REPORT_COLS} FROM domains WHERE status IN ('REINCIDENTE','RESSURGIDO')").fetchall()]  # nosec B608 - _REPORT_COLS constante, status literais
+        removidos = [_row_to_result(r) for r in cur.execute(
+            f"SELECT {_REPORT_COLS} FROM domains WHERE status='CORRIGIDO' AND last_seen>=?", (cutoff,)).fetchall()]  # nosec B608 - _REPORT_COLS constante, status literal + placeholder
+    finally:
+        conn.close()
+    por_chave = {r.get("domain"): r for r in (frescos or []) if r.get("domain")}
+
+    def _mesclar(linhas):
+        return [dict(por_chave.get(r["domain"], r)) for r in linhas]
+
+    return _mesclar(novos), _mesclar(reincidentes), _mesclar(removidos)
+
+
 # ============================================================
 # CRON
 # ============================================================
@@ -639,22 +706,28 @@ def main():
             except Exception as _exc:
                 print(f"[FINDINGS] sync ignorado (não crítico): {_exc}")
 
-        # ── Reconhecimento (RECONHECIDO -> INFO) ──────────────────
-        if ack is not None:
-            _ack_n = ack.apply("email", novos, reincidentes)
-            if _ack_n:
-                print(f"[ACK] {_ack_n} domínio(s) reconhecido(s) -> status RECONHECIDO / risco INFO")
+        # ── Relatório lido do BANCO (estado completo, TODAS as campanhas) ──
+        # process_results() já persistiu o que esta execução achou; o resultado
+        # em memória entra por cima para não perder o TXT bruto de SPF/DMARC,
+        # que a tabela não guarda.
+        rep_novos, rep_rein, rep_rem = load_report_rows(novos + reincidentes + removidos)
 
         # ── Esconde do relatório os domínios cujo ACHADO foi tratado (Mitigado/FP) ──
         if _findings is not None:
             try:
                 _hidden = _findings.hidden_keys("email")
                 if _hidden:
-                    novos        = [r for r in novos        if r.get("domain") not in _hidden]
-                    reincidentes = [r for r in reincidentes if r.get("domain") not in _hidden]
-                    removidos    = [r for r in removidos    if r.get("domain") not in _hidden]
+                    rep_novos = [r for r in rep_novos if r.get("domain") not in _hidden]
+                    rep_rein  = [r for r in rep_rein  if r.get("domain") not in _hidden]
+                    rep_rem   = [r for r in rep_rem   if r.get("domain") not in _hidden]
             except Exception:
                 pass
+
+        # ── Reconhecimento (RECONHECIDO -> INFO) sobre a visão do relatório ──
+        if ack is not None:
+            _ack_n = ack.apply("email", rep_novos, rep_rein)
+            if _ack_n:
+                print(f"[ACK] {_ack_n} domínio(s) reconhecido(s) -> status RECONHECIDO / risco INFO")
 
         import os as _os
         import shutil as _shutil
@@ -662,7 +735,7 @@ def main():
         _docroot = _Path(APACHE_DOCROOT)
         _out = str(_docroot / HTML_REPORT) if _docroot.exists() else HTML_REPORT
 
-        generate_email_report(novos, reincidentes, removidos, output_path=_out)
+        generate_email_report(rep_novos, rep_rein, rep_rem, output_path=_out)
         _os.chmod(_out, 0o644)
         if _out != HTML_REPORT:
             _shutil.copy2(_out, HTML_REPORT)
@@ -673,14 +746,16 @@ def main():
         duration_s = int(time.monotonic() - _start)
         syslog_error("main", exc); syslog_end([], [], [], duration_s, status="error"); raise
 
-    spoofaveis = sum(1 for r in novos + reincidentes if r.get("risk") in ("CRITICO", "ALTO"))
+    # "Spoofáveis" conta o relatório inteiro (todas as campanhas); as demais
+    # contagens são da EXECUÇÃO, que com ARGUS_CAMPANHA cobre só uma campanha.
+    spoofaveis = sum(1 for r in rep_novos + rep_rein if r.get("risk") in ("CRITICO", "ALTO"))
     print()
     print(f"[+] Relatório        : {Path(HTML_REPORT).absolute()}")
     print(f"[+] Log RFC5424      : {SYSLOG_FILE}")
     print(f"[+] Spoofáveis       : {spoofaveis}")
-    print(f"[+] Novos            : {len(novos)}")
-    print(f"[+] Reincidentes     : {len(reincidentes)}")
-    print(f"[+] Corrigidos       : {len(removidos)}")
+    print(f"[+] Novos (run)      : {len(novos)}")
+    print(f"[+] Reincidentes(run): {len(reincidentes)}")
+    print(f"[+] Corrigidos (run) : {len(removidos)}")
     print(f"[+] Tempo de execução: {_fmt_duration(duration_s)}")
 
 if __name__ == "__main__":

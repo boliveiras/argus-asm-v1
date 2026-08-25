@@ -176,6 +176,10 @@ APACHE_DOCROOT = "/var/www/argus"
 # Carência (dias) antes de marcar um subdomínio como REMOVIDO — absorve "misses"
 # transitórios (DNS/crt.sh/urlscan). Ajustável por env.
 CLOSE_GRACE_DAYS = int(os.environ.get("ARGUS_CLOSE_GRACE_DAYS", "3"))
+# Janela (dias) para manter hosts CORRIGIDOS visíveis no relatório lido do banco.
+# Mesmo valor e mesma razão do monitor.py: sem janela, o corrigido de ontem
+# sumiria da tela assim que outra campanha rodasse.
+CLOSED_WINDOW_DAYS = 7
 
 TIMEOUT     = 5
 CONCURRENCY = 25
@@ -1016,6 +1020,81 @@ def process_results(results: list[dict]):
     conn.commit(); conn.close()
     return novos, reincidentes, removidos
 
+
+# ── Relatório lido do BANCO (modelo do monitor.py) ──────────────────────────
+# Colunas na MESMA ordem que _row_to_result desempacota. Constante literal —
+# nunca recebe entrada do usuário.
+_REPORT_COLS = ("campanha,hostname,ip,cname,asn,ip_type,http_status,risk,status,"
+                "dnssec,ssl_status,ssl_expiry,origem,"
+                "whois_creation,whois_expiry,whois_age_days,whois_status,whois_registrar")
+
+
+def _row_to_result(row) -> dict:
+    """Converte uma linha de `subdomains` no dicionário que o relatório espera.
+
+    O reporter (_submonitor_rows_to_js) lê ssl/whois como sub-dicionários, então
+    a reconstrução remonta essa forma a partir das colunas planas do banco."""
+    (campanha, hostname, ip, cname, asn, ip_type, http_status, risk, status,
+     dnssec, ssl_status, ssl_expiry, origem,
+     wh_creation, wh_expiry, wh_age, wh_status, wh_registrar) = row
+    return {
+        "campanha": campanha or "", "hostname": hostname or "", "ip": ip or "",
+        "cname": cname or "", "asn": asn or "", "ip_type": ip_type or "",
+        "http_status": http_status or "", "risk": risk or "INFO",
+        "status": status or "", "dnssec": dnssec or "DESABILITADO",
+        "origem": origem or "wordlist",
+        "ssl": {"status": ssl_status or "SEM CERTIFICADO",
+                "expiry_date": ssl_expiry or ""},
+        "whois": {"creation_date": wh_creation or "",
+                  "expiration_date": wh_expiry or "",
+                  "age_days": wh_age if isinstance(wh_age, int) and wh_age >= 0 else None,
+                  "status": wh_status or "DESCONHECIDO",
+                  "registrar": wh_registrar or ""},
+        # O banco não guarda enriquecimento de threat intel (AbuseIPDB, urlscan,
+        # InternetDB, KEV, VT, NVD). Hosts de campanhas que NÃO rodaram nesta
+        # execução aparecem sem esses campos — o que a execução corrente
+        # descobriu volta inteiro pelo overlay de load_report_rows().
+        "abuse": None,
+    }
+
+
+def load_report_rows(frescos: list[dict] | None = None):
+    """Monta a entrada do relatório a partir do estado COMPLETO do banco:
+    ativos (NOVO/REINCIDENTE/RESSURGIDO) + corrigidos recentes (janela
+    CLOSED_WINDOW_DAYS).
+
+    É isto que torna o relatório unificado. Com o runner rodando campanha por
+    campanha (ARGUS_CAMPANHA), montar o HTML a partir do resultado em memória
+    fazia cada campanha sobrescrever o relatório da anterior no docroot — só
+    sobrava o da ÚLTIMA. Lendo do banco, cada execução regenera a visão inteira
+    sem apagar as outras campanhas.
+
+    `frescos` são os resultados desta execução (novos+reincidentes+removidos).
+    Eles entram POR CIMA da linha do banco: só eles trazem o enriquecimento de
+    threat intel, que a tabela não guarda. Entram como CÓPIA para que o
+    reconhecimento (ack) aplicado sobre a visão do relatório não reescreva o
+    resultado que segue para o syslog."""
+    conn = sqlite3.connect(DATABASE_FILE)
+    cur = conn.cursor()
+    cutoff = (datetime.datetime.now()
+              - datetime.timedelta(days=CLOSED_WINDOW_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        novos = [_row_to_result(r) for r in cur.execute(
+            f"SELECT {_REPORT_COLS} FROM subdomains WHERE status='NOVO'").fetchall()]  # nosec B608 - _REPORT_COLS constante, status literal
+        reincidentes = [_row_to_result(r) for r in cur.execute(
+            f"SELECT {_REPORT_COLS} FROM subdomains WHERE status IN ('REINCIDENTE','RESSURGIDO')").fetchall()]  # nosec B608 - _REPORT_COLS constante, status literais
+        removidos = [_row_to_result(r) for r in cur.execute(
+            f"SELECT {_REPORT_COLS} FROM subdomains WHERE status='CORRIGIDO' AND last_seen>=?", (cutoff,)).fetchall()]  # nosec B608 - _REPORT_COLS constante, status literal + placeholder
+    finally:
+        conn.close()
+    por_chave = {r.get("hostname"): r for r in (frescos or []) if r.get("hostname")}
+
+    def _mesclar(linhas):
+        return [dict(por_chave.get(r["hostname"], r)) for r in linhas]
+
+    return _mesclar(novos), _mesclar(reincidentes), _mesclar(removidos)
+
+
 # ============================================================
 # CRON
 # ============================================================
@@ -1253,22 +1332,28 @@ def main():
             except Exception as _exc:
                 print(f"[FINDINGS] sync ignorado (não crítico): {_exc}")
 
-        # ── Reconhecimento (RECONHECIDO -> INFO) ──────────────────
-        if ack is not None:
-            _ack_n = ack.apply("submonitor", novos, reincidentes)
-            if _ack_n:
-                print(f"[ACK] {_ack_n} host(s) reconhecido(s) -> status RECONHECIDO / risco INFO")
+        # ── Relatório lido do BANCO (estado completo, TODAS as campanhas) ──
+        # process_results() já persistiu o que esta execução achou, então o banco
+        # está atualizado; o resultado em memória entra por cima para não perder
+        # o enriquecimento de threat intel, que a tabela não guarda.
+        rep_novos, rep_rein, rep_rem = load_report_rows(novos + reincidentes + removidos)
 
         # ── Esconde do relatório os hosts cujo ACHADO foi tratado (Mitigado/FP) ──
         if _findings is not None:
             try:
                 _hidden = _findings.hidden_keys("submonitor")
                 if _hidden:
-                    novos        = [r for r in novos        if r.get("hostname") not in _hidden]
-                    reincidentes = [r for r in reincidentes if r.get("hostname") not in _hidden]
-                    removidos    = [r for r in removidos    if r.get("hostname") not in _hidden]
+                    rep_novos = [r for r in rep_novos if r.get("hostname") not in _hidden]
+                    rep_rein  = [r for r in rep_rein  if r.get("hostname") not in _hidden]
+                    rep_rem   = [r for r in rep_rem   if r.get("hostname") not in _hidden]
             except Exception:
                 pass
+
+        # ── Reconhecimento (RECONHECIDO -> INFO) sobre a visão do relatório ──
+        if ack is not None:
+            _ack_n = ack.apply("submonitor", rep_novos, rep_rein)
+            if _ack_n:
+                print(f"[ACK] {_ack_n} host(s) reconhecido(s) -> status RECONHECIDO / risco INFO")
 
         import os as _os
         import shutil as _shutil
@@ -1283,7 +1368,7 @@ def main():
 
         _out = str(_docroot_path) if _docroot.exists() else _local_path
 
-        generate_submonitor_report(novos, reincidentes, removidos,
+        generate_submonitor_report(rep_novos, rep_rein, rep_rem,
                                    output_path=_out,
                                    threatintel_available=_THREATINTEL_AVAILABLE,
                                    partial_failures=falhas_descoberta)
@@ -1302,9 +1387,12 @@ def main():
     print()
     print(f"[+] Relatório        : {Path(HTML_REPORT).absolute()}")
     print(f"[+] Log RFC5424      : {SYSLOG_FILE}")
-    print(f"[+] Novos            : {len(novos)}")
-    print(f"[+] Reincidentes     : {len(reincidentes)}")
-    print(f"[+] Corrigidos       : {len(removidos)}")
+    # Contagens da EXECUÇÃO (só a campanha varrida, quando há restrição). O
+    # relatório mostra mais que isto — ele cobre todas as campanhas do banco.
+    print(f"[+] Novos (run)      : {len(novos)}")
+    print(f"[+] Reincidentes(run): {len(reincidentes)}")
+    print(f"[+] Corrigidos (run) : {len(removidos)}")
+    print(f"[+] Hosts (relatório): {len(rep_novos) + len(rep_rein) + len(rep_rem)}")
     print(f"[+] Tempo de execução: {_fmt_duration(duration_s)}")
 
 if __name__ == "__main__":

@@ -1,10 +1,16 @@
-"""Os relatórios de submonitor/credentials/email/typosquat são montados a
-partir do resultado EM MEMÓRIA da execução corrente — com o runner rodando
-campanha por campanha, cada campanha sobrescreve o mesmo arquivo HTML no
-docroot, e só sobra no disco o da ÚLTIMA campanha. Até esses 4 relatórios
-passarem a montar do banco (como o monitor já faz), a correção mínima é
-DECLARAR o escopo: um aviso visível no topo quando ARGUS_CAMPANHA restringe a
-execução a uma única campanha.
+"""O aviso de escopo no topo dos relatórios de submonitor/credentials/email/
+typosquat.
+
+Ele existe porque o runner roda campanha por campanha (ARGUS_CAMPANHA). Antes,
+esses relatórios eram montados do resultado EM MEMÓRIA e cada campanha
+sobrescrevia o arquivo da anterior — o aviso dizia "as demais campanhas não
+estão neste relatório". Depois que os quatro passaram a montar do BANCO
+(load_report_rows), todas as campanhas voltaram a aparecer e essa frase virou
+mentira; o aviso passou a declarar o que continua verdade: só UMA campanha foi
+revarrida nesta execução, as outras estão na tela com o dado da varredura
+anterior delas.
+
+Cobre também o aviso de cobertura parcial (crt.sh/crt.name fora do ar).
 """
 
 import os
@@ -35,14 +41,14 @@ class TestAvisoDeEscopo(Base):
         out = self._out("s.html")
         REP.generate_submonitor_report([], [], [], output_path=out)
         html = Path(out).read_text(encoding="utf-8")
-        self.assertNotIn("As demais campanhas não estão neste relatório", html)
+        self.assertNotIn("revarreu apenas a campanha", html)
 
     def test_submonitor_com_restricao_mostra_aviso(self):
         os.environ["ARGUS_CAMPANHA"] = "RIOCARD"
         out = self._out("s.html")
         REP.generate_submonitor_report([], [], [], output_path=out)
         html = Path(out).read_text(encoding="utf-8")
-        self.assertIn("As demais campanhas não estão neste relatório", html)
+        self.assertIn("revarreu apenas a campanha", html)
         self.assertIn("RIOCARD", html)
 
     def test_credentials_com_restricao_mostra_aviso(self):
@@ -50,42 +56,42 @@ class TestAvisoDeEscopo(Base):
         out = self._out("c.html")
         REP.generate_credentials_report([], [], [], output_path=out)
         html = Path(out).read_text(encoding="utf-8")
-        self.assertIn("As demais campanhas não estão neste relatório", html)
+        self.assertIn("revarreu apenas a campanha", html)
         self.assertIn("RIOCARD", html)
 
     def test_credentials_sem_restricao_nao_mostra_aviso(self):
         out = self._out("c.html")
         REP.generate_credentials_report([], [], [], output_path=out)
         html = Path(out).read_text(encoding="utf-8")
-        self.assertNotIn("As demais campanhas não estão neste relatório", html)
+        self.assertNotIn("revarreu apenas a campanha", html)
 
     def test_email_com_restricao_mostra_aviso(self):
         os.environ["ARGUS_CAMPANHA"] = "RIOCARD"
         out = self._out("e.html")
         REP.generate_email_report([], [], [], output_path=out)
         html = Path(out).read_text(encoding="utf-8")
-        self.assertIn("As demais campanhas não estão neste relatório", html)
+        self.assertIn("revarreu apenas a campanha", html)
         self.assertIn("RIOCARD", html)
 
     def test_email_sem_restricao_nao_mostra_aviso(self):
         out = self._out("e.html")
         REP.generate_email_report([], [], [], output_path=out)
         html = Path(out).read_text(encoding="utf-8")
-        self.assertNotIn("As demais campanhas não estão neste relatório", html)
+        self.assertNotIn("revarreu apenas a campanha", html)
 
     def test_typosquat_com_restricao_mostra_aviso(self):
         os.environ["ARGUS_CAMPANHA"] = "RIOCARD"
         out = self._out("t.html")
         REP.generate_typosquat_report([], [], [], output_path=out)
         html = Path(out).read_text(encoding="utf-8")
-        self.assertIn("As demais campanhas não estão neste relatório", html)
+        self.assertIn("revarreu apenas a campanha", html)
         self.assertIn("RIOCARD", html)
 
     def test_typosquat_sem_restricao_nao_mostra_aviso(self):
         out = self._out("t.html")
         REP.generate_typosquat_report([], [], [], output_path=out)
         html = Path(out).read_text(encoding="utf-8")
-        self.assertNotIn("As demais campanhas não estão neste relatório", html)
+        self.assertNotIn("revarreu apenas a campanha", html)
 
     def test_nome_da_campanha_e_escapado_no_html(self):
         # Defesa em profundidade: o nome vem de env var (confiável, definida pelo

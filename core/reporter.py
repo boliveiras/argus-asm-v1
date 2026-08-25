@@ -54,22 +54,26 @@ except Exception:                                   # pragma: no cover
 
 
 def _scope_banner() -> str:
-    """Aviso de escopo quando o relatório foi gerado com ARGUS_CAMPANHA restrita.
+    """Aviso de ATUALIZAÇÃO quando o relatório foi gerado com ARGUS_CAMPANHA restrita.
 
-    O runner agora executa campanha por campanha, e os relatórios do submonitor/
-    credentials/email/typosquat são montados a partir do resultado EM MEMÓRIA da
-    execução corrente — cada campanha sobrescreve o mesmo arquivo no docroot, e só
-    sobra no disco o da ÚLTIMA campanha rodada. Sem este aviso o operador lê um
-    relatório parcial como se fosse o total (mentira por omissão). O correto —
-    montar do banco, como o monitor já faz — é maior que cabe aqui; isso só
-    declara o escopo de forma visível."""
+    Histórico: enquanto submonitor/credentials/email/typosquat montavam o
+    relatório a partir do resultado EM MEMÓRIA, rodar campanha por campanha fazia
+    cada uma sobrescrever o arquivo da anterior no docroot — e este aviso dizia
+    "as demais campanhas não estão neste relatório", que era verdade.
+
+    Agora os quatro montam do BANCO (load_report_rows, como o monitor sempre fez),
+    então TODAS as campanhas aparecem e aquela frase virou mentira. O que
+    continua verdade — e o operador precisa saber — é outra coisa: só UMA
+    campanha foi revarrida nesta execução; as demais estão na tela com os dados
+    da última varredura de cada uma. Por isso o aviso muda de assunto (escopo do
+    relatório -> frescor do dado) em vez de sumir."""
     nome = _campanha_pedida()
     if not nome:
         return ""
     return (
-        '<div class="scope-banner">&#9888;&#65039; Escopo desta execução: campanha '
-        f'<strong>{html.escape(nome)}</strong>. As demais campanhas não estão '
-        'neste relatório.</div>'
+        '<div class="scope-banner">&#9888;&#65039; Esta execução revarreu apenas a '
+        f'campanha <strong>{html.escape(nome)}</strong>. As demais campanhas '
+        'aparecem abaixo com os dados da última varredura de cada uma.</div>'
     )
 
 
