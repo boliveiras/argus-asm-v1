@@ -934,6 +934,52 @@ def _falha_total(ips: list[str], falhas: int) -> bool:
     return bool(ips) and falhas == len(ips)
 
 
+# Queda além disto, com paralelismo ligado, vira aviso. Variação entre
+# execuções é normal (host que cai, serviço reiniciado); 30% é a fronteira
+# escolhida para separar ruído de sinal — ajuste se a prática mostrar outro.
+QUEDA_COBERTURA_ALERTA = 0.30
+
+
+def _portas_da_execucao_anterior(campanha: str) -> int:
+    """Portas ativas registradas para a campanha antes desta execução.
+
+    Lê do banco do monitor. Zero quando não há histórico (primeira execução),
+    e zero também em qualquer erro: a verificação é conveniência e não pode
+    impedir o scan de terminar.
+    """
+    try:
+        conn = sqlite3.connect(DATABASE_FILE, timeout=5)
+        try:
+            cur = conn.execute(
+                "SELECT COUNT(*) FROM scans WHERE campanha=? AND protocol='tcp' "
+                "AND status IN ('NOVO','REINCIDENTE','RESSURGIDO')", (campanha,))
+            return int(cur.fetchone()[0] or 0)
+        finally:
+            conn.close()
+    except Exception:
+        return 0
+
+
+def _alertar_queda_cobertura(campanha: str, achadas: int,
+                             paralelismo: int) -> str | None:
+    """Mensagem de aviso quando a cobertura cai de forma suspeita, ou None.
+
+    Só alerta com paralelismo acima de 1: em série, uma queda tem outras causas
+    (o alvo realmente fechou portas) e o aviso seria ruído.
+    """
+    if paralelismo <= 1:
+        return None
+    anterior = _portas_da_execucao_anterior(campanha)
+    if anterior <= 0:
+        return None                     # sem histórico, nada a comparar
+    if achadas >= anterior * (1 - QUEDA_COBERTURA_ALERTA):
+        return None
+    return (f"cobertura caiu de {anterior} para {achadas} porta(s) com "
+            f"paralelismo {paralelismo} — sob concorrência o nmap pode "
+            f"reportar porta aberta como filtrada. Se a queda não for esperada, "
+            f"reduza o paralelismo da campanha e compare.")
+
+
 def _varrer_alvos(ips: list[str], campanha: str, mode: str,
                   paralelismo: int) -> tuple[list[dict], int]:
     """Varre a lista de IPs e devolve (resultados, falhas).
@@ -1091,6 +1137,17 @@ def main():
                           f"campanha {campanha} ({mode}) — resultados "
                           f"parciais dos demais seguem")
                 all_results.extend(resultados)
+                if mode == "tcp":
+                    aviso = _alertar_queda_cobertura(
+                        campanha, len([r for r in all_results
+                                       if r.get("campanha") == campanha
+                                       and r.get("protocol") == "tcp"]),
+                        paralelo)
+                    if aviso:
+                        print(f"  [COBERTURA] {campanha}: {aviso}", file=sys.stderr)
+                        syslog_write("WARN", "COVERAGE_DROP", aviso,
+                                     module=SYSLOG_APP, campanha=campanha,
+                                     paralelismo=str(paralelo))
 
         print(f"\n[ASN] Total de portas abertas: {len(all_results)}")
         resolve_asn_bulk(all_results)
