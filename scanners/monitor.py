@@ -914,34 +914,67 @@ def _parse_modes(argv: list[str]) -> list[str]:
     return modes or ["tcp"]
 
 
+def _falha_total(ips: list[str], falhas: int) -> bool:
+    """True quando TODOS os alvos de uma chamada a _varrer_alvos falharam.
+
+    Isto é o predicado que separa "0 portas abertas porque nada está aberto"
+    de "0 portas porque o ambiente explodiu em todo mundo" (nmap ausente do
+    PATH, permissão de root perdida etc.). Lista vazia não conta — campanha
+    sem IPs nunca chegou a chamar run_scan, não é falha de nada.
+    """
+    return bool(ips) and falhas == len(ips)
+
+
 def _varrer_alvos(ips: list[str], campanha: str, mode: str,
-                  paralelismo: int) -> list[dict]:
-    """Varre a lista de IPs e devolve os resultados agregados.
+                  paralelismo: int) -> tuple[list[dict], int]:
+    """Varre a lista de IPs e devolve (resultados, falhas).
 
     Thread pool basta porque o nmap é processo externo e o trabalho é espera de
     rede — não há disputa de CPU (3min32 de CPU para 3h23 de relógio na medição
     que motivou isto) nem estado compartilhado dentro de run_scan.
 
     Falha de um alvo NÃO derruba os demais: um nmap que morre custa aquele IP,
-    não a varredura inteira.
+    não a varredura inteira. Mas o chamador precisa saber QUANTOS alvos
+    falharam — daí o segundo elemento da tupla. Sem essa contagem, um scan
+    onde TODO alvo falhou (ambiente quebrado, não alvo individual) fica
+    indistinguível de um scan que rodou limpo e não achou nada aberto; ver
+    _falha_total(), usado por main() para decidir se aborta a execução.
     """
     total = len(ips)
     if total == 0:
-        return []
+        return [], 0
+
+    # UDP não tem handshake: sob concorrência a distinção entre "aberta" e
+    # "filtrada" degrada, e UDP não é o gargalo que motivou o paralelismo (só
+    # o TCP media 3min32 de CPU para 3h23 de relógio). A guarda vive AQUI,
+    # dentro da função, e não só em main() — um chamador futuro que esqueça
+    # de restringir mode=="tcp" antes de paralelizar não fura a regra.
+    if mode != "tcp":
+        paralelismo = 1
+
     if paralelismo <= 1:
         # Caminho de série idêntico ao histórico — inclusive na saída impressa.
         resultados: list[dict] = []
+        falhas = 0
         for i, ip in enumerate(ips, 1):
             print(f"[{i}/{total}]", end=" ")
             try:
                 resultados.extend(run_scan(ip, campanha, mode))
             except Exception as exc:
+                falhas += 1
                 print(f"  [ERRO] {ip}: {exc}", file=sys.stderr)
-        return resultados
+                # Fecha a linha do contador impresso acima: se a exceção vier
+                # antes de qualquer print de run_scan, "[i/total]" fica sem
+                # quebra de linha e cola no contador da próxima iteração.
+                print()
+                syslog_error(f"run_scan({ip})", exc)
+        return resultados, falhas
 
     resultados = []
+    falhas = 0
     concluidos = 0
-    with ThreadPoolExecutor(max_workers=paralelismo) as pool:
+    pool = ThreadPoolExecutor(max_workers=paralelismo)
+    try:
         futuros = {pool.submit(run_scan, ip, campanha, mode): ip for ip in ips}
         for fut in as_completed(futuros):
             ip = futuros[fut]
@@ -954,8 +987,21 @@ def _varrer_alvos(ips: list[str], campanha: str, mode: str,
                 resultados.extend(parciais)
                 print(f"[{concluidos}/{total}] {ip}: {len(parciais)} porta(s)")
             except Exception as exc:
+                falhas += 1
                 print(f"[{concluidos}/{total}] {ip}: ERRO — {exc}", file=sys.stderr)
-    return resultados
+                syslog_error(f"run_scan({ip})", exc)
+        pool.shutdown(wait=True)
+    except BaseException:
+        # Ctrl+C (ou qualquer sinal) chegando durante as_completed: todos os
+        # alvos já foram submetidos de uma vez, então tarefas ainda não
+        # iniciadas nascem DEPOIS do sinal. O "with"/shutdown(wait=True)
+        # padrão bloqueia até a fila inteira esvaziar — o operador aperta
+        # Ctrl+C e o processo segue varrendo alvos reais por minutos, sem
+        # saída visível. cancel_futures descarta o que não começou; wait=False
+        # não espera o que já estava rodando terminar.
+        pool.shutdown(wait=False, cancel_futures=True)
+        raise
+    return resultados, falhas
 
 
 def main():
@@ -1008,7 +1054,29 @@ def main():
                 extra = f" — {paralelo} em paralelo" if paralelo > 1 else ""
                 print(f"\n--- Campanha: {campanha} ({len(ips)} IP(s) — "
                       f"varredura individual {mode.upper()}{extra}) ---")
-                all_results.extend(_varrer_alvos(ips, campanha, mode, paralelo))
+                resultados, falhas = _varrer_alvos(ips, campanha, mode, paralelo)
+                if _falha_total(ips, falhas):
+                    # TODO alvo desta campanha falhou — isto não é "0 portas
+                    # abertas", é o scan não ter acontecido (nmap ausente do
+                    # PATH, permissão de root perdida etc). Abortamos AQUI,
+                    # antes de process_results, e propositalmente com uma
+                    # exceção comum: o "except Exception" logo abaixo em
+                    # main() já registra SCAN_ERR + SCAN_END status="error"
+                    # e re-lança — reaproveitamos essa trilha em vez de
+                    # duplicá-la. Deixar seguir faria all_results permanecer
+                    # vazio, process_results leria "nada mudou", e passados
+                    # os dias de CLOSE_GRACE_DAYS o achado real seria fechado
+                    # como CORRIGIDO: um scan que não rodou não pode afirmar
+                    # que a superfície foi remediada.
+                    raise RuntimeError(
+                        f"todos os {len(ips)} alvo(s) da campanha "
+                        f"'{campanha}' ({mode}) falharam — provável falha de "
+                        f"ambiente (nmap ausente/permissão), não de alvo")
+                if falhas:
+                    print(f"[AVISO] {falhas}/{len(ips)} alvo(s) falharam na "
+                          f"campanha {campanha} ({mode}) — resultados "
+                          f"parciais dos demais seguem")
+                all_results.extend(resultados)
 
         print(f"\n[ASN] Total de portas abertas: {len(all_results)}")
         resolve_asn_bulk(all_results)
