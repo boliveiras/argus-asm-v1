@@ -615,7 +615,19 @@ def _expand_targets(targets: list[str]) -> list[str]:
 def run_scan(target: str, campanha: str, mode: str = "tcp") -> list[dict]:
     """Escaneia UM alvo por invocação do nmap (host-a-host) — progresso e logs
     incrementais por host. `mode` = 'tcp' (top-1000) ou 'udp' (100 portas curadas).
-    Estrutura de resultado idêntica à do report/process (campo protocol distingue)."""
+    Estrutura de resultado idêntica à do report/process (campo protocol distingue).
+
+    scanner.scan() NÃO é engolido aqui de propósito: uma exceção ali (permissão
+    negada, dispositivo de rede indisponível, PortScannerTimeout, nmap morto por
+    OOM, argumento inválido...) significa "não consegui varrer" — diferente de
+    "varri e não achei nada" (host inacessível / sem portas abertas, tratado mais
+    abaixo SEM exceção, depois que scan() já rodou com sucesso). Confundir os dois
+    já foi o bug: engolindo tudo aqui, um ambiente quebrado em 100% dos alvos
+    devolvia [] silencioso indistinguível de "scan limpo, zero portas" — e depois
+    de CLOSE_GRACE_DAYS cada porta real virava CORRIGIDO no banco. Deixando
+    propagar, quem chama (_varrer_alvos, que já embrulha esta chamada em
+    try/except nos dois ramos — série e paralelo) recebe a contagem exata de
+    falhas para _falha_total() abortar antes de process_results."""
     scanner   = nmap.PortScanner()
     if mode == "udp":
         args = NMAP_ARGS_UDP            # -sU (exige root, garantido pelo wrapper sudo)
@@ -625,10 +637,7 @@ def run_scan(target: str, campanha: str, mode: str = "tcp") -> list[dict]:
     print(f"[NMAP] [{campanha}] Escaneando {target}  ({args})")
     try: resolved_ip = socket.gethostbyname(target)
     except Exception: resolved_ip = target
-    try: scanner.scan(hosts=target, arguments=args)
-    except Exception as exc:
-        syslog_error(f"nmap.scan({target})", exc)
-        print(f"  [ERRO] {target}: {exc}"); return []
+    scanner.scan(hosts=target, arguments=args)
 
     results = []
     for host in scanner.all_hosts():
@@ -996,9 +1005,14 @@ def _varrer_alvos(ips: list[str], campanha: str, mode: str,
         # alvos já foram submetidos de uma vez, então tarefas ainda não
         # iniciadas nascem DEPOIS do sinal. O "with"/shutdown(wait=True)
         # padrão bloqueia até a fila inteira esvaziar — o operador aperta
-        # Ctrl+C e o processo segue varrendo alvos reais por minutos, sem
-        # saída visível. cancel_futures descarta o que não começou; wait=False
-        # não espera o que já estava rodando terminar.
+        # Ctrl+C e o processo segue varrendo os alvos restantes por minutos,
+        # sem saída visível. cancel_futures descarta o que não começou —
+        # mas isto NÃO é interrupção imediata: os no máximo `paralelismo`
+        # scans já em voo continuam até o nmap terminar, porque o
+        # _python_exit do próprio concurrent.futures (registrado via atexit)
+        # dá join nessas threads antes do processo morrer. O operador espera
+        # esse punhado de scans em andamento, não a fila inteira (que pode
+        # ser 84 alvos).
         pool.shutdown(wait=False, cancel_futures=True)
         raise
     return resultados, falhas

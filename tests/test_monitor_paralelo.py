@@ -184,5 +184,166 @@ class TestFalhaTotal(Base):
         self.assertFalse(self.M._falha_total([], 0))
 
 
+class TestRunScanDistingueFalhaDeVazio(Base):
+    """CRÍTICO residual: run_scan engolia QUALQUER exceção de scanner.scan()
+    (permissão negada, dispositivo de rede indisponível, timeout, nmap morto
+    por OOM...) e devolvia [] — indistinguível de "rodou e não achou nada".
+    Com TODOS os alvos batendo nisso, _varrer_alvos nunca contava falhas e
+    o scan "terminava com sucesso" sem ter varrido nada de verdade."""
+
+    def setUp(self):
+        super().setUp()
+        # run_scan chama _check_root() -> os.geteuid(), inexistente no Windows
+        # onde os testes rodam; substitui para não quebrar por motivo alheio
+        # ao que está sendo testado aqui.
+        check_root_original = self.M._check_root
+        self.addCleanup(setattr, self.M, "_check_root", check_root_original)
+        self.M._check_root = lambda: False
+        # nmap.PortScanner é mutado no módulo nmap COMPARTILHADO entre
+        # arquivos de teste (sys.modules — processo único); salva/restaura
+        # para não vazar o dublê para outro teste.
+        self._portscanner_original = getattr(self.M.nmap, "PortScanner", None)
+        self.addCleanup(self._restaurar_portscanner)
+
+    def _restaurar_portscanner(self):
+        if self._portscanner_original is None:
+            if hasattr(self.M.nmap, "PortScanner"):
+                delattr(self.M.nmap, "PortScanner")
+        else:
+            self.M.nmap.PortScanner = self._portscanner_original
+
+    def test_erro_de_permissao_no_scan_propaga_como_falha(self):
+        # Caso mais provável na prática: nmap presente, mas sem privilégio
+        # para o tipo de scan pedido.
+        class FakeScanner:
+            def scan(self, hosts, arguments):
+                raise PermissionError(
+                    "You requested a scan type which requires root privileges")
+
+        self.M.nmap.PortScanner = FakeScanner
+        with self.assertRaises(PermissionError):
+            self.M.run_scan("10.0.0.1", "CAMP", "tcp")
+
+    def test_host_inacessivel_sem_portas_continua_sendo_sucesso_vazio(self):
+        # nmap RODOU (sem exceção) e não achou nada — não é falha de ambiente.
+        class FakeScanner:
+            def scan(self, hosts, arguments):
+                pass
+
+            def all_hosts(self):
+                return []
+
+        self.M.nmap.PortScanner = FakeScanner
+        resultado = self.M.run_scan("10.0.0.1", "CAMP", "tcp")
+        self.assertEqual(resultado, [])
+
+    def test_falha_de_scan_em_todos_os_alvos_aborta_via_varrer_alvos(self):
+        # Ponta a ponta com o dublê no nível de run_scan (não mais dentro de
+        # nmap.PortScanner): confirma que _varrer_alvos conta a falha real
+        # de scan, não só uma falha injetada diretamente no dublê de teste.
+        class FakeScanner:
+            def scan(self, hosts, arguments):
+                raise PermissionError("permissão negada")
+
+        self.M.nmap.PortScanner = FakeScanner
+        ips = [f"10.0.0.{i}" for i in range(1, 4)]
+        res, falhas = self.M._varrer_alvos(ips, "CAMP", "tcp", 1)
+        self.assertEqual(res, [])
+        self.assertEqual(falhas, len(ips))
+        self.assertTrue(self.M._falha_total(ips, falhas))
+
+
+class TestSyslogErrorPorAlvoFalho(Base):
+    """Correção 3: cada alvo que falha precisa gerar EXATAMENTE uma chamada a
+    syslog_error — nem zero (a trilha RFC5424 fica cega), nem duas (run_scan
+    logando e _varrer_alvos logando de novo por cima)."""
+
+    def setUp(self):
+        super().setUp()
+        original = self.M.syslog_error
+        self.addCleanup(setattr, self.M, "syslog_error", original)
+        self.chamadas = []
+        self.M.syslog_error = lambda context, exc: self.chamadas.append((context, exc))
+
+    def _fake_run_scan_que_sempre_falha(self):
+        def fake(ip, campanha, mode="tcp"):
+            raise RuntimeError("nmap ausente do PATH")
+        return fake
+
+    def test_uma_chamada_por_alvo_falho_serie(self):
+        self.M.run_scan = self._fake_run_scan_que_sempre_falha()
+        ips = [f"10.0.0.{i}" for i in range(1, 4)]
+        self.M._varrer_alvos(ips, "CAMP", "tcp", 1)
+        self.assertEqual(len(self.chamadas), len(ips))
+
+    def test_uma_chamada_por_alvo_falho_paralelo(self):
+        self.M.run_scan = self._fake_run_scan_que_sempre_falha()
+        ips = [f"10.0.0.{i}" for i in range(1, 4)]
+        self.M._varrer_alvos(ips, "CAMP", "tcp", 3)
+        self.assertEqual(len(self.chamadas), len(ips))
+
+    def test_falha_parcial_gera_chamada_so_para_o_alvo_que_falhou(self):
+        def fake(ip, campanha, mode="tcp"):
+            if ip == "10.0.0.2":
+                raise RuntimeError("nmap morreu")
+            return [{"ip": ip, "port": 443, "protocol": mode}]
+
+        self.M.run_scan = fake
+        ips = [f"10.0.0.{i}" for i in range(1, 4)]
+        self.M._varrer_alvos(ips, "CAMP", "tcp", 1)
+        self.assertEqual(len(self.chamadas), 1)
+
+
+class TestMainAbortaEmFalhaTotal(Base):
+    """Correção 2: a fiação em main() (não só o predicado _falha_total isolado)
+    precisa de fato impedir process_results quando todos os alvos de uma
+    campanha falham. Sem este teste, apagar o `if _falha_total(...): raise`
+    de main() deixava a suíte inteira verde com o crítico de volta."""
+
+    def setUp(self):
+        super().setUp()
+        # Restaura os nomes de módulo que este teste substitui.
+        for nome in ("load_campaigns", "init_database", "process_results",
+                     "run_scan", "_check_root", "_syslog_open"):
+            original = getattr(self.M, nome)
+            self.addCleanup(setattr, self.M, nome, original)
+        # _THREATINTEL_AVAILABLE também é restaurado — força False para não
+        # chamar init_threatintel_db() de verdade (caminho hardcoded /home/kali/...).
+        self.addCleanup(setattr, self.M, "_THREATINTEL_AVAILABLE",
+                         self.M._THREATINTEL_AVAILABLE)
+        self.M._THREATINTEL_AVAILABLE = False
+
+        # syslog não pode tocar disco em teste: _syslog_open no-op mantém
+        # _syslog_fd None, e syslog_write/syslog_error/syslog_end já viram
+        # no-op sozinhos com esse guard (mesmo em produção).
+        self.M._syslog_open = lambda: None
+        # run_scan chama _check_root() -> os.geteuid() (inexistente no
+        # Windows); main() também chama _check_root() direto no início.
+        self.M._check_root = lambda: False
+
+        self._argv_original = sys.argv[:]
+        self.addCleanup(setattr, sys, "argv", self._argv_original)
+        sys.argv = ["monitor.py"]
+
+        cwd_original = os.getcwd()
+        self.addCleanup(os.chdir, cwd_original)
+
+    def test_todos_os_alvos_falhando_impede_process_results_e_propaga_erro(self):
+        chamadas_process_results = []
+        self.M.process_results = lambda *a, **k: chamadas_process_results.append((a, k))
+        self.M.load_campaigns = lambda: [("EMPRESA", ["10.0.0.1", "10.0.0.2"])]
+        self.M.init_database = lambda: None
+
+        def fake_run_scan(ip, campanha, mode="tcp"):
+            raise RuntimeError("permissão negada")
+
+        self.M.run_scan = fake_run_scan
+
+        with self.assertRaises(RuntimeError):
+            self.M.main()
+
+        self.assertEqual(chamadas_process_results, [])
+
+
 if __name__ == "__main__":
     unittest.main()
