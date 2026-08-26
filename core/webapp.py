@@ -801,6 +801,9 @@ def create_app():
                 if s == "submonitor":
                     for c in campanhas:
                         c["prefixos"] = CAMP.prefixos_da_campanha(c["name"])
+                if s == "monitor":
+                    for c in campanhas:
+                        c["paralelismo_tcp"] = CAMP.paralelismo_da_campanha(c["name"])
                 out[s] = campanhas
             # Tamanho da wordlist: a interface usa para estimar o custo da campanha
             # ANTES de rodar (domínios × palavras × prefixos).
@@ -813,7 +816,9 @@ def create_app():
                 wordlist_size = 0
             return jsonify(ok=True, scopes={s: CAMP.SCOPES[s]["label"] for s in CAMP.SCOPES},
                            campaigns=out, prefixos_padrao=CAMP.PREFIXOS_PADRAO,
-                           wordlist_size=wordlist_size)
+                           wordlist_size=wordlist_size,
+                           paralelismo_min=CAMP.PARALELISMO_TCP_MIN,
+                           paralelismo_max=CAMP.PARALELISMO_TCP_MAX)
         except Exception as exc:
             return jsonify(ok=False, error=str(exc)), 500
 
@@ -843,6 +848,27 @@ def create_app():
                outcome="success", action="campaign_prefixos", obj=name,
                object_type="campaign")
         return jsonify(ok=True, prefixos=salvos)
+
+    @app.post("/api/campaigns/<scope>/<name>/paralelismo")
+    def set_campaign_paralelismo(scope, name):
+        if not _csrf_ok():
+            _audit(request, "AUTHZ_DENY", "ação negada: header CSRF ausente",
+                   outcome="deny", action="campaign_paralelismo")
+            return jsonify(ok=False, error="CSRF: header ausente"), 403
+        # Só faz sentido no escopo de IPs: a varredura paralela é de portas.
+        if scope != "monitor":
+            return jsonify(ok=False,
+                           error="paralelismo se aplica apenas a campanhas de IPs"), 400
+        dados = request.get_json(silent=True) or {}
+        try:
+            salvo = CAMP.set_paralelismo(name, dados.get("paralelismo", 1))
+        except CAMP.CampaignError as exc:
+            return jsonify(ok=False, error=str(exc)), 400
+        _audit(request, "CAMPAIGN_UPDATE",
+               f"paralelismo TCP da campanha {name} definido em {salvo}",
+               outcome="success", action="campaign_paralelismo", obj=name,
+               object_type="campaign")
+        return jsonify(ok=True, paralelismo=salvo)
 
     @app.post("/api/campaigns")
     def create_campaign():

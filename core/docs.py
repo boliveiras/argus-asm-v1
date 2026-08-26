@@ -205,6 +205,27 @@ verificado e, passada a carência de fechamento, é marcado como corrigido mesmo
 continuando ativo. Numa ferramenta de segurança, "corrigido" que na verdade
 significa "parei de olhar" é um falso negativo: confira o que cada prefixo
 encontrou antes de desligá-lo.</p>
+
+<p><b>Paralelismo TCP (só para campanhas de IPs).</b> A varredura de portas roda
+um IP por vez por padrão. Configurar de 2 a 5 varreduras simultâneas por
+campanha corta o tempo na mesma proporção — a máquina passa quase todo o tempo
+esperando pacote, então o recurso está ocioso. Três riscos, sendo o terceiro
+o que mais importa:</p>
+
+<ul class="doc-passos">
+  <li><b>Bloqueio pelo alvo</b> — vários probes ao mesmo tempo podem disparar
+      WAF ou limite de taxa. Visível: o scan falha.</li>
+  <li><b>Consumo de rede local</b> — conntrack, banda, DNS. Visível: o scan
+      degrada de forma observável.</li>
+  <li><b>Porta aberta virando "filtrada"</b> — sob perda de pacote o nmap não
+      reporta erro, ele reclassifica. A porta some do relatório e o scan termina
+      "com sucesso", só que mais pobre. <b>Invisível.</b></li>
+</ul>
+
+<p class="doc-nota">Depois de cada varredura paralela, o Argus compara a
+contagem de portas com a execução anterior. Se cair muito, avisa que
+<i>pode</i> ser perda de pacote — mas não sabe distinguir isso de "o alvo
+fechou serviços". A decisão de reduzir o paralelismo continua sua.</p>
 """),
 
     ("scan", "Execução dos scans", """

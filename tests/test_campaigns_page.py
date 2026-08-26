@@ -22,6 +22,13 @@ class TestPagina(unittest.TestCase):
     def test_recomenda_um_dominio_por_campanha(self):
         self.assertIn("um domínio por campanha", self.html)
 
+    def test_tem_bloco_de_paralelismo(self):
+        self.assertIn("cp-paralelismo", self.html)
+
+    def test_avisa_sobre_porta_filtrada(self):
+        # O risco invisível precisa estar escrito, não só o de bloqueio.
+        self.assertIn("filtrada", self.html.lower())
+
 
 class TestProgresso(unittest.TestCase):
     def test_painel_mostra_campanha_atual(self):

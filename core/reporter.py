@@ -4643,6 +4643,8 @@ _CAMP_SCRIPT = r"""<script>
       DATA=j.campaigns||{};
       DATA.prefixos_padrao = j.prefixos_padrao || [];
       DATA.wordlist_size = j.wordlist_size || 0;
+      DATA.paralelismo_min = j.paralelismo_min || 1;
+      DATA.paralelismo_max = j.paralelismo_max || 5;
       show('camp-main'); render(); encherSeletorScan(DATA); wlLoad(); pollScan();
     }).catch(function(){ show('camp-off'); });
   }
@@ -4708,6 +4710,46 @@ _CAMP_SCRIPT = r"""<script>
       +'</b> consultas ('+dominios+' domínio(s) &times; '+palavras+' palavra(s) &times; '
       +marcados+' prefixo(s))'+esc(aviso);
   }
+  function fmtMin(min){
+    min=Math.max(1,Math.round(min));
+    if(min<60) return min+' min';
+    var h=Math.floor(min/60), m=min%60;
+    return h+'h'+(m?(' '+m+'min'):'');
+  }
+  function pintarParalelismo(cur){
+    var bloco=document.getElementById('cp-paralelismo-bloco');
+    var sel=document.getElementById('cp-paralelismo');
+    if(!bloco||!sel) return;
+    // Paralelismo só existe para IPs: é a varredura de portas que roda concorrente.
+    if(!editing||editing.scope!=='monitor'){ bloco.style.display='none'; return; }
+    bloco.style.display='block';
+    var min=DATA.paralelismo_min||1, max=DATA.paralelismo_max||5;
+    var atual=(cur&&cur.paralelismo_tcp)||min;
+    sel.innerHTML='';
+    for(var v=min; v<=max; v++){
+      var o=document.createElement('option');
+      o.value=v; o.textContent=(v===min?v+' (série)':String(v));
+      if(v===atual) o.selected=true;
+      sel.appendChild(o);
+    }
+    sel.onchange=estimarParalelismo;
+    estimarParalelismo();
+  }
+  function estimarParalelismo(){
+    var alvo=document.getElementById('cp-paralelismo-estimativa'); if(!alvo) return;
+    if(!editing||editing.scope!=='monitor'){ alvo.textContent=''; return; }
+    var ips=(document.getElementById('camp-ed-targets').value||'')
+      .split('\n').map(function(s){return s.split('#')[0].trim();})
+      .filter(Boolean).length;
+    if(!ips){ alvo.textContent=''; return; }
+    var sel=document.getElementById('cp-paralelismo');
+    var val=sel?parseInt(sel.value,10)||1:1;
+    var MIN_POR_IP=2;   // medido: 163 min para 84 IPs em série
+    var serie=ips*MIN_POR_IP;
+    var comParalelo=Math.ceil(ips/val)*MIN_POR_IP;
+    alvo.innerHTML='Tempo estimado da etapa de portas: <b>'+esc(fmtMin(comParalelo))+'</b>'
+      +(val>1?(' (em série seria '+esc(fmtMin(serie))+')'):'')+' para '+ips+' IP(s).';
+  }
   function openEditor(scope,name){
     editing={scope:scope,name:name};
     var cfg=SCOPES[scope];
@@ -4717,12 +4759,13 @@ _CAMP_SCRIPT = r"""<script>
     var ta=document.getElementById('camp-ed-targets');
     ta.value=cur?cur.targets.join('\n'):'';
     ta.placeholder=cfg.ph;
-    ta.oninput=estimar;
+    ta.oninput=function(){ estimar(); estimarParalelismo(); };
     document.getElementById('camp-ed-hint').textContent=cfg.hint;
     document.getElementById('camp-ed-unit').textContent=cfg.unit+'(s)';
     document.getElementById('camp-editor').style.display='block';
     document.getElementById('camp-ed-name').focus();
     pintarPrefixos(cur);
+    pintarParalelismo(cur);
     msg('');
   }
   function closeEditor(){ editing=null; document.getElementById('camp-editor').style.display='none'; }
@@ -4747,6 +4790,14 @@ _CAMP_SCRIPT = r"""<script>
         api('/api/campaigns/submonitor/'+encodeURIComponent(name)+'/prefixos',
             {method:'POST',body:JSON.stringify({prefixos:prefs})})
           .catch(function(e){ msg('Campanha salva, mas os prefixos não: '+e.message,'err'); });
+      }
+      if(editing && editing.scope==='monitor'){
+        var selPar=document.getElementById('cp-paralelismo');
+        var paralelismo=selPar?parseInt(selPar.value,10)||1:1;
+        // Idem: requisição separada, falhar aqui não desfaz a campanha já salva.
+        api('/api/campaigns/monitor/'+encodeURIComponent(name)+'/paralelismo',
+            {method:'POST',body:JSON.stringify({paralelismo:paralelismo})})
+          .catch(function(e){ msg('Campanha salva, mas o paralelismo não: '+e.message,'err'); });
       }
       closeEditor(); load();
     }).catch(function(e){ msg(e.message,'err'); }).then(function(){ btn.disabled=false; });
@@ -5033,6 +5084,15 @@ def build_campaigns_page() -> str:
         'padding-left:10px;font-size:11.5px">'
         'Recomendamos <b>um domínio por campanha</b>: termina antes e fica salvo mesmo '
         'se a próxima falhar. <a href="#" data-doc="campanhas">Saiba mais</a></div>'
+        '</div>'
+        '<div id="cp-paralelismo-bloco" style="display:none;margin-top:14px">'
+        '<label for="cp-paralelismo">Varreduras de porta simultâneas</label>'
+        '<select id="cp-paralelismo" data-write="1"></select>'
+        '<div id="cp-paralelismo-estimativa" class="page-sub" style="margin-top:9px;font-size:12px"></div>'
+        '<div id="cp-paralelismo-aviso" class="page-sub" style="margin-top:10px;'
+        'border-left:3px solid var(--border-2);padding-left:10px;font-size:11.5px">'
+        'Mais rápido, porém pode fazer <b>porta aberta ser reportada como filtrada</b> '
+        'e sumir do relatório. <a href="#" data-doc="campanhas">Entenda os riscos</a></div>'
         '</div>'
         '<div style="display:flex;gap:8px;margin-top:14px">'
         '<button class="btn btn-pdf" type="button" id="camp-ed-save" onclick="window.__camp&&window.__camp.save()">'
